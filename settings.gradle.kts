@@ -11,8 +11,10 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // 告诉打包机去下面这个旧仓库找 Xposed 的核心库！
-        maven { url = uri("https://jcenter.bintray.com") } 
+        // Xposed 真正的官方专属仓库
+        maven { url = uri("https://api.xposed.info/") }
+        // 增加 JitPack 备用防错
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
