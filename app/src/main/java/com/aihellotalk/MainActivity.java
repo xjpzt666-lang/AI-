@@ -2,7 +2,12 @@ package com.aihellotalk;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
+import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteOpenHelper;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
@@ -32,12 +37,15 @@ public class MainActivity extends Activity {
     private Button attachBtn;
     private LinearLayout drawerContent;
 
+    private String currentChatId = "";
     private String currentChatName = "";
     private List<ChatSession> chatSessions = new ArrayList<>();
-    private boolean hasSentFirstMessage = false;
 
     private OkHttpClient httpClient;
     private Handler mainHandler;
+    private DatabaseHelper dbHelper;
+
+    private static final int MAX_HISTORY_ROUNDS = 100;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -48,9 +56,9 @@ public class MainActivity extends Activity {
                 .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
                 .build();
         mainHandler = new Handler(Looper.getMainLooper());
+        dbHelper = new DatabaseHelper(this);
 
-        // 不再调用 initChatSessions，列表初始为空
-        chatSessions = new ArrayList<>();
+        loadChatSessions();
 
         drawerLayout = new DrawerLayout(this);
 
@@ -89,7 +97,7 @@ public class MainActivity extends Activity {
         topBar.addView(rightMenuBtn);
         mainContent.addView(topBar);
 
-        // 当前对话提示条（初始为空）
+        // 当前对话提示条
         TextView chatTitle = new TextView(this);
         chatTitle.setText("当前: 暂无对话");
         chatTitle.setTag("chatTitle");
@@ -145,7 +153,7 @@ public class MainActivity extends Activity {
         drawerContent.setOrientation(LinearLayout.VERTICAL);
         drawerContent.setPadding(20, 50, 20, 20);
         drawerContent.setBackgroundColor(Color.parseColor("#FAFAFA"));
-        
+
         DrawerLayout.LayoutParams lp = new DrawerLayout.LayoutParams(dpToPx(280), ViewGroup.LayoutParams.MATCH_PARENT);
         lp.gravity = Gravity.LEFT;
         drawerContent.setLayoutParams(lp);
@@ -154,42 +162,91 @@ public class MainActivity extends Activity {
         drawerTitle.setText("对话列表");
         drawerTitle.setTextSize(16f);
         drawerTitle.setTextColor(Color.BLACK);
-        drawerTitle.setPadding(0,0,0,20);
+        drawerTitle.setPadding(0, 0, 0, 20);
         drawerContent.addView(drawerTitle);
 
-        // 初始显示空列表提示
-        TextView emptyHint = new TextView(this);
-        emptyHint.setText("发送第一条消息后自动创建");
-        emptyHint.setTextSize(14f);
-        emptyHint.setTextColor(Color.GRAY);
-        emptyHint.setPadding(0, 20, 0, 20);
-        emptyHint.setTag("emptyHint");
-        drawerContent.addView(emptyHint);
+        refreshDrawerList();
 
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
     }
 
-    // 加号菜单
+    private void loadChatSessions() {
+        chatSessions.clear();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor cursor = db.rawQuery("SELECT id, name FROM chats ORDER BY updated_at DESC", null);
+        while (cursor.moveToNext()) {
+            String id = cursor.getString(0);
+            String name = cursor.getString(1);
+            chatSessions.add(new ChatSession(id, name));
+        }
+        cursor.close();
+        db.close();
+    }
+
+    private void loadMessagesFromDb(String chatId) {
+        messageContainer.removeAllViews();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor cursor = db.rawQuery(
+                "SELECT role, content FROM messages WHERE chat_id=? ORDER BY timestamp ASC",
+                new String[]{chatId});
+        while (cursor.moveToNext()) {
+            String role = cursor.getString(0);
+            String content = cursor.getString(1);
+            displayMessage(role, content);
+        }
+        cursor.close();
+        db.close();
+    }
+
+    private void saveMessageToDb(String chatId, String role, String content) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        ContentValues values = new ContentValues();
+        values.put("chat_id", chatId);
+        values.put("role", role);
+        values.put("content", content);
+        values.put("timestamp", System.currentTimeMillis());
+        db.insert("messages", null, values);
+        db.close();
+    }
+
+    private List<Message> getRecentHistory(String chatId, int maxRounds) {
+        List<Message> history = new ArrayList<>();
+        SQLiteDatabase db = dbHelper.getReadableDatabase();
+        Cursor cursor = db.rawQuery(
+                "SELECT role, content FROM messages WHERE chat_id=? ORDER BY timestamp ASC",
+                new String[]{chatId});
+
+        List<Message> allMessages = new ArrayList<>();
+        while (cursor.moveToNext()) {
+            String role = cursor.getString(0);
+            String content = cursor.getString(1);
+            allMessages.add(new Message(role, content));
+        }
+        cursor.close();
+        db.close();
+
+        int total = allMessages.size();
+        int start = Math.max(0, total - maxRounds * 2);
+        for (int i = start; i < total; i++) {
+            history.add(allMessages.get(i));
+        }
+        return history;
+    }
+
     private void showAttachMenu() {
         String[] options = {"📷 拍照", "🖼️ 相册", "📎 文件"};
         new AlertDialog.Builder(this)
                 .setTitle("选择附件")
                 .setItems(options, (dialog, which) -> {
-                    if (which == 0) {
-                        Toast.makeText(this, "拍照功能待实现", Toast.LENGTH_SHORT).show();
-                    } else if (which == 1) {
-                        Toast.makeText(this, "相册功能待实现", Toast.LENGTH_SHORT).show();
-                    } else if (which == 2) {
-                        Toast.makeText(this, "文件功能待实现", Toast.LENGTH_SHORT).show();
-                    }
+                    if (which == 0) Toast.makeText(this, "拍照功能待实现", Toast.LENGTH_SHORT).show();
+                    else if (which == 1) Toast.makeText(this, "相册功能待实现", Toast.LENGTH_SHORT).show();
+                    else if (which == 2) Toast.makeText(this, "文件功能待实现", Toast.LENGTH_SHORT).show();
                 })
                 .show();
     }
 
-    // 刷新侧滑菜单列表
     private void refreshDrawerList() {
-        // 移除所有子 view（除了标题）
         while (drawerContent.getChildCount() > 1) {
             drawerContent.removeViewAt(1);
         }
@@ -199,15 +256,20 @@ public class MainActivity extends Activity {
             emptyHint.setText("发送第一条消息后自动创建");
             emptyHint.setTextSize(14f);
             emptyHint.setTextColor(Color.GRAY);
-            emptyHint.setPadding(0, 20, 0, 20);
+            emptyHint.setPadding(0, 40, 0, 20);
             drawerContent.addView(emptyHint);
         } else {
             for (ChatSession session : chatSessions) {
                 TextView itemView = new TextView(this);
                 itemView.setText("💬 " + session.name);
                 itemView.setTextSize(16f);
-                itemView.setPadding(20, 20, 20, 20);
+                itemView.setPadding(20, 25, 20, 25);
                 itemView.setTextColor(Color.BLACK);
+
+                if (session.id.equals(currentChatId)) {
+                    itemView.setBackgroundColor(Color.parseColor("#E3F2FD"));
+                }
+
                 itemView.setOnClickListener(v -> {
                     switchToChat(session);
                     drawerLayout.closeDrawers();
@@ -219,15 +281,7 @@ public class MainActivity extends Activity {
                             .setItems(options, (dialog, which) -> {
                                 if (which == 0) showRenameDialog(session);
                                 else if (which == 1) {
-                                    chatSessions.remove(session);
-                                    refreshDrawerList();
-                                    Toast.makeText(MainActivity.this, "已删除", Toast.LENGTH_SHORT).show();
-                                    // 如果删除的是当前对话，重置
-                                    if (currentChatName.equals(session.name)) {
-                                        currentChatName = "";
-                                        ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: 暂无对话");
-                                        messageContainer.removeAllViews();
-                                    }
+                                    deleteChat(session);
                                 }
                             })
                             .show();
@@ -236,6 +290,23 @@ public class MainActivity extends Activity {
                 drawerContent.addView(itemView);
             }
         }
+    }
+
+    private void deleteChat(ChatSession session) {
+        SQLiteDatabase db = dbHelper.getWritableDatabase();
+        db.delete("messages", "chat_id=?", new String[]{session.id});
+        db.delete("chats", "id=?", new String[]{session.id});
+        db.close();
+
+        chatSessions.remove(session);
+        if (currentChatId.equals(session.id)) {
+            currentChatId = "";
+            currentChatName = "";
+            ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: 暂无对话");
+            messageContainer.removeAllViews();
+        }
+        refreshDrawerList();
+        Toast.makeText(this, "已删除", Toast.LENGTH_SHORT).show();
     }
 
     private void showRenameDialog(ChatSession session) {
@@ -248,10 +319,16 @@ public class MainActivity extends Activity {
                 .setPositiveButton("确定", (dialog, which) -> {
                     String newName = input.getText().toString().trim();
                     if (!newName.isEmpty()) {
+                        SQLiteDatabase db = dbHelper.getWritableDatabase();
+                        ContentValues cv = new ContentValues();
+                        cv.put("name", newName);
+                        db.update("chats", cv, "id=?", new String[]{session.id});
+                        db.close();
                         session.name = newName;
                         refreshDrawerList();
                         Toast.makeText(MainActivity.this, "已重命名为: " + newName, Toast.LENGTH_SHORT).show();
-                        if (currentChatName.equals(session.name)) {
+                        if (currentChatId.equals(session.id)) {
+                            currentChatName = newName;
                             ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: " + currentChatName);
                         }
                     }
@@ -266,10 +343,10 @@ public class MainActivity extends Activity {
         popup.getMenu().add(0, 2, 0, "⚙️ 设置/API配置");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getItemId() == 1) {
-                messageContainer.removeAllViews();
+                currentChatId = "";
                 currentChatName = "";
-                hasSentFirstMessage = false;
                 ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: 暂无对话");
+                messageContainer.removeAllViews();
                 Toast.makeText(this, "已开启新对话", Toast.LENGTH_SHORT).show();
                 return true;
             } else if (item.getItemId() == 2) {
@@ -282,54 +359,62 @@ public class MainActivity extends Activity {
     }
 
     private void switchToChat(ChatSession session) {
+        currentChatId = session.id;
         currentChatName = session.name;
         TextView chatTitle = (TextView) drawerLayout.findViewWithTag("chatTitle");
         if (chatTitle != null) chatTitle.setText("当前: " + currentChatName);
-        messageContainer.removeAllViews();
-        // 这里可以恢复该对话的历史消息（后续实现）
+        loadMessagesFromDb(currentChatId);
+        refreshDrawerList();
     }
 
-    // ── 发送消息 ──
     private void sendMessage() {
         String text = inputBox.getText().toString().trim();
         if (text.isEmpty()) return;
 
-        // 如果是第一条消息，自动创建新对话
-        if (!hasSentFirstMessage) {
+        if (currentChatId.isEmpty()) {
             String chatName = text.length() > 10 ? text.substring(0, 10) + "..." : text;
-            ChatSession newSession = new ChatSession(chatName);
+            String chatId = "chat_" + System.currentTimeMillis();
+
+            SQLiteDatabase db = dbHelper.getWritableDatabase();
+            ContentValues cv = new ContentValues();
+            cv.put("id", chatId);
+            cv.put("name", chatName);
+            cv.put("updated_at", System.currentTimeMillis());
+            db.insert("chats", null, cv);
+            db.close();
+
+            ChatSession newSession = new ChatSession(chatId, chatName);
             chatSessions.add(newSession);
+            currentChatId = chatId;
             currentChatName = chatName;
-            hasSentFirstMessage = true;
-            
+
             TextView chatTitle = (TextView) drawerLayout.findViewWithTag("chatTitle");
             if (chatTitle != null) chatTitle.setText("当前: " + currentChatName);
-            
             refreshDrawerList();
         }
 
-        // 显示用户消息（右对齐，绿色气泡）
-        addMessage("user", text);
+        displayMessage("user", text);
+        saveMessageToDb(currentChatId, "user", text);
         inputBox.setText("");
 
-        // 从配置文件读取
         String apiKey = readConfig("api_key");
         String apiUrl = readConfig("api_url");
         String model = readConfig("model");
 
         if (apiKey.isEmpty()) {
-            addMessage("system", "⚠️ 请先在设置中填写 API Key");
+            displayMessage("system", "⚠️ 请先在设置中填写 API Key");
+            saveMessageToDb(currentChatId, "system", "⚠️ 请先在设置中填写 API Key");
             return;
         }
         if (apiUrl.isEmpty()) {
             apiUrl = "https://api.openai.com/v1/chat/completions";
         }
         if (model.isEmpty()) {
-            addMessage("system", "⚠️ 请先在设置中选择模型");
+            displayMessage("system", "⚠️ 请先在设置中选择模型");
+            saveMessageToDb(currentChatId, "system", "⚠️ 请先在设置中选择模型");
             return;
         }
 
-        // 自动补全 URL
         if (!apiUrl.endsWith("/chat/completions")) {
             if (apiUrl.endsWith("/v1")) {
                 apiUrl = apiUrl + "/chat/completions";
@@ -340,13 +425,21 @@ public class MainActivity extends Activity {
             }
         }
 
-        addMessage("system", "🤔 正在思考...");
+        displayMessage("system", "🤔 正在思考...");
+
+        List<Message> history = getRecentHistory(currentChatId, MAX_HISTORY_ROUNDS);
 
         try {
             JSONObject requestBody = new JSONObject();
             requestBody.put("model", model);
 
             JSONArray messages = new JSONArray();
+            for (Message msg : history) {
+                JSONObject histMsg = new JSONObject();
+                histMsg.put("role", msg.role);
+                histMsg.put("content", msg.content);
+                messages.put(histMsg);
+            }
             JSONObject userMessage = new JSONObject();
             userMessage.put("role", "user");
             userMessage.put("content", text);
@@ -365,7 +458,8 @@ public class MainActivity extends Activity {
                 public void onFailure(Call call, IOException e) {
                     mainHandler.post(() -> {
                         removeLastSystemMessage();
-                        addMessage("system", "❌ 请求失败: " + e.getMessage());
+                        displayMessage("system", "❌ 请求失败: " + e.getMessage());
+                        saveMessageToDb(currentChatId, "system", "❌ 请求失败: " + e.getMessage());
                     });
                 }
 
@@ -381,29 +475,28 @@ public class MainActivity extends Activity {
                                         .getJSONObject(0)
                                         .getJSONObject("message")
                                         .getString("content");
-                                // 显示 AI 回复（左对齐，灰色气泡）
-                                addMessage("ai", reply);
+                                displayMessage("ai", reply);
+                                saveMessageToDb(currentChatId, "ai", reply);
                             } catch (Exception e) {
-                                addMessage("system", "❌ 解析响应失败: " + e.getMessage());
+                                displayMessage("system", "❌ 解析响应失败: " + e.getMessage());
+                                saveMessageToDb(currentChatId, "system", "❌ 解析响应失败: " + e.getMessage());
                             }
                         } else {
-                            addMessage("system", "❌ 服务器错误 " + response.code() + ": " + responseBody);
+                            displayMessage("system", "❌ 服务器错误 " + response.code() + ": " + responseBody);
+                            saveMessageToDb(currentChatId, "system", "❌ 服务器错误 " + response.code() + ": " + responseBody);
                         }
                     });
                 }
             });
 
         } catch (Exception e) {
-            addMessage("system", "❌ 构建请求失败: " + e.getMessage());
+            removeLastSystemMessage();
+            displayMessage("system", "❌ 构建请求失败: " + e.getMessage());
+            saveMessageToDb(currentChatId, "system", "❌ 构建请求失败: " + e.getMessage());
         }
     }
 
-    // ── 添加消息气泡 ──
-    private void addMessage(String role, String content) {
-        if ("system".equals(role) && content.contains("正在思考")) {
-            removeLastSystemMessage();
-        }
-
+    private void displayMessage(String role, String content) {
         LinearLayout msgRow = new LinearLayout(this);
         msgRow.setOrientation(LinearLayout.VERTICAL);
         msgRow.setPadding(0, 8, 0, 8);
@@ -415,37 +508,41 @@ public class MainActivity extends Activity {
         bubble.setLineSpacing(4f, 1f);
 
         if ("user".equals(role)) {
-            // 用户消息：右对齐，绿色气泡
             bubble.setBackgroundColor(Color.parseColor("#DCF8C6"));
             msgRow.setGravity(Gravity.END);
         } else if ("ai".equals(role)) {
-            // AI 消息：左对齐，灰色气泡
             bubble.setBackgroundColor(Color.parseColor("#E8E8E8"));
             msgRow.setGravity(Gravity.START);
         } else {
-            // 系统消息：居中，黄色气泡
             bubble.setBackgroundColor(Color.parseColor("#FFF3CD"));
             msgRow.setGravity(Gravity.CENTER);
             bubble.setTextSize(13f);
         }
 
-        // 气泡最大宽度设为屏幕宽度的 80%
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.8);
+        lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.85);
         bubble.setLayoutParams(lp);
 
         msgRow.addView(bubble);
         messageContainer.addView(msgRow);
 
-        // 自动滚动到底部
         messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
     }
 
     private void removeLastSystemMessage() {
-        if (messageContainer.getChildCount() > 0) {
-            messageContainer.removeViewAt(messageContainer.getChildCount() - 1);
+        if (messageContainer.getChildCount() == 0) return;
+        View lastView = messageContainer.getChildAt(messageContainer.getChildCount() - 1);
+        if (lastView instanceof LinearLayout) {
+            LinearLayout lastRow = (LinearLayout) lastView;
+            if (lastRow.getChildCount() > 0 && lastRow.getChildAt(0) instanceof TextView) {
+                TextView lastBubble = (TextView) lastRow.getChildAt(0);
+                String text = lastBubble.getText().toString();
+                if (text.contains("正在思考") || text.contains("⚠️") || text.contains("❌")) {
+                    messageContainer.removeViewAt(messageContainer.getChildCount() - 1);
+                }
+            }
         }
     }
 
@@ -471,7 +568,51 @@ public class MainActivity extends Activity {
     }
 
     static class ChatSession {
+        String id;
         String name;
-        ChatSession(String name) { this.name = name; }
+        ChatSession(String id, String name) {
+            this.id = id;
+            this.name = name;
+        }
+    }
+
+    static class Message {
+        String role;
+        String content;
+        Message(String role, String content) {
+            this.role = role;
+            this.content = content;
+        }
+    }
+
+    static class DatabaseHelper extends SQLiteOpenHelper {
+        private static final String DB_NAME = "chat_history.db";
+        private static final int DB_VERSION = 1;
+
+        DatabaseHelper(Context context) {
+            super(context, DB_NAME, null, DB_VERSION);
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE chats (" +
+                    "id TEXT PRIMARY KEY, " +
+                    "name TEXT NOT NULL, " +
+                    "updated_at INTEGER NOT NULL)");
+            db.execSQL("CREATE TABLE messages (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    "chat_id TEXT NOT NULL, " +
+                    "role TEXT NOT NULL, " +
+                    "content TEXT NOT NULL, " +
+                    "timestamp INTEGER NOT NULL, " +
+                    "FOREIGN KEY (chat_id) REFERENCES chats(id))");
+        }
+
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            db.execSQL("DROP TABLE IF EXISTS messages");
+            db.execSQL("DROP TABLE IF EXISTS chats");
+            onCreate(db);
+        }
     }
 }
