@@ -2,6 +2,8 @@ package com.aihellotalk;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
@@ -41,13 +43,16 @@ public class MainActivity extends Activity {
     private String currentChatName = "";
     private List<ChatSession> chatSessions = new ArrayList<>();
 
+    // 记录上一条用户消息，用于重新回答
+    private String lastUserMessage = "";
+
     private OkHttpClient httpClient;
     private Handler mainHandler;
     private DatabaseHelper dbHelper;
 
     private static final int MAX_HISTORY_ROUNDS = 100;
 
-    // 缓存配置，只在启动时读取一次
+    // 缓存配置
     private String cachedApiKey = "";
     private String cachedApiUrl = "";
     private String cachedModel = "";
@@ -64,7 +69,7 @@ public class MainActivity extends Activity {
         mainHandler = new Handler(Looper.getMainLooper());
         dbHelper = new DatabaseHelper(this);
 
-        // 启动时一次性读取配置，只弹一次 Root 授权
+        // 启动时一次性读取配置
         loadConfigOnce();
 
         loadChatSessions();
@@ -180,7 +185,6 @@ public class MainActivity extends Activity {
         setContentView(drawerLayout);
     }
 
-    // 启动时一次性读取配置，只弹一次 Root 授权
     private void loadConfigOnce() {
         cachedApiKey = readConfig("api_key");
         cachedApiUrl = readConfig("api_url");
@@ -384,9 +388,13 @@ public class MainActivity extends Activity {
         refreshDrawerList();
     }
 
+    // ── 发送消息 ──
     private void sendMessage() {
         String text = inputBox.getText().toString().trim();
         if (text.isEmpty()) return;
+
+        // 记录上一条用户消息
+        lastUserMessage = text;
 
         if (currentChatId.isEmpty()) {
             String chatName = text.length() > 10 ? text.substring(0, 10) + "..." : text;
@@ -414,7 +422,7 @@ public class MainActivity extends Activity {
         saveMessageToDb(currentChatId, "user", text);
         inputBox.setText("");
 
-        // 使用缓存的配置，不再重复读取
+        // 使用缓存的配置
         String apiKey = cachedApiKey;
         String apiUrl = cachedApiUrl;
         String model = cachedModel;
@@ -454,7 +462,6 @@ public class MainActivity extends Activity {
             JSONArray messages = new JSONArray();
             for (Message msg : history) {
                 JSONObject histMsg = new JSONObject();
-                // 将数据库中的 "ai" 转为 API 要求的 "assistant"
                 String apiRole = msg.role.equals("ai") ? "assistant" : msg.role;
                 histMsg.put("role", apiRole);
                 histMsg.put("content", msg.content);
@@ -516,38 +523,145 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ── 重新回答（点击旋转符号触发）──
+    private void regenerateAnswer() {
+        if (lastUserMessage.isEmpty()) {
+            Toast.makeText(this, "没有可重新回答的消息", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // 把最后一条 AI 回复从界面上移除（但不删数据库）
+        removeLastAiMessage();
+
+        // 重新发送上一条用户消息
+        inputBox.setText(lastUserMessage);
+        sendMessage();
+    }
+
+    // 移除最后一条 AI 消息（界面显示）
+    private void removeLastAiMessage() {
+        for (int i = messageContainer.getChildCount() - 1; i >= 0; i--) {
+            View child = messageContainer.getChildAt(i);
+            if (child instanceof LinearLayout) {
+                LinearLayout row = (LinearLayout) child;
+                if (row.getChildCount() > 0 && row.getChildAt(0) instanceof TextView) {
+                    TextView bubble = (TextView) row.getChildAt(0);
+                    String text = bubble.getText().toString();
+                    // 只移除 AI 回复（不含系统消息）
+                    if (!text.contains("正在思考") && !text.contains("⚠️") && !text.contains("❌")) {
+                        // 检查气泡颜色（灰色 = AI）
+                        if (bubble.getCurrentTextColor() == Color.parseColor("#E8E8E8") ||
+                                bubble.getBackground() != null) {
+                            // 简化判断：直接移除最后一个非系统消息
+                            messageContainer.removeViewAt(i);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── 显示消息（过滤星号和破折号，添加复制和旋转功能）──
     private void displayMessage(String role, String content) {
+        // 过滤星号和破折号
+        String filteredContent = content.replaceAll("[*\\-]", "");
+
         LinearLayout msgRow = new LinearLayout(this);
-        msgRow.setOrientation(LinearLayout.VERTICAL);
+        msgRow.setOrientation(LinearLayout.HORIZONTAL);
         msgRow.setPadding(0, 8, 0, 8);
 
-        TextView bubble = new TextView(this);
-        bubble.setText(content);
-        bubble.setTextSize(15f);
-        bubble.setPadding(16, 12, 16, 12);
-        bubble.setLineSpacing(4f, 1f);
+        // 如果是 AI 消息，左边放气泡，右边放旋转符号
+        if ("ai".equals(role)) {
+            // 消息气泡
+            LinearLayout bubbleWrapper = new LinearLayout(this);
+            bubbleWrapper.setOrientation(LinearLayout.VERTICAL);
+            bubbleWrapper.setLayoutParams(new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        if ("user".equals(role)) {
-            bubble.setBackgroundColor(Color.parseColor("#DCF8C6"));
-            msgRow.setGravity(Gravity.END);
-        } else if ("ai".equals(role)) {
+            TextView bubble = new TextView(this);
+            bubble.setText(filteredContent);
+            bubble.setTextSize(15f);
+            bubble.setPadding(16, 12, 16, 12);
+            bubble.setLineSpacing(4f, 1f);
             bubble.setBackgroundColor(Color.parseColor("#E8E8E8"));
+
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.75);
+            bubble.setLayoutParams(lp);
+
+            // 长按复制
+            bubble.setOnLongClickListener(v -> {
+                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                ClipData clip = ClipData.newPlainText("AI 回复", bubble.getText().toString());
+                clipboard.setPrimaryClip(clip);
+                Toast.makeText(MainActivity.this, "已复制到剪贴板", Toast.LENGTH_SHORT).show();
+                return true;
+            });
+
+            bubbleWrapper.addView(bubble);
+            msgRow.addView(bubbleWrapper);
+
+            // 旋转符号按钮
+            Button rotateBtn = new Button(this);
+            rotateBtn.setText("🔄");
+            rotateBtn.setTextSize(18f);
+            rotateBtn.setBackgroundColor(Color.TRANSPARENT);
+            rotateBtn.setOnClickListener(v -> regenerateAnswer());
+            msgRow.addView(rotateBtn);
+
             msgRow.setGravity(Gravity.START);
+        } else if ("user".equals(role)) {
+            // 用户消息
+            TextView bubble = new TextView(this);
+            bubble.setText(filteredContent);
+            bubble.setTextSize(15f);
+            bubble.setPadding(16, 12, 16, 12);
+            bubble.setLineSpacing(4f, 1f);
+            bubble.setBackgroundColor(Color.parseColor("#DCF8C6"));
+
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.75);
+            bubble.setLayoutParams(lp);
+
+            // 长按复制
+            bubble.setOnLongClickListener(v -> {
+                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                ClipData clip = ClipData.newPlainText("用户消息", bubble.getText().toString());
+                clipboard.setPrimaryClip(clip);
+                Toast.makeText(MainActivity.this, "已复制到剪贴板", Toast.LENGTH_SHORT).show();
+                return true;
+            });
+
+            // 为了对齐，左边放一个空白占位
+            LinearLayout spacer = new LinearLayout(this);
+            spacer.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            msgRow.addView(spacer);
+            msgRow.addView(bubble);
+            msgRow.setGravity(Gravity.END);
         } else {
-            bubble.setBackgroundColor(Color.parseColor("#FFF3CD"));
-            msgRow.setGravity(Gravity.CENTER);
+            // 系统消息
+            TextView bubble = new TextView(this);
+            bubble.setText(filteredContent);
             bubble.setTextSize(13f);
+            bubble.setPadding(16, 12, 16, 12);
+            bubble.setLineSpacing(4f, 1f);
+            bubble.setBackgroundColor(Color.parseColor("#FFF3CD"));
+
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.75);
+            bubble.setLayoutParams(lp);
+
+            msgRow.addView(bubble);
+            msgRow.setGravity(Gravity.CENTER);
         }
 
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.85);
-        bubble.setLayoutParams(lp);
-
-        msgRow.addView(bubble);
         messageContainer.addView(msgRow);
-
         messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
     }
 
@@ -566,7 +680,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // 只保留一个 readConfig 方法，供启动时调用
     private String readConfig(String key) {
         try {
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "cat /data/local/tmp/htai_config.txt"});
