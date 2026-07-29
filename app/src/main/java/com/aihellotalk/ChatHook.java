@@ -1,6 +1,7 @@
 package com.aihellotalk;
 
 import android.app.AlertDialog;
+import android.graphics.Color;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
@@ -33,7 +34,7 @@ public class ChatHook {
     // ──────────────────────────────────────
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v8.1 (认人+修复版) ===");
+        log("=== Hook v8.3 (中文用户外语翻译+按钮美化) ===");
 
         try { hookRecv(cl); } catch (Throwable e) { log("接收 ❌ " + e); }
         try { hookLang(cl); } catch (Throwable e) { log("语言 ❌ " + e); }
@@ -44,7 +45,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // 1. 接收消息 Hook
+    // 1. 接收消息 Hook（核心修改）
     // ──────────────────────────────────────
 
     private static void hookRecv(ClassLoader cl) throws Exception {
@@ -72,7 +73,6 @@ public class ChatHook {
                     } catch (Exception ignored) {}
                     currentChatId = String.valueOf(cidInt);
 
-                    // 获取对方名字
                     String senderName = null;
                     try {
                         senderName = (String) XposedHelpers.callMethod(msg, "getSenderName");
@@ -81,22 +81,35 @@ public class ChatHook {
                         currentPartnerName = senderName;
                     }
 
-                    // 注册朋友
                     String langCode = langCode(partnerLang);
                     AITranslator.registerFriend(currentChatId, currentPartnerName, langCode);
 
-                    // 记录历史（无论是否翻译都记录）
                     String prefix = isMine ? "我: " : "她: ";
                     AITranslator.appendHistory(currentChatId, "user", prefix + text);
 
                     // 自己发的 → 不翻译
                     if (isMine) return;
 
-                    // 🆕 使用新的判断逻辑：日语/中文都不翻译
-                    if (!AITranslator.needTranslateToChinese(text)) {
-                        log("跳过翻译: " + text.substring(0, Math.min(20, text.length())));
+                    // 🆕 核心逻辑：判断是否需要翻译
+                    // 1. 如果消息包含日语 → 不翻译（无论对方是谁）
+                    if (AITranslator.containsJapanese(text)) {
+                        log("跳过翻译(日语): " + text.substring(0, Math.min(20, text.length())));
                         return;
                     }
+
+                    // 2. 获取对方语言
+                    String friendLang = AITranslator.getFriendLang(currentChatId);
+                    boolean isChineseUser = "zh".equals(friendLang);
+
+                    // 3. 如果消息是纯中文 → 不翻译（无论对方是谁）
+                    if (AITranslator.isChineseOnly(text)) {
+                        // 即使是中文用户发的中文，也不翻译
+                        return;
+                    }
+
+                    // 4. 走到这里说明消息是外语（非中文非日语）
+                    // 无论对方是中文用户还是外语用户，都翻译成中文
+                    // （中文用户发的外语也需要翻译）
 
                     // 获取 msgId 用于缓存
                     String mid = null;
@@ -107,7 +120,6 @@ public class ChatHook {
                         mid = "n_" + text.hashCode();
                     }
 
-                    // 查缓存
                     String cached = AITranslator.getCached(mid);
                     if (cached != null) {
                         try {
@@ -265,7 +277,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // addTranslateBtn — 修复按钮卡死
+    // addTranslateBtn（按钮美化 + 中文用户处理）
     // ──────────────────────────────────────
 
     private static void addTranslateBtn(ViewGroup layout, EditText edit) {
@@ -274,33 +286,37 @@ public class ChatHook {
 
         Button btn = new Button(layout.getContext());
         btn.setText("译");
-        btn.setTextSize(12f);
+        btn.setTextSize(11f);
         btn.setAllCaps(false);
-        btn.setPadding(10, 3, 10, 3);
+        btn.setPadding(8, 2, 8, 2);
+
+        // 半透明样式
+        btn.setBackgroundColor(Color.parseColor("#22FFFFFF"));  // 白色背景 13%
+        btn.setTextColor(Color.parseColor("#99FFFFFF"));        // 白色文字 60%
+        btn.setAlpha(0.6f);
+
         btn.setVisibility(View.GONE);
 
         layout.addView(btn);
         layout.setTag("HT_AI_BTN");
 
-        // TextWatcher：仅中文输入时显示按钮
         edit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
             @Override public void afterTextChanged(Editable s) {}
             @Override
             public void onTextChanged(CharSequence s, int st, int b, int c) {
-                // 只有输入不为空且包含中文时才显示按钮
                 if (s != null && !s.toString().trim().isEmpty()
                         && AITranslator.isChineseOnly(s.toString())) {
                     btn.setVisibility(View.VISIBLE);
-                    btn.setEnabled(true);  // 🆕 确保按钮可点
-                    btn.setText("译");      // 🆕 重置按钮文字
+                    btn.setEnabled(true);
+                    btn.setText("译");
+                    btn.setAlpha(0.6f);
                 } else {
                     btn.setVisibility(View.GONE);
                 }
             }
         });
 
-        // 点击事件
         btn.setOnClickListener(v -> {
             String text = edit.getText().toString().trim();
             if (text.isEmpty() || !AITranslator.isChineseOnly(text)) {
@@ -308,47 +324,45 @@ public class ChatHook {
                 return;
             }
 
-            // 🆕 如果当前朋友是中文用户，提示无需翻译
-            String friendLang = AITranslator.getFriendLang(currentChatId);
-            if ("zh".equals(friendLang)) {
-                android.widget.Toast.makeText(
-                        edit.getContext(),
-                        "对方是中文用户，无需翻译",
-                        android.widget.Toast.LENGTH_SHORT
-                ).show();
-                btn.setVisibility(View.GONE);
-                return;
-            }
-
             btn.setEnabled(false);
             btn.setText("...");
+            btn.setAlpha(1.0f);  // 翻译中不透明
 
             new Thread(() -> {
                 try {
-                    String langCode = friendLang;
-                    if (langCode == null || langCode.isEmpty() || "zh".equals(langCode)) {
-                        langCode = langCode(partnerLang);
+                    // 获取朋友语言
+                    String friendLang = AITranslator.getFriendLang(currentChatId);
+
+                    // 如果朋友是中文用户 → 默认翻译成英语
+                    if ("zh".equals(friendLang)) {
+                        friendLang = "en";
+                        log("🔄 中文用户，默认翻译成英语");
                     }
+                    // 如果语言未知 → 用 partnerLang 兜底
+                    if (friendLang == null || friendLang.isEmpty()) {
+                        friendLang = langCode(partnerLang);
+                    }
+
                     String result = AITranslator.translateWithHistory(
-                            text, langCode, currentChatId);
+                            text, friendLang, currentChatId);
 
                     AITranslator.appendHistory(currentChatId, "assistant", result);
                     List<String[]> history = AITranslator.loadHistoryForDisplay(currentChatId);
 
                     log("🔄 翻译请求: 朋友=" + AITranslator.getFriendName(currentChatId)
-                            + " 语言=" + langCode);
+                            + " 语言=" + friendLang);
 
                     edit.post(() -> {
-                        // 🆕 关键修复：无论成功失败，都恢复按钮状态
                         btn.setEnabled(true);
                         btn.setText("译");
+                        btn.setAlpha(0.6f);
                         showPicker(edit, result, history);
                     });
                 } catch (Exception e) {
                     edit.post(() -> {
-                        // 🆕 异常时也恢复按钮
                         btn.setEnabled(true);
                         btn.setText("译");
+                        btn.setAlpha(0.6f);
                         log("❌ 翻译失败: " + e.getMessage());
                         android.widget.Toast.makeText(
                                 edit.getContext(),
@@ -393,47 +407,40 @@ public class ChatHook {
                     edit.setText(items[which]);
                     edit.setSelection(items[which].length());
                     dialog.dismiss();
-                    // 🆕 选择后隐藏按钮
-                    edit.post(() -> {
-                        // 触发 TextWatcher 重新判断
-                        edit.setText(edit.getText().toString());
-                    });
+                    edit.post(() -> edit.setText(edit.getText().toString()));
                 })
                 .setNegativeButton("取消", (dialog, which) -> {
-                    // 🆕 取消时也恢复按钮
-                    edit.post(() -> {
-                        edit.setText(edit.getText().toString());
-                    });
+                    edit.post(() -> edit.setText(edit.getText().toString()));
                 })
                 .show();
     }
 
     // ──────────────────────────────────────
-    // 语言映射（补全）
+    // 语言映射
     // ──────────────────────────────────────
 
     static String langCode(int l) {
         switch (l) {
-            case 1: return "en";   // English
-            case 2: return "ru";   // Polish
-            case 3: return "uk";   // Ukrainian
-            case 4: return "vi";   // Vietnamese
-            case 5: return "th";   // Thai
-            case 6: return "ru";   // Russian
-            case 7: return "ja";   // Japanese
-            case 8: return "ko";   // Korean
-            case 9: return "fr";   // French
-            case 10: return "de";  // German
-            case 11: return "es";  // Spanish
-            case 12: return "pt";  // Portuguese
-            case 13: return "it";  // Italian
-            case 14: return "ar";  // Arabic
-            case 15: return "hi";  // Hindi
-            case 16: return "id";  // Indonesian
-            case 17: return "ms";  // Malay
-            case 18: return "zh";  // ← 🆕 你日志里的 18 号语言，暂定为中文
-            case 19: return "tr";  // Turkish
-            case 20: return "nl";  // Dutch
+            case 1: return "en";
+            case 2: return "ru";
+            case 3: return "uk";
+            case 4: return "vi";
+            case 5: return "th";
+            case 6: return "ru";
+            case 7: return "ja";
+            case 8: return "ko";
+            case 9: return "fr";
+            case 10: return "de";
+            case 11: return "es";
+            case 12: return "pt";
+            case 13: return "it";
+            case 14: return "ar";
+            case 15: return "hi";
+            case 16: return "id";
+            case 17: return "ms";
+            case 18: return "zh";
+            case 19: return "tr";
+            case 20: return "nl";
             default: return "en";
         }
     }
@@ -457,7 +464,7 @@ public class ChatHook {
             case 15: return "Hindi";
             case 16: return "Indonesian";
             case 17: return "Malay";
-            case 18: return "Chinese(可能)";
+            case 18: return "Chinese";
             case 19: return "Turkish";
             case 20: return "Dutch";
             default: return "Unknown(" + l + ")";
