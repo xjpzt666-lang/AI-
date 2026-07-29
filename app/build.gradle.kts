@@ -36,4 +36,7 @@ dependencies {
     
     // OkHttp 4.x（打包进APK）
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // 👇 新增：DrawerLayout 侧滑菜单库
+    implementation("androidx.drawerlayout:drawerlayout:1.2.0")
 }
