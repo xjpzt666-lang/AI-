@@ -14,9 +14,7 @@ import android.widget.Toast;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -32,233 +30,43 @@ public class ChatHook {
     private static String currentChatId = "0";
     private static String currentPartnerName = "";
     private static int partnerLang = 1;
-    private static String partnerNationality = ""; // 🆕 对方国籍
     private static final Set<String> translating = ConcurrentHashMap.newKeySet();
 
     // 默认回复语言（对方是中文用户时使用）
     private static final String DEFAULT_REPLY_LANG = "en";
 
-    // 🆕 缓存 HelloTalk 工具类方法
+    // 🆕 缓存 HelloTalk 的 av.a 类方法（语言映射）
     private static Method langCodeMethod = null;      // av.a.a(int) → 大写ISO代码
-    private static Method langNameMethod = null;      // av.c.b(int) → 英文语言名
-    private static Method smartTargetMethod = null;   // dy.t.b(String) → 智能目标语言
+    private static Method langNameMethod = null;      // av.a.b(int) → 英文语言名
 
-    // 🆕 国籍 → ISO语言代码映射表（小写国家名 → 小写语言代码）
-    private static final Map<String, String> NATIONALITY_MAP = new HashMap<>();
-    static {
-        // 欧洲
-        NATIONALITY_MAP.put("russia", "ru");
-        NATIONALITY_MAP.put("ukraine", "uk");
-        NATIONALITY_MAP.put("poland", "pl");
-        NATIONALITY_MAP.put("belarus", "ru");
-        NATIONALITY_MAP.put("kazakhstan", "ru");
-        NATIONALITY_MAP.put("lithuania", "lt");
-        NATIONALITY_MAP.put("latvia", "lv");
-        NATIONALITY_MAP.put("estonia", "et");
-        NATIONALITY_MAP.put("moldova", "ro");
-        NATIONALITY_MAP.put("romania", "ro");
-        NATIONALITY_MAP.put("bulgaria", "bg");
-        NATIONALITY_MAP.put("czech", "cs");
-        NATIONALITY_MAP.put("slovakia", "sk");
-        NATIONALITY_MAP.put("slovenia", "sl");
-        NATIONALITY_MAP.put("croatia", "hr");
-        NATIONALITY_MAP.put("serbia", "sr");
-        NATIONALITY_MAP.put("bosnia", "bs");
-        NATIONALITY_MAP.put("hungary", "hu");
-        NATIONALITY_MAP.put("greece", "el");
-        NATIONALITY_MAP.put("italy", "it");
-        NATIONALITY_MAP.put("spain", "es");
-        NATIONALITY_MAP.put("portugal", "pt");
-        NATIONALITY_MAP.put("france", "fr");
-        NATIONALITY_MAP.put("germany", "de");
-        NATIONALITY_MAP.put("netherlands", "nl");
-        NATIONALITY_MAP.put("belgium", "nl");
-        NATIONALITY_MAP.put("austria", "de");
-        NATIONALITY_MAP.put("switzerland", "de");
-        NATIONALITY_MAP.put("denmark", "da");
-        NATIONALITY_MAP.put("finland", "fi");
-        NATIONALITY_MAP.put("sweden", "sv");
-        NATIONALITY_MAP.put("norway", "nn");
-        NATIONALITY_MAP.put("iceland", "is");
-        NATIONALITY_MAP.put("ireland", "en");
-        NATIONALITY_MAP.put("england", "en");
-        NATIONALITY_MAP.put("scotland", "en");
-        NATIONALITY_MAP.put("wales", "en");
-        NATIONALITY_MAP.put("czech republic", "cs");
-
-        // 亚洲
-        NATIONALITY_MAP.put("china", "zh");
-        NATIONALITY_MAP.put("taiwan", "zh");
-        NATIONALITY_MAP.put("hong kong", "zh");
-        NATIONALITY_MAP.put("macau", "zh");
-        NATIONALITY_MAP.put("japan", "ja");
-        NATIONALITY_MAP.put("korea", "ko");
-        NATIONALITY_MAP.put("south korea", "ko");
-        NATIONALITY_MAP.put("north korea", "ko");
-        NATIONALITY_MAP.put("thailand", "th");
-        NATIONALITY_MAP.put("vietnam", "vi");
-        NATIONALITY_MAP.put("indonesia", "id");
-        NATIONALITY_MAP.put("malaysia", "ms");
-        NATIONALITY_MAP.put("singapore", "en");
-        NATIONALITY_MAP.put("philippines", "tl");
-        NATIONALITY_MAP.put("india", "hi");
-        NATIONALITY_MAP.put("pakistan", "ur");
-        NATIONALITY_MAP.put("bangladesh", "bn");
-        NATIONALITY_MAP.put("mongolia", "mn");
-        NATIONALITY_MAP.put("nepal", "ne");
-        NATIONALITY_MAP.put("sri lanka", "si");
-        NATIONALITY_MAP.put("myanmar", "my");
-        NATIONALITY_MAP.put("cambodia", "km");
-        NATIONALITY_MAP.put("laos", "lo");
-
-        // 中东
-        NATIONALITY_MAP.put("iran", "fa");
-        NATIONALITY_MAP.put("turkey", "tr");
-        NATIONALITY_MAP.put("arabia", "ar");
-        NATIONALITY_MAP.put("saudi arabia", "ar");
-        NATIONALITY_MAP.put("uae", "ar");
-        NATIONALITY_MAP.put("israel", "he");
-        NATIONALITY_MAP.put("egypt", "ar");
-        NATIONALITY_MAP.put("morocco", "ar");
-        NATIONALITY_MAP.put("algeria", "ar");
-        NATIONALITY_MAP.put("tunisia", "ar");
-        NATIONALITY_MAP.put("jordan", "ar");
-        NATIONALITY_MAP.put("lebanon", "ar");
-        NATIONALITY_MAP.put("syria", "ar");
-        NATIONALITY_MAP.put("iraq", "ar");
-        NATIONALITY_MAP.put("afghanistan", "ps");
-
-        // 美洲
-        NATIONALITY_MAP.put("brazil", "pt");
-        NATIONALITY_MAP.put("mexico", "es");
-        NATIONALITY_MAP.put("argentina", "es");
-        NATIONALITY_MAP.put("chile", "es");
-        NATIONALITY_MAP.put("colombia", "es");
-        NATIONALITY_MAP.put("peru", "es");
-        NATIONALITY_MAP.put("venezuela", "es");
-        NATIONALITY_MAP.put("cuba", "es");
-        NATIONALITY_MAP.put("canada", "en");
-        NATIONALITY_MAP.put("usa", "en");
-        NATIONALITY_MAP.put("united states", "en");
-        NATIONALITY_MAP.put("united kingdom", "en");
-
-        // 非洲
-        NATIONALITY_MAP.put("south africa", "af");
-        NATIONALITY_MAP.put("nigeria", "yo");
-        NATIONALITY_MAP.put("kenya", "sw");
-        NATIONALITY_MAP.put("ethiopia", "am");
-        NATIONALITY_MAP.put("tanzania", "sw");
-        NATIONALITY_MAP.put("ghana", "ak");
-        NATIONALITY_MAP.put("senegal", "wo");
-        NATIONALITY_MAP.put("ivory coast", "fr");
-        NATIONALITY_MAP.put("cameroon", "fr");
-    }
-
-    // 🆕 语言英文名关键词 → ISO代码映射
-    private static final Map<String, String> LANG_NAME_MAP = new HashMap<>();
-    static {
-        LANG_NAME_MAP.put("chinese", "zh");
-        LANG_NAME_MAP.put("english", "en");
-        LANG_NAME_MAP.put("japanese", "ja");
-        LANG_NAME_MAP.put("korean", "ko");
-        LANG_NAME_MAP.put("spanish", "es");
-        LANG_NAME_MAP.put("french", "fr");
-        LANG_NAME_MAP.put("portuguese", "pt");
-        LANG_NAME_MAP.put("german", "de");
-        LANG_NAME_MAP.put("italian", "it");
-        LANG_NAME_MAP.put("russian", "ru");
-        LANG_NAME_MAP.put("arabic", "ar");
-        LANG_NAME_MAP.put("turkish", "tr");
-        LANG_NAME_MAP.put("polish", "pl");
-        LANG_NAME_MAP.put("ukrainian", "uk");
-        LANG_NAME_MAP.put("czech", "cs");
-        LANG_NAME_MAP.put("slovak", "sk");
-        LANG_NAME_MAP.put("hungarian", "hu");
-        LANG_NAME_MAP.put("romanian", "ro");
-        LANG_NAME_MAP.put("bulgarian", "bg");
-        LANG_NAME_MAP.put("greek", "el");
-        LANG_NAME_MAP.put("dutch", "nl");
-        LANG_NAME_MAP.put("swedish", "sv");
-        LANG_NAME_MAP.put("norwegian", "nn");
-        LANG_NAME_MAP.put("finnish", "fi");
-        LANG_NAME_MAP.put("danish", "da");
-        LANG_NAME_MAP.put("hebrew", "he");
-        LANG_NAME_MAP.put("thai", "th");
-        LANG_NAME_MAP.put("vietnamese", "vi");
-        LANG_NAME_MAP.put("indonesian", "id");
-        LANG_NAME_MAP.put("malay", "ms");
-        LANG_NAME_MAP.put("tagalog", "tl");
-        LANG_NAME_MAP.put("hindi", "hi");
-        LANG_NAME_MAP.put("bengali", "bn");
-        LANG_NAME_MAP.put("urdu", "ur");
-        LANG_NAME_MAP.put("persian", "fa");
-        LANG_NAME_MAP.put("farsi", "fa");
-        LANG_NAME_MAP.put("azerbaijani", "az");
-        LANG_NAME_MAP.put("catalan", "ca");
-        LANG_NAME_MAP.put("croatian", "hr");
-        LANG_NAME_MAP.put("serbian", "sr");
-        LANG_NAME_MAP.put("slovenian", "sl");
-        LANG_NAME_MAP.put("lithuanian", "lt");
-        LANG_NAME_MAP.put("latvian", "lv");
-        LANG_NAME_MAP.put("estonian", "et");
-        LANG_NAME_MAP.put("afrikaans", "af");
-        LANG_NAME_MAP.put("tamil", "ta");
-        LANG_NAME_MAP.put("telugu", "te");
-        LANG_NAME_MAP.put("marathi", "mr");
-        LANG_NAME_MAP.put("gujarati", "gu");
-        LANG_NAME_MAP.put("punjabi", "pa");
-        LANG_NAME_MAP.put("kannada", "kn");
-        LANG_NAME_MAP.put("malayalam", "ml");
-        LANG_NAME_MAP.put("nepali", "ne");
-        LANG_NAME_MAP.put("sinhala", "si");
-        LANG_NAME_MAP.put("burmese", "my");
-        LANG_NAME_MAP.put("khmer", "km");
-        LANG_NAME_MAP.put("lao", "lo");
-        LANG_NAME_MAP.put("mongolian", "mn");
-        LANG_NAME_MAP.put("georgian", "ka");
-        LANG_NAME_MAP.put("armenian", "hy");
-        LANG_NAME_MAP.put("amharic", "am");
-        LANG_NAME_MAP.put("swahili", "sw");
-        LANG_NAME_MAP.put("yoruba", "yo");
-        LANG_NAME_MAP.put("zulu", "zu");
-        LANG_NAME_MAP.put("xhosa", "xh");
-        LANG_NAME_MAP.put("afrikaans", "af");
-    }
+    // 🆕 最新从 chatUser 获取的信息（用于打开页面时立即识别）
+    private static volatile String latestNationality = "";
+    private static volatile int latestNativeLang = 1;
+    private static volatile String latestPartnerName = "";
 
     // ──────────────────────────────────────
     // 主安装入口
     // ──────────────────────────────────────
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v9.2 (国籍映射 + 双轨语言判定 + AI翻译) ===");
+        log("=== Hook v9.3 (打开即识别 + 动态语言映射) ===");
 
-        // 缓存 av.a.a(int) — ID → ISO代码
+        // 缓存 av.a 类方法
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
             langCodeMethod = avClass.getMethod("a", int.class);
-            log("✅ 缓存 av.a.a(int) 成功");
+            langNameMethod = avClass.getMethod("b", int.class);
+            log("✅ 缓存语言映射方法成功");
         } catch (Throwable e) {
-            log("⚠️ 缓存 av.a.a(int) 失败: " + e.getMessage());
+            log("⚠️ 缓存语言映射方法失败: " + e.getMessage());
         }
 
-        // 🆕 尝试缓存 av.c.b(int) — ID → 语言英文名
-        try {
-            Class<?> avcClass = XposedHelpers.findClass("av.c", cl);
-            langNameMethod = avcClass.getMethod("b", int.class);
-            log("✅ 缓存 av.c.b(int) 成功");
-        } catch (Throwable e) {
-            log("⚠️ 缓存 av.c.b(int) 失败: " + e.getMessage());
-        }
+        // 🆕 Hook startChat – 每次打开聊天页面必调
+        try { hookStartChat(cl); } catch (Throwable e) { log("startChat ❌ " + e); }
+        // 🆕 Hook chatUser 设置 – 异步加载用户资料后触发
+        try { hookSetChatUser(cl); } catch (Throwable e) { log("setChatUser ❌ " + e); }
 
-        // 🆕 尝试缓存 dy.t.b(String) — 智能目标语言
-        try {
-            Class<?> dyClass = XposedHelpers.findClass("dy.t", cl);
-            smartTargetMethod = dyClass.getMethod("b", String.class);
-            log("✅ 缓存 dy.t.b(String) 成功");
-        } catch (Throwable e) {
-            log("⚠️ 缓存 dy.t.b(String) 失败: " + e.getMessage());
-        }
-
+        // 保留原有的 hook（作为补充）
         try { hookRecv(cl); } catch (Throwable e) { log("接收 ❌ " + e); }
         try { hookLang(cl); } catch (Throwable e) { log("语言 ❌ " + e); }
         try { hookBtnOld(cl); } catch (Throwable e) { log("旧版按钮 ❌ " + e); }
@@ -268,7 +76,105 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // 1. 接收消息 Hook（AI翻译）
+    // 🆕 Hook startChat – 同步拿到 chatId
+    // ──────────────────────────────────────
+
+    private static void hookStartChat(ClassLoader cl) throws Exception {
+        XposedHelpers.findAndHookMethod(
+                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
+                cl,
+                "startChat",
+                int.class, int.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        int chatId = (int) param.args[0];
+                        currentChatId = String.valueOf(chatId);
+                        log("📂 打开聊天 chatId=" + chatId);
+                    }
+                }
+        );
+        log("✅ startChat");
+    }
+
+    // ──────────────────────────────────────
+    // 🆕 Hook chatUser 设置 – 异步获取用户资料
+    // ──────────────────────────────────────
+
+    private static void hookSetChatUser(ClassLoader cl) throws Exception {
+        // 尝试多种可能的 setter 名称（Kotlin 编译器生成）
+        String[] possibleNames = {
+                "access$setChatUser$p",
+                "setChatUser",
+                "chatUser$setter",
+                "set_user",
+                "putChatUser"
+        };
+        boolean hooked = false;
+        for (String methodName : possibleNames) {
+            try {
+                XposedHelpers.findAndHookMethod(
+                        "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
+                        cl,
+                        methodName,
+                        "com.hellotalk.business.entity.userInfo.UserBaseInfo",
+                        new XC_MethodHook() {
+                            @Override
+                            protected void afterHookedMethod(MethodHookParam param) {
+                                Object chatUser = param.args[0];
+                                if (chatUser == null) return;
+                                updateFromChatUser(chatUser);
+                            }
+                        }
+                );
+                log("✅ setChatUser: " + methodName);
+                hooked = true;
+                break; // 找到一个就停止
+            } catch (Exception ignored) {}
+        }
+        if (!hooked) {
+            log("⚠️ 未找到 chatUser setter，尝试其他方式");
+            // 还可以尝试 Hook 构造函数或 init 方法，但先跳过
+        }
+    }
+
+    // 🆕 从 chatUser 更新全局变量
+    private static void updateFromChatUser(Object chatUser) {
+        try {
+            int nativeLang = (Integer) XposedHelpers.callMethod(chatUser, "getNativeLang");
+            String nationality = (String) XposedHelpers.callMethod(chatUser, "getNationality");
+            String nickName = (String) XposedHelpers.callMethod(chatUser, "getNickName");
+            String userName = (String) XposedHelpers.callMethod(chatUser, "getUserName");
+
+            // 更新全局变量
+            latestNativeLang = nativeLang;
+            latestNationality = nationality != null ? nationality : "";
+            latestPartnerName = (nickName != null && !nickName.isEmpty()) ? nickName :
+                    (userName != null ? userName : "");
+
+            // 更新当前伙伴名
+            if (!latestPartnerName.isEmpty()) {
+                currentPartnerName = latestPartnerName;
+            }
+
+            // 立即注册朋友（即使没有消息往来）
+            String langCode = getDynamicLangCode(nativeLang);
+            String storedLang = AITranslator.getFriendLang(currentChatId);
+            if (!langCode.equals(storedLang) || latestNationality.isEmpty() == false) {
+                AITranslator.registerFriend(currentChatId, currentPartnerName, langCode);
+                log("👤 注册朋友: " + currentPartnerName + " (" + langCode + ") 国籍=" + latestNationality);
+            }
+
+            // 日志输出详细信息
+            String langName = getDynamicLangName(nativeLang);
+            log("🌍 用户资料: ID=" + nativeLang + " → " + langCode + " (" + langName + ") 国籍=" + latestNationality);
+        } catch (Exception e) {
+            log("⚠️ 更新用户资料失败: " + e.getMessage());
+        }
+    }
+
+    // ──────────────────────────────────────
+    // 1. 接收消息 Hook（AI翻译，逻辑不变）
     // ──────────────────────────────────────
 
     private static void hookRecv(ClassLoader cl) throws Exception {
@@ -304,9 +210,9 @@ public class ChatHook {
                         currentPartnerName = senderName;
                     }
 
-                    // 注册朋友（用双轨判定语言）
-                    String detectedLang = detectFriendLanguage(partnerLang, partnerNationality);
-                    AITranslator.registerFriend(currentChatId, currentPartnerName, detectedLang);
+                    // 使用动态语言映射（更新朋友信息）
+                    String langCode = getDynamicLangCode(partnerLang);
+                    AITranslator.registerFriend(currentChatId, currentPartnerName, langCode);
 
                     String prefix = isMine ? "我: " : "她: ";
                     AITranslator.appendHistory(currentChatId, "user", prefix + text);
@@ -370,7 +276,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // 2. 语言检测 Hook（双轨：国籍 + 语言ID）
+    // 2. 语言检测 Hook（保留，作为消息到来时的补充）
     // ──────────────────────────────────────
 
     private static void hookLang(ClassLoader cl) throws Exception {
@@ -390,62 +296,23 @@ public class ChatHook {
                             if (u == null) return;
 
                             int l = (Integer) XposedHelpers.callMethod(u, "getNativeLang");
-
-                            // 🆕 读取国籍
-                            String nationality = "";
-                            try {
-                                nationality = (String) XposedHelpers.callMethod(u, "getNationality");
-                            } catch (Exception e) {
-                                log("⚠️ getNationality() 不可用: " + e.getMessage());
-                            }
-
-                            if (l != partnerLang || !nationality.equals(partnerNationality)) {
+                            if (l != partnerLang) {
                                 partnerLang = l;
-                                partnerNationality = nationality != null ? nationality : "";
-
-                                // 🆕 双轨判定语言
-                                String detectedLang = detectFriendLanguage(l, partnerNationality);
-                                String langName = getDynamicLangName(l);
-
-                                log("🌍 语言切换: ID:" + l + " 国籍:" + partnerNationality
-                                        + " → " + detectedLang + " (" + langName + ")");
+                                String code = getDynamicLangCode(l);
+                                String name = getDynamicLangName(l);
+                                log("🌍 语言切换(消息): ID:" + l + " → " + code + " (" + name + ")");
                             }
 
-                            String userName = null;
-                            try {
-                                userName = (String) XposedHelpers.callMethod(u, "getUserName");
-                            } catch (Exception ignored) {}
-                            String nickName = null;
-                            try {
-                                nickName = (String) XposedHelpers.callMethod(u, "getNickName");
-                            } catch (Exception ignored) {}
-
-                            if (userName != null && !userName.isEmpty()) {
-                                currentPartnerName = userName;
-                            } else if (nickName != null && !nickName.isEmpty()) {
-                                currentPartnerName = nickName;
-                            }
-
-                            if (currentChatId != null && !currentChatId.equals("0")) {
-                                String currentStoredLang = AITranslator.getFriendLang(currentChatId);
-                                String newLang = detectFriendLanguage(l, partnerNationality);
-                                if (!newLang.equals(currentStoredLang)) {
-                                    AITranslator.registerFriend(
-                                            currentChatId,
-                                            currentPartnerName,
-                                            newLang
-                                    );
-                                    log("👤 朋友: " + currentPartnerName + " (" + newLang + ")");
-                                }
-                            }
+                            // 更新伙伴名（如果消息中有）
+                            // 这里可以不做，因为 hookRecv 已经做了
                         } catch (Throwable ignored) {}
                     }
                 });
-        log("✅ 语言-双轨判定");
+        log("✅ 语言-消息补充");
     }
 
     // ──────────────────────────────────────
-    // 3 & 4. 按钮注入
+    // 3 & 4. 按钮注入（不变）
     // ──────────────────────────────────────
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
@@ -455,7 +322,7 @@ public class ChatHook {
             @Override
             protected void afterHookedMethod(MethodHookParam p) {
                 View v = (View) p.thisObject;
-                v.postDelayed(() -> tryAddBtn_Old(v), 1200);
+                v.postDelayed(() -> tryAddBtn_Old(v), 1800);
             }
         });
         log("✅ 旧版按钮");
@@ -468,14 +335,14 @@ public class ChatHook {
             @Override
             protected void afterHookedMethod(MethodHookParam p) {
                 View v = (View) p.thisObject;
-                v.postDelayed(() -> tryAddBtn_New(v), 1500);
+                v.postDelayed(() -> tryAddBtn_New(v), 2200);
             }
         });
         log("✅ 新版按钮");
     }
 
     // ──────────────────────────────────────
-    // tryAddBtn
+    // tryAddBtn（增强查找逻辑）
     // ──────────────────────────────────────
 
     private static void tryAddBtn_New(View box) {
@@ -523,7 +390,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // addTranslateBtn
+    // addTranslateBtn（按钮注入）
     // ──────────────────────────────────────
 
     private static void addTranslateBtn(ViewGroup layout, EditText edit) {
@@ -541,7 +408,7 @@ public class ChatHook {
         bg.setCornerRadius(8f);
         btn.setBackground(bg);
         btn.setTextColor(Color.parseColor("#FFFFFFFF"));
-        btn.setAlpha(0.93f);
+        btn.setAlpha(0.89f);
 
         btn.setVisibility(View.GONE);
 
@@ -558,7 +425,7 @@ public class ChatHook {
                     btn.setVisibility(View.VISIBLE);
                     btn.setEnabled(true);
                     btn.setText("译");
-                    btn.setAlpha(0.94f);
+                    btn.setAlpha(0.91f);
                 } else {
                     btn.setVisibility(View.GONE);
                 }
@@ -578,10 +445,10 @@ public class ChatHook {
 
             new Thread(() -> {
                 try {
+                    // 🆕 使用最新识别的目标语言
                     String targetLang = determineSmartTargetLang();
                     log("🔄 AI翻译请求: 朋友=" + AITranslator.getFriendName(currentChatId)
-                            + " 目标语言=" + targetLang
-                            + " 国籍=" + partnerNationality);
+                            + " 目标语言=" + targetLang + " 国籍=" + latestNationality);
 
                     String result = AITranslator.translateWithHistory(
                             text, targetLang, currentChatId);
@@ -592,14 +459,14 @@ public class ChatHook {
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("译");
-                        btn.setAlpha(0.94f);
+                        btn.setAlpha(0.87f);
                         showPicker(edit, result, history);
                     });
                 } catch (Exception e) {
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("译");
-                        btn.setAlpha(0.93f);
+                        btn.setAlpha(0.86f);
                         String errMsg = e.getMessage();
                         log("❌ AI翻译失败: " + errMsg);
                         Toast.makeText(
@@ -614,105 +481,99 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // 🆕 双轨语言判定
+    // 🆕 智能跟随：优先使用最新国籍/语言信息
     // ──────────────────────────────────────
 
-    /**
-     * 双轨判定对方语言：
-     * 轨1：国籍映射表（最准确）
-     * 轨2：av.c.b(int) 语言英文名
-     * 轨3：av.a.a(int) ISO代码（回退）
-     * 轨4：HelloTalk 智能判定 dy.t.b()（最终回退）
-     */
-    private static String detectFriendLanguage(int langId, String nationality) {
-        // 轨1：国籍映射
-        if (nationality != null && !nationality.isEmpty()) {
-            String lower = nationality.toLowerCase().trim();
-            String fromMap = NATIONALITY_MAP.get(lower);
-            if (fromMap != null) {
-                log("🎯 国籍判定: " + nationality + " → " + fromMap);
-                return fromMap;
-            }
-            // 部分匹配（处理 "russian federation" 等变体）
-            for (Map.Entry<String, String> entry : NATIONALITY_MAP.entrySet()) {
-                if (lower.contains(entry.getKey())) {
-                    log("🎯 国籍模糊判定: " + nationality + " → " + entry.getValue());
-                    return entry.getValue();
-                }
-            }
-        }
-
-        // 轨2：语言英文名
-        if (langNameMethod != null) {
-            try {
-                String langName = (String) langNameMethod.invoke(null, langId);
-                if (langName != null) {
-                    String lower = langName.toLowerCase();
-                    for (Map.Entry<String, String> entry : LANG_NAME_MAP.entrySet()) {
-                        if (lower.contains(entry.getKey())) {
-                            log("🎯 语言名判定: " + langName + " → " + entry.getValue());
-                            return entry.getValue();
-                        }
-                    }
-                }
-            } catch (Exception ignored) {}
-        }
-
-        // 轨3：av.a.a(int) ISO代码
-        String isoCode = getDynamicLangCode(langId);
-        if (isoCode != null && !isoCode.equals("en")) {
-            log("🎯 ISO代码判定: ID:" + langId + " → " + isoCode);
-            return isoCode;
-        }
-
-        // 轨4：dy.t.b() 智能判定
-        if (smartTargetMethod != null) {
-            try {
-                String smart = (String) smartTargetMethod.invoke(null, "EN");
-                if (smart != null && !smart.isEmpty()) {
-                    log("🎯 HelloTalk智能判定 → " + smart);
-                    return smart.toLowerCase();
-                }
-            } catch (Exception ignored) {}
-        }
-
-        // 最终兜底
-        log("⚠️ 无法判定语言，使用默认: " + DEFAULT_REPLY_LANG);
-        return DEFAULT_REPLY_LANG;
-    }
-
-    /**
-     * 智能跟随：点"译"按钮时的目标语言
-     */
     private static String determineSmartTargetLang() {
-        String friendLang = AITranslator.getFriendLang(currentChatId);
-        log("当前朋友语言: " + friendLang + " 国籍: " + partnerNationality);
-
-        // 重新检测（确保最新）
-        String detected = detectFriendLanguage(partnerLang, partnerNationality);
-        if (detected != null && !detected.isEmpty()) {
-            friendLang = detected;
+        // 1. 优先使用最新国籍映射
+        String nationality = latestNationality.toLowerCase();
+        if (!nationality.isEmpty()) {
+            String mappedLang = mapNationalityToLang(nationality);
+            if (mappedLang != null) {
+                log("🎯 国籍判定: " + nationality + " → " + mappedLang);
+                return mappedLang;
+            }
         }
 
-        // 中文用户 → 默认英语
-        if (friendLang != null && (friendLang.equalsIgnoreCase("zh")
-                || friendLang.equalsIgnoreCase("cn")
-                || friendLang.startsWith("zh"))) {
-            log("中文用户 → 使用默认回复语言: " + DEFAULT_REPLY_LANG);
+        // 2. 其次使用最新母语ID
+        int nativeLang = latestNativeLang;
+        String langCode = getDynamicLangCode(nativeLang);
+        String langName = getDynamicLangName(nativeLang);
+        if (langName != null && langName.contains("Chinese")) {
+            log("🎯 母语判定: 中文 → " + DEFAULT_REPLY_LANG);
             return DEFAULT_REPLY_LANG;
         }
+        if (langCode != null && !langCode.isEmpty() && !"en".equals(langCode)) {
+            log("🎯 母语判定: " + langCode);
+            return langCode;
+        }
 
-        // 外语用户 → 跟随
+        // 3. 回退到已存储的朋友语言
+        String friendLang = AITranslator.getFriendLang(currentChatId);
         if (friendLang != null && !friendLang.isEmpty()) {
-            log("外语用户 → 智能跟随: " + friendLang);
+            if (friendLang.equalsIgnoreCase("zh") || friendLang.equalsIgnoreCase("cn")
+                    || friendLang.startsWith("zh")) {
+                log("🎯 存储语言判定: 中文 → " + DEFAULT_REPLY_LANG);
+                return DEFAULT_REPLY_LANG;
+            }
+            log("🎯 存储语言判定: " + friendLang);
             return friendLang;
         }
 
+        // 4. 最终兜底
+        log("🎯 兜底: " + DEFAULT_REPLY_LANG);
         return DEFAULT_REPLY_LANG;
     }
 
+    // 🆕 国籍 → 语言代码映射表
+    private static String mapNationalityToLang(String nationality) {
+        if (nationality == null || nationality.isEmpty()) return null;
+        switch (nationality) {
+            case "china": case "taiwan": case "hong kong": case "macau":
+                return "zh";
+            case "russia": case "belarus": case "kazakhstan": case "kyrgyzstan":
+                return "ru";
+            case "ukraine":
+                return "uk";
+            case "poland":
+                return "pl";
+            case "japan":
+                return "ja";
+            case "korea": case "south korea":
+                return "ko";
+            case "vietnam":
+                return "vi";
+            case "thailand":
+                return "th";
+            case "france":
+                return "fr";
+            case "germany":
+                return "de";
+            case "spain":
+                return "es";
+            case "italy":
+                return "it";
+            case "portugal": case "brazil":
+                return "pt";
+            case "netherlands":
+                return "nl";
+            case "turkey":
+                return "tr";
+            case "indonesia":
+                return "id";
+            case "malaysia":
+                return "ms";
+            case "india":
+                return "hi";
+            case "arabia": case "saudi arabia": case "egypt": case "uae": case "qatar": case "oman": case "kuwait": case "bahrain": case "jordan": case "lebanon": case "iraq": case "syria": case "yemen": case "libya": case "tunisia": case "algeria": case "morocco": case "sudan": case "palestine":
+                return "ar";
+            default:
+                return null;
+        }
+    }
+
     // ──────────────────────────────────────
-    // showPicker
+    // showPicker（不变）
     // ──────────────────────────────────────
 
     private static void showPicker(EditText edit, String result, List<String[]> history) {
@@ -737,8 +598,10 @@ public class ChatHook {
 
         String[] items = versions.toArray(new String[0]);
 
+        // 🆕 使用最新伙伴名
+        String displayName = !latestPartnerName.isEmpty() ? latestPartnerName : currentPartnerName;
         new AlertDialog.Builder(edit.getContext())
-                .setTitle("选版本(" + items.length + "个) - " + AITranslator.getFriendName(currentChatId))
+                .setTitle("选版本(" + items.length + "个) - " + displayName)
                 .setItems(items, (dialog, which) -> {
                     edit.setText(items[which]);
                     edit.setSelection(items[which].length());
@@ -752,7 +615,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // 动态语言映射（av.a.a）
+    // 动态语言映射
     // ──────────────────────────────────────
 
     private static String getDynamicLangCode(int langId) {
@@ -761,7 +624,7 @@ public class ChatHook {
                 String code = (String) langCodeMethod.invoke(null, langId);
                 return code != null ? code.toLowerCase() : "en";
             } catch (Exception e) {
-                log("⚠️ av.a.a(int) 调用失败: " + e.getMessage());
+                log("⚠️ 动态语言代码获取失败: " + e.getMessage());
             }
         }
         return "en";
@@ -772,7 +635,7 @@ public class ChatHook {
             try {
                 return (String) langNameMethod.invoke(null, langId);
             } catch (Exception e) {
-                log("⚠️ av.c.b(int) 调用失败: " + e.getMessage());
+                log("⚠️ 动态语言名称获取失败: " + e.getMessage());
             }
         }
         return "Unknown";
