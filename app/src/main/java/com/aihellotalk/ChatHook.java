@@ -2,12 +2,14 @@ package com.aihellotalk;
 
 import android.app.AlertDialog;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.Toast;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
@@ -29,12 +31,15 @@ public class ChatHook {
     private static int partnerLang = 1;
     private static final Set<String> translating = ConcurrentHashMap.newKeySet();
 
+    // 默认回复语言：对方是中文用户时，点"译"按钮翻译成这个语言
+    private static final String DEFAULT_REPLY_LANG = "en";
+
     // ──────────────────────────────────────
     // 主安装入口
     // ──────────────────────────────────────
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v8.3 (中文用户外语翻译+按钮美化) ===");
+        log("=== Hook v8.6 (按钮左侧+翻译语言修复) ===");
 
         try { hookRecv(cl); } catch (Throwable e) { log("接收 ❌ " + e); }
         try { hookLang(cl); } catch (Throwable e) { log("语言 ❌ " + e); }
@@ -45,7 +50,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // 1. 接收消息 Hook（核心修改）
+    // 1. 接收消息 Hook
     // ──────────────────────────────────────
 
     private static void hookRecv(ClassLoader cl) throws Exception {
@@ -87,31 +92,22 @@ public class ChatHook {
                     String prefix = isMine ? "我: " : "她: ";
                     AITranslator.appendHistory(currentChatId, "user", prefix + text);
 
-                    // 自己发的 → 不翻译
                     if (isMine) return;
 
-                    // 🆕 核心逻辑：判断是否需要翻译
-                    // 1. 如果消息包含日语 → 不翻译（无论对方是谁）
+                    // 日语不翻译
                     if (AITranslator.containsJapanese(text)) {
                         log("跳过翻译(日语): " + text.substring(0, Math.min(20, text.length())));
                         return;
                     }
 
-                    // 2. 获取对方语言
-                    String friendLang = AITranslator.getFriendLang(currentChatId);
-                    boolean isChineseUser = "zh".equals(friendLang);
-
-                    // 3. 如果消息是纯中文 → 不翻译（无论对方是谁）
+                    // 纯中文不翻译
                     if (AITranslator.isChineseOnly(text)) {
-                        // 即使是中文用户发的中文，也不翻译
                         return;
                     }
 
-                    // 4. 走到这里说明消息是外语（非中文非日语）
-                    // 无论对方是中文用户还是外语用户，都翻译成中文
-                    // （中文用户发的外语也需要翻译）
+                    // 外语 → 翻译成中文
+                    log("🌐 检测到外语消息，准备翻译");
 
-                    // 获取 msgId 用于缓存
                     String mid = null;
                     try {
                         mid = (String) XposedHelpers.callMethod(msg, "getMsgId");
@@ -177,7 +173,7 @@ public class ChatHook {
                             int l = (Integer) XposedHelpers.callMethod(u, "getNativeLang");
                             if (l != partnerLang) {
                                 partnerLang = l;
-                                log("🌍 语言切换: " + langName(l) + " (ID:" + l + ")");
+                                log("🌍 语言切换: ID:" + l + " → " + langCode(l));
                             }
 
                             String userName = null;
@@ -277,7 +273,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // addTranslateBtn（按钮美化 + 中文用户处理）
+    // addTranslateBtn（修复透明度 + 修复目标语言 + 按钮强制左侧）
     // ──────────────────────────────────────
 
     private static void addTranslateBtn(ViewGroup layout, EditText edit) {
@@ -286,18 +282,22 @@ public class ChatHook {
 
         Button btn = new Button(layout.getContext());
         btn.setText("译");
-        btn.setTextSize(11f);
+        btn.setTextSize(12f);
         btn.setAllCaps(false);
-        btn.setPadding(8, 2, 8, 2);
+        btn.setPadding(12, 4, 12, 4);
 
-        // 半透明样式
-        btn.setBackgroundColor(Color.parseColor("#22FFFFFF"));  // 白色背景 13%
-        btn.setTextColor(Color.parseColor("#99FFFFFF"));        // 白色文字 60%
-        btn.setAlpha(0.6f);
+        // 修复透明度：深灰背景 + 纯白文字 + 88%不透明
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.parseColor("#CC333333"));  // 深灰色 80% 不透明
+        bg.setCornerRadius(8f);
+        btn.setBackground(bg);
+        btn.setTextColor(Color.parseColor("#FFFFFFFF"));  // 纯白文字
+        btn.setAlpha(0.90f);  // 整体 90% 不透明，清晰可见
 
         btn.setVisibility(View.GONE);
 
-        layout.addView(btn);
+        // 🆕 强制添加到布局的最左侧（索引0），确保按钮在输入框左边
+        layout.addView(btn, 0);
         layout.setTag("HT_AI_BTN");
 
         edit.addTextChangedListener(new TextWatcher() {
@@ -310,7 +310,7 @@ public class ChatHook {
                     btn.setVisibility(View.VISIBLE);
                     btn.setEnabled(true);
                     btn.setText("译");
-                    btn.setAlpha(0.6f);
+                    btn.setAlpha(0.90f);
                 } else {
                     btn.setVisibility(View.GONE);
                 }
@@ -326,53 +326,68 @@ public class ChatHook {
 
             btn.setEnabled(false);
             btn.setText("...");
-            btn.setAlpha(1.0f);  // 翻译中不透明
+            btn.setAlpha(1.0f);  // 翻译中完全不透明
 
             new Thread(() -> {
                 try {
-                    // 获取朋友语言
-                    String friendLang = AITranslator.getFriendLang(currentChatId);
-
-                    // 如果朋友是中文用户 → 默认翻译成英语
-                    if ("zh".equals(friendLang)) {
-                        friendLang = "en";
-                        log("🔄 中文用户，默认翻译成英语");
-                    }
-                    // 如果语言未知 → 用 partnerLang 兜底
-                    if (friendLang == null || friendLang.isEmpty()) {
-                        friendLang = langCode(partnerLang);
-                    }
+                    // 智能跟随：根据对方语言决定翻译目标
+                    String targetLang = determineSmartTargetLang();
+                    log("🔄 翻译请求: 朋友=" + AITranslator.getFriendName(currentChatId)
+                            + " 目标语言=" + targetLang);
 
                     String result = AITranslator.translateWithHistory(
-                            text, friendLang, currentChatId);
+                            text, targetLang, currentChatId);
 
                     AITranslator.appendHistory(currentChatId, "assistant", result);
                     List<String[]> history = AITranslator.loadHistoryForDisplay(currentChatId);
 
-                    log("🔄 翻译请求: 朋友=" + AITranslator.getFriendName(currentChatId)
-                            + " 语言=" + friendLang);
-
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("译");
-                        btn.setAlpha(0.6f);
+                        btn.setAlpha(0.90f);
                         showPicker(edit, result, history);
                     });
                 } catch (Exception e) {
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("译");
-                        btn.setAlpha(0.6f);
-                        log("❌ 翻译失败: " + e.getMessage());
-                        android.widget.Toast.makeText(
+                        btn.setAlpha(0.90f);
+                        String errMsg = e.getMessage();
+                        log("❌ 翻译失败: " + errMsg);
+                        Toast.makeText(
                                 edit.getContext(),
-                                "翻译失败: " + e.getMessage(),
-                                android.widget.Toast.LENGTH_SHORT
+                                "翻译失败: " + errMsg,
+                                Toast.LENGTH_LONG
                         ).show();
                     });
                 }
             }).start();
         });
+    }
+
+    // ──────────────────────────────────────
+    // 智能跟随：根据对方语言决定翻译目标语言
+    // ──────────────────────────────────────
+
+    private static String determineSmartTargetLang() {
+        String friendLang = AITranslator.getFriendLang(currentChatId);
+        log("当前朋友语言: " + friendLang);
+
+        // 情况1：中文用户 → 翻译成默认语言（英语）
+        if ("zh".equals(friendLang)) {
+            log("中文用户 → 使用默认回复语言: " + DEFAULT_REPLY_LANG);
+            return DEFAULT_REPLY_LANG;
+        }
+
+        // 情况2：外语用户 → 智能跟随对方的语言
+        if (friendLang != null && !friendLang.isEmpty() && !"zh".equals(friendLang)) {
+            log("外语用户 → 智能跟随对方语言: " + friendLang);
+            return friendLang;
+        }
+
+        // 兜底：用默认语言
+        log("无法识别语言 → 使用默认回复语言: " + DEFAULT_REPLY_LANG);
+        return DEFAULT_REPLY_LANG;
     }
 
     // ──────────────────────────────────────
@@ -416,32 +431,34 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // 语言映射
+    // 语言映射（根据日志校准）
     // ──────────────────────────────────────
 
     static String langCode(int l) {
         switch (l) {
-            case 1: return "en";
-            case 2: return "ru";
-            case 3: return "uk";
-            case 4: return "vi";
-            case 5: return "th";
-            case 6: return "ru";
-            case 7: return "ja";
-            case 8: return "ko";
-            case 9: return "fr";
-            case 10: return "de";
-            case 11: return "es";
-            case 12: return "pt";
-            case 13: return "it";
-            case 14: return "ar";
-            case 15: return "hi";
-            case 16: return "id";
-            case 17: return "ms";
-            case 18: return "zh";
-            case 19: return "tr";
-            case 20: return "nl";
-            default: return "en";
+            case 1: return "en";   // English
+            case 2: return "pl";   // Polish
+            case 3: return "uk";   // Ukrainian
+            case 4: return "vi";   // Vietnamese
+            case 5: return "th";   // Thai
+            case 6: return "ru";   // Russian
+            case 7: return "ja";   // Japanese
+            case 8: return "ko";   // Korean
+            case 9: return "fr";   // French
+            case 10: return "de";  // German
+            case 11: return "es";  // Spanish
+            case 12: return "pt";  // Portuguese
+            case 13: return "it";  // Italian
+            case 14: return "ar";  // Arabic
+            case 15: return "hi";  // Hindi
+            case 16: return "id";  // Indonesian
+            case 17: return "ms";  // Malay
+            case 18: return "zh";  // Chinese
+            case 19: return "tr";  // Turkish
+            case 20: return "nl";  // Dutch
+            default:
+                log("⚠️ 未知语言ID: " + l + "，默认 en");
+                return "en";
         }
     }
 
