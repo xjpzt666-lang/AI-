@@ -545,7 +545,8 @@ public class MainActivity extends Activity {
     }
 
     private void displayMessage(String role, String content) {
-        String filteredContent = content.replaceAll("[*\\-]", "");
+        // ★ 过滤星号、破折号、井号、全角冒号、全角分号、全角破折号 ★
+        String filteredContent = content.replaceAll("[*\\-#：；—]", "");
 
         LinearLayout msgRow = new LinearLayout(this);
         msgRow.setOrientation(LinearLayout.HORIZONTAL);
