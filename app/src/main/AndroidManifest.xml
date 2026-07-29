@@ -7,11 +7,10 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@android:drawable/sym_def_app_icon"
         android:label="HT AI翻译"
-        android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+        android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
 
         <!-- 将 MainActivity 设为默认启动页 -->
         <activity android:name=".MainActivity" android:exported="true">
@@ -21,7 +20,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 注册 SettingsActivity（设置页），它只能被跳转，不能作为主页启动 -->
+        <!-- 注册 SettingsActivity（设置页） -->
         <activity android:name=".SettingsActivity" android:exported="false" />
 
     </application>
