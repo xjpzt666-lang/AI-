@@ -47,6 +47,12 @@ public class MainActivity extends Activity {
 
     private static final int MAX_HISTORY_ROUNDS = 100;
 
+    // 缓存配置，只在启动时读取一次
+    private String cachedApiKey = "";
+    private String cachedApiUrl = "";
+    private String cachedModel = "";
+    private boolean configLoaded = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -57,6 +63,9 @@ public class MainActivity extends Activity {
                 .build();
         mainHandler = new Handler(Looper.getMainLooper());
         dbHelper = new DatabaseHelper(this);
+
+        // 启动时一次性读取配置，只弹一次 Root 授权
+        loadConfigOnce();
 
         loadChatSessions();
 
@@ -169,6 +178,14 @@ public class MainActivity extends Activity {
 
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
+    }
+
+    // 启动时一次性读取配置，只弹一次 Root 授权
+    private void loadConfigOnce() {
+        cachedApiKey = readConfig("api_key");
+        cachedApiUrl = readConfig("api_url");
+        cachedModel = readConfig("model");
+        configLoaded = true;
     }
 
     private void loadChatSessions() {
@@ -397,9 +414,10 @@ public class MainActivity extends Activity {
         saveMessageToDb(currentChatId, "user", text);
         inputBox.setText("");
 
-        String apiKey = readConfig("api_key");
-        String apiUrl = readConfig("api_url");
-        String model = readConfig("model");
+        // 使用缓存的配置，不再重复读取
+        String apiKey = cachedApiKey;
+        String apiUrl = cachedApiUrl;
+        String model = cachedModel;
 
         if (apiKey.isEmpty()) {
             displayMessage("system", "⚠️ 请先在设置中填写 API Key");
@@ -436,7 +454,9 @@ public class MainActivity extends Activity {
             JSONArray messages = new JSONArray();
             for (Message msg : history) {
                 JSONObject histMsg = new JSONObject();
-                histMsg.put("role", msg.role);
+                // 将数据库中的 "ai" 转为 API 要求的 "assistant"
+                String apiRole = msg.role.equals("ai") ? "assistant" : msg.role;
+                histMsg.put("role", apiRole);
                 histMsg.put("content", msg.content);
                 messages.put(histMsg);
             }
@@ -546,6 +566,7 @@ public class MainActivity extends Activity {
         }
     }
 
+    // 只保留一个 readConfig 方法，供启动时调用
     private String readConfig(String key) {
         try {
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "cat /data/local/tmp/htai_config.txt"});
