@@ -1,36 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.aihellotalk">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
         android:label="HT AI翻译"
-        android:allowBackup="false"
-        android:extractNativeLibs="false">
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
 
-        <activity
-            android:label="HT AI翻译"
-            android:name="com.aihellotalk.SettingsActivity"
-            android:exported="true">
+        <!-- 将 MainActivity 设为默认启动页 -->
+        <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- Xposed 模块声明 -->
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="HelloTalk AI翻译" />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="82" />
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/scope" />
+        <!-- 注册 SettingsActivity（设置页），它只能被跳转，不能作为主页启动 -->
+        <activity android:name=".SettingsActivity" android:exported="false" />
 
     </application>
 </manifest>
