@@ -47,8 +47,7 @@ public class AITranslator {
     private static File friendsFile = new File("/data/data/com.hellotalk/files/htai_friends.json");
     private static JSONObject friendsData = new JSONObject();
 
-    // 🆕 修复：只匹配平假名、片假名、半角片假名、长音符号
-    // 不再包含 CJK 统一汉字（\u4E00-\u9FFF），避免中文被误判为日语
+    // 修复：只匹配平假名、片假名、半角片假名、长音符号
     private static final Pattern JAPANESE_PATTERN = Pattern.compile(
             "[\\u3040-\\u30FF\\uFF65-\\uFF9F\\u30FC]+"
     );
@@ -176,26 +175,17 @@ public class AITranslator {
     }
 
     // ──────────────────────────────────────
-    // 语言/文字检测（修复版）
+    // 语言/文字检测
     // ──────────────────────────────────────
 
-    /**
-     * 是否包含日语（仅平假名/片假名/半角片假名/长音符号）
-     * 不会把中文误判为日语
-     */
     public static boolean containsJapanese(String s) {
         if (s == null || s.isEmpty()) return false;
         return JAPANESE_PATTERN.matcher(s).find();
     }
 
-    /**
-     * 是否纯中文（包含CJK汉字，但不包含日语假名）
-     */
     public static boolean isChineseOnly(String s) {
         if (s == null || s.isEmpty()) return false;
-        // 如果包含日语假名，不算纯中文
         if (containsJapanese(s)) return false;
-        // 检查是否包含中日韩统一汉字
         for (char c : s.toCharArray()) {
             Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
             if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
