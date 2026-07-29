@@ -2,11 +2,10 @@ package com.aihellotalk;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
@@ -14,6 +13,7 @@ import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.method.LinkMovementMethod;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -69,7 +69,7 @@ public class MainActivity extends Activity {
         mainHandler = new Handler(Looper.getMainLooper());
         dbHelper = new DatabaseHelper(this);
 
-        // 启动时一次性读取配置
+        // 启动时一次性读取配置（优先 SharedPreferences，其次 Root 文件）
         loadConfigOnce();
 
         loadChatSessions();
@@ -186,9 +186,20 @@ public class MainActivity extends Activity {
     }
 
     private void loadConfigOnce() {
-        cachedApiKey = readConfig("api_key");
-        cachedApiUrl = readConfig("api_url");
-        cachedModel = readConfig("model");
+        // 优先读取 SharedPreferences（保证关闭后台后不丢失）
+        SharedPreferences prefs = getSharedPreferences("htai_settings", MODE_PRIVATE);
+        cachedApiKey = prefs.getString("api_key", "");
+        cachedApiUrl = prefs.getString("api_url", "");
+        cachedModel = prefs.getString("model", "");
+
+        // 如果 SharedPreferences 没有，再从 Root 文件读取
+        if (cachedApiKey.isEmpty()) cachedApiKey = readConfig("api_key");
+        if (cachedApiUrl.isEmpty()) cachedApiUrl = readConfig("api_url");
+        if (cachedModel.isEmpty()) cachedModel = readConfig("model");
+
+        // 如果都没有，使用默认值
+        if (cachedApiUrl.isEmpty()) cachedApiUrl = "https://www.wintoken.dev";
+
         configLoaded = true;
     }
 
@@ -433,7 +444,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (apiUrl.isEmpty()) {
-            apiUrl = "https://api.openai.com/v1/chat/completions";
+            apiUrl = "https://www.wintoken.dev";
         }
         if (model.isEmpty()) {
             displayMessage("system", "⚠️ 请先在设置中选择模型");
@@ -561,7 +572,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ── 显示消息（过滤星号和破折号，添加复制和旋转功能）──
+    // ── 显示消息（过滤星号和破折号，添加自由复制和旋转功能）──
     private void displayMessage(String role, String content) {
         // 过滤星号和破折号
         String filteredContent = content.replaceAll("[*\\-]", "");
@@ -585,20 +596,14 @@ public class MainActivity extends Activity {
             bubble.setLineSpacing(4f, 1f);
             bubble.setBackgroundColor(Color.parseColor("#E8E8E8"));
 
+            // ★ 开启自由文本选择 ★
+            bubble.setTextIsSelectable(true);
+
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.75);
+            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.65);
             bubble.setLayoutParams(lp);
-
-            // 长按复制
-            bubble.setOnLongClickListener(v -> {
-                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                ClipData clip = ClipData.newPlainText("AI 回复", bubble.getText().toString());
-                clipboard.setPrimaryClip(clip);
-                Toast.makeText(MainActivity.this, "已复制到剪贴板", Toast.LENGTH_SHORT).show();
-                return true;
-            });
 
             bubbleWrapper.addView(bubble);
             msgRow.addView(bubbleWrapper);
@@ -621,20 +626,14 @@ public class MainActivity extends Activity {
             bubble.setLineSpacing(4f, 1f);
             bubble.setBackgroundColor(Color.parseColor("#DCF8C6"));
 
+            // ★ 开启自由文本选择 ★
+            bubble.setTextIsSelectable(true);
+
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.75);
+            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.65);
             bubble.setLayoutParams(lp);
-
-            // 长按复制
-            bubble.setOnLongClickListener(v -> {
-                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                ClipData clip = ClipData.newPlainText("用户消息", bubble.getText().toString());
-                clipboard.setPrimaryClip(clip);
-                Toast.makeText(MainActivity.this, "已复制到剪贴板", Toast.LENGTH_SHORT).show();
-                return true;
-            });
 
             // 为了对齐，左边放一个空白占位
             LinearLayout spacer = new LinearLayout(this);
@@ -651,10 +650,13 @@ public class MainActivity extends Activity {
             bubble.setLineSpacing(4f, 1f);
             bubble.setBackgroundColor(Color.parseColor("#FFF3CD"));
 
+            // ★ 开启自由文本选择 ★
+            bubble.setTextIsSelectable(true);
+
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.75);
+            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.65);
             bubble.setLayoutParams(lp);
 
             msgRow.addView(bubble);
@@ -720,33 +722,4 @@ public class MainActivity extends Activity {
     }
 
     static class DatabaseHelper extends SQLiteOpenHelper {
-        private static final String DB_NAME = "chat_history.db";
-        private static final int DB_VERSION = 1;
-
-        DatabaseHelper(Context context) {
-            super(context, DB_NAME, null, DB_VERSION);
-        }
-
-        @Override
-        public void onCreate(SQLiteDatabase db) {
-            db.execSQL("CREATE TABLE chats (" +
-                    "id TEXT PRIMARY KEY, " +
-                    "name TEXT NOT NULL, " +
-                    "updated_at INTEGER NOT NULL)");
-            db.execSQL("CREATE TABLE messages (" +
-                    "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                    "chat_id TEXT NOT NULL, " +
-                    "role TEXT NOT NULL, " +
-                    "content TEXT NOT NULL, " +
-                    "timestamp INTEGER NOT NULL, " +
-                    "FOREIGN KEY (chat_id) REFERENCES chats(id))");
-        }
-
-        @Override
-        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-            db.execSQL("DROP TABLE IF EXISTS messages");
-            db.execSQL("DROP TABLE IF EXISTS chats");
-            onCreate(db);
-        }
-    }
-}
+        private static final String DB_NAME
