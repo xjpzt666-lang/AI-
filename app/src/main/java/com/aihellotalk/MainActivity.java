@@ -138,7 +138,6 @@ public class MainActivity extends Activity {
         drawerContent.setPadding(20, 50, 20, 20);
         drawerContent.setBackgroundColor(Color.parseColor("#FAFAFA"));
         
-        // 修复之前报错的宽度设置，直接使用 width
         DrawerLayout.LayoutParams lp = new DrawerLayout.LayoutParams(dpToPx(280), ViewGroup.LayoutParams.MATCH_PARENT);
         lp.gravity = Gravity.LEFT;
         drawerContent.setLayoutParams(lp);
@@ -150,22 +149,19 @@ public class MainActivity extends Activity {
         drawerTitle.setPadding(0,0,0,20);
         drawerContent.addView(drawerTitle);
 
-        refreshDrawerList(); // 渲染列表
+        refreshDrawerList();
 
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
     }
 
-    // 初始化假数据
     private void initChatSessions() {
         chatSessions.add(new ChatSession("自由对话"));
         chatSessions.add(new ChatSession("朋友A（俄语）"));
         chatSessions.add(new ChatSession("朋友B（西班牙语）"));
     }
 
-    // 刷新侧滑菜单列表
     private void refreshDrawerList() {
-        // 保留第一个 Title，移除后面的所有旧列表项
         if (drawerContent.getChildCount() > 1) {
             drawerContent.removeViews(1, drawerContent.getChildCount() - 1);
         }
@@ -177,13 +173,11 @@ public class MainActivity extends Activity {
             itemView.setPadding(20, 30, 20, 30);
             itemView.setTextColor(Color.BLACK);
 
-            // 【单击】：切换对话
             itemView.setOnClickListener(v -> {
                 switchToChat(session);
                 drawerLayout.closeDrawers();
             });
 
-            // 【长按】：弹出 重命名/删除 菜单
             itemView.setOnLongClickListener(v -> {
                 String[] options = {"重命名", "删除"};
                 new AlertDialog.Builder(MainActivity.this)
@@ -193,7 +187,7 @@ public class MainActivity extends Activity {
                                 showRenameDialog(session);
                             } else if (which == 1) {
                                 chatSessions.remove(session);
-                                refreshDrawerList(); // 重新渲染列表
+                                refreshDrawerList();
                                 Toast.makeText(MainActivity.this, "已删除", Toast.LENGTH_SHORT).show();
                             }
                         })
@@ -205,11 +199,10 @@ public class MainActivity extends Activity {
         }
     }
 
-    // 重命名弹窗
     private void showRenameDialog(ChatSession session) {
         final EditText input = new EditText(this);
         input.setText(session.name);
-        input.setSelection(session.name.length()); // 光标移到最后
+        input.setSelection(session.name.length());
 
         new AlertDialog.Builder(this)
                 .setTitle("重命名对话")
@@ -218,10 +211,9 @@ public class MainActivity extends Activity {
                     String newName = input.getText().toString().trim();
                     if (!newName.isEmpty()) {
                         session.name = newName;
-                        refreshDrawerList(); // 重新渲染列表
+                        refreshDrawerList();
                         Toast.makeText(MainActivity.this, "已重命名为: " + newName, Toast.LENGTH_SHORT).show();
                         
-                        // 如果当前正好在聊这个对话，把头部的标题也改了
                         if (currentChatName.equals(session.name)) {
                             switchToChat(session); 
                         }
@@ -231,7 +223,6 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    // 右上角 ⋮ 菜单
     private void showPopupMenu(View v) {
         PopupMenu popup = new PopupMenu(this, v);
         popup.getMenu().add(0, 1, 0, "💬 开启新对话");
@@ -239,14 +230,13 @@ public class MainActivity extends Activity {
         
         popup.setOnMenuItemClickListener(item -> {
             if (item.getItemId() == 1) {
-                // 开启新对话
                 messageContainer.removeAllViews();
                 currentChatName = "新对话";
-                ((TextView) findViewWithTag("chatTitle")).setText("当前: " + currentChatName);
+                // 修复：使用 drawerLayout.findViewWithTag
+                ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: " + currentChatName);
                 Toast.makeText(this, "已清空屏幕，开启新对话", Toast.LENGTH_SHORT).show();
                 return true;
             } else if (item.getItemId() == 2) {
-                // 跳转到 SettingsActivity 页面
                 Intent intent = new Intent(MainActivity.this, SettingsActivity.class);
                 startActivity(intent);
                 return true;
@@ -256,22 +246,20 @@ public class MainActivity extends Activity {
         popup.show();
     }
 
-    // 切换对话
     private void switchToChat(ChatSession session) {
         currentChatName = session.name;
-        TextView chatTitle = (TextView) findViewWithTag("chatTitle");
+        // 修复：使用 drawerLayout.findViewWithTag
+        TextView chatTitle = (TextView) drawerLayout.findViewWithTag("chatTitle");
         if (chatTitle != null) {
             chatTitle.setText("当前: " + currentChatName);
         }
         messageContainer.removeAllViews();
     }
 
-    // 发送消息上屏
     private void sendMessage() {
         String text = inputBox.getText().toString().trim();
         if (text.isEmpty()) return;
 
-        // 用户消息
         TextView userMsg = new TextView(this);
         userMsg.setText("我: " + text);
         userMsg.setTextSize(16f);
@@ -281,7 +269,6 @@ public class MainActivity extends Activity {
         
         inputBox.setText("");
 
-        // 模拟AI消息 (后续可以在这里接你的 AITranslator)
         TextView aiMsg = new TextView(this);
         aiMsg.setText("AI回复: 测试内容 (待接入真实API)");
         aiMsg.setTextSize(16f);
@@ -292,13 +279,11 @@ public class MainActivity extends Activity {
         messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
     }
 
-    // dp 转 px 工具 (解决报错)
     private int dpToPx(int dp) {
         return (int) TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
     }
 
-    // 会话数据结构
     static class ChatSession {
         String name;
         public ChatSession(String name) {
