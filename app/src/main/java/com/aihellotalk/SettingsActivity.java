@@ -35,11 +35,12 @@ public class SettingsActivity extends Activity {
         ll.addView(tip("HT AI翻译 v5.0\n接收自动翻译 + 点[文A]按钮选版本"));
 
         ll.addView(lab("API Key:"));
-        etKey = edit(readCfg("api_key", ""));
+        etKey = edit("");
+        etKey.setHint("输入你的 API Key");
         ll.addView(etKey);
 
         ll.addView(lab("API URL:"));
-        etUrl = edit(readCfg("api_url", "https://api.openai.com/v1/chat/completions"));
+        etUrl = edit("https://api.openai.com/v1/chat/completions");
         ll.addView(etUrl);
 
         btnFetch = btn("📡 获取模型列表");
@@ -47,26 +48,26 @@ public class SettingsActivity extends Activity {
         ll.addView(btnFetch);
 
         ll.addView(lab("模型:"));
-        etModel = edit(readCfg("model", ""));
+        etModel = edit("");
         etModel.setHint("先获取后选择");
         ll.addView(etModel);
 
         ll.addView(div());
 
         ll.addView(lab("🇨🇳 接收翻译 Prompt (外语→中文):"));
-        etPromptZH = bigEdit(readPrompt("ZH"));
+        etPromptZH = bigEdit("");
         ll.addView(etPromptZH);
 
         ll.addView(lab("🇬🇧 英语 Prompt (发送):"));
-        etPromptEN = bigEdit(readPrompt("EN"));
+        etPromptEN = bigEdit("");
         ll.addView(etPromptEN);
 
         ll.addView(lab("🇷🇺 俄语 Prompt (发送):"));
-        etPromptRU = bigEdit(readPrompt("RU"));
+        etPromptRU = bigEdit("");
         ll.addView(etPromptRU);
 
         ll.addView(lab("🇺🇦 乌克兰语 Prompt (发送):"));
-        etPromptUK = bigEdit(readPrompt("UK"));
+        etPromptUK = bigEdit("");
         ll.addView(etPromptUK);
 
         btnSave = btn("💾 保存全部配置");
@@ -150,7 +151,7 @@ public class SettingsActivity extends Activity {
         }
     }
 
-    // ── 配置读写 ──
+    // ── 只在保存时读取配置 ──
 
     private String readCfg(String key, String def) {
         String all = runRoot("cat /data/local/tmp/htai_config.txt 2>/dev/null");
