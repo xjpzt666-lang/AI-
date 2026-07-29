@@ -44,13 +44,13 @@ public class AITranslator {
     public static String promptRU = "";
     public static String promptUK = "";
 
-    // 朋友管理
     private static File friendsFile = new File("/data/data/com.hellotalk/files/htai_friends.json");
     private static JSONObject friendsData = new JSONObject();
 
-    // 日语检测正则（平假名+片假名+日文汉字范围）
+    // 🆕 修复：只匹配平假名、片假名、半角片假名、长音符号
+    // 不再包含 CJK 统一汉字（\u4E00-\u9FFF），避免中文被误判为日语
     private static final Pattern JAPANESE_PATTERN = Pattern.compile(
-            "[\\p{InHiragana}\\p{InKatakana}\\u3040-\\u30FF\\u3400-\\u4DBF\\u4E00-\\u9FFF]+"
+            "[\\u3040-\\u30FF\\uFF65-\\uFF9F\\u30FC]+"
     );
 
     // ──────────────────────────────────────
@@ -62,10 +62,12 @@ public class AITranslator {
         apiUrl = url;
         model = m;
 
+        Log.i(TAG, "初始化: Key长度=" + (key != null ? key.length() : 0) + " url=" + url + " model=" + m);
+
         client = new OkHttpClient.Builder()
-                .connectTimeout(10, TimeUnit.SECONDS)
+                .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(60, TimeUnit.SECONDS)
-                .writeTimeout(10, TimeUnit.SECONDS)
+                .writeTimeout(15, TimeUnit.SECONDS)
                 .build();
 
         cacheFile = new File("/data/data/com.hellotalk/files/htai_cache.txt");
@@ -83,7 +85,7 @@ public class AITranslator {
         apiUrl = url;
 
         client = new OkHttpClient.Builder()
-                .connectTimeout(10, TimeUnit.SECONDS)
+                .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(45, TimeUnit.SECONDS)
                 .build();
     }
@@ -174,11 +176,12 @@ public class AITranslator {
     }
 
     // ──────────────────────────────────────
-    // 语言/文字检测
+    // 语言/文字检测（修复版）
     // ──────────────────────────────────────
 
     /**
-     * 是否包含日语（平假名/片假名/日文汉字）
+     * 是否包含日语（仅平假名/片假名/半角片假名/长音符号）
+     * 不会把中文误判为日语
      */
     public static boolean containsJapanese(String s) {
         if (s == null || s.isEmpty()) return false;
@@ -186,11 +189,11 @@ public class AITranslator {
     }
 
     /**
-     * 是否纯中文（不含日语、不含明显外语）
+     * 是否纯中文（包含CJK汉字，但不包含日语假名）
      */
     public static boolean isChineseOnly(String s) {
         if (s == null || s.isEmpty()) return false;
-        // 如果包含日语，不算纯中文
+        // 如果包含日语假名，不算纯中文
         if (containsJapanese(s)) return false;
         // 检查是否包含中日韩统一汉字
         for (char c : s.toCharArray()) {
@@ -205,22 +208,15 @@ public class AITranslator {
         return false;
     }
 
-    /**
-     * 是否需要翻译（外语 → 中文）
-     * 返回 true 表示需要翻译
-     */
     public static boolean needTranslateToChinese(String text) {
         if (text == null || text.trim().isEmpty()) return false;
-        // 日语不翻译
         if (containsJapanese(text)) {
             Log.i(TAG, "跳过翻译(日语): " + text.substring(0, Math.min(20, text.length())));
             return false;
         }
-        // 纯中文不翻译
         if (isChineseOnly(text)) {
             return false;
         }
-        // 其他情况（外语）需要翻译
         return true;
     }
 
@@ -301,7 +297,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 2000);  // 新增：支持长输出
+            body.put("max_tokens", 2000);
 
             JSONArray msgs = new JSONArray();
             JSONObject m = new JSONObject();
@@ -323,8 +319,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 2000);  // 新增：支持长输出
-
+            body.put("max_tokens", 2000);
             body.put("messages", messages);
 
             return executeRequest(body);
