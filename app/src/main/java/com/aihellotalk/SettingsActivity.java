@@ -15,7 +15,17 @@ import android.widget.Toast;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.List;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.concurrent.TimeUnit;
 
 public class SettingsActivity extends Activity {
 
@@ -49,7 +59,7 @@ public class SettingsActivity extends Activity {
 
         ll.addView(lab("模型:"));
         etModel = edit("");
-        etModel.setHint("先获取后选择");
+        etModel.setHint("先获取后选择，或手动输入");
         ll.addView(etModel);
 
         ll.addView(div());
@@ -186,7 +196,7 @@ public class SettingsActivity extends Activity {
         return sb.toString().trim();
     }
 
-    // ── 获取模型列表 ──
+    // ── 获取模型列表（自动尝试多种地址）──
 
     private void fetchModels() {
         String key = etKey.getText().toString().trim();
@@ -196,15 +206,21 @@ public class SettingsActivity extends Activity {
         }
         btnFetch.setEnabled(false);
         btnFetch.setText("获取中...");
-        String url = etUrl.getText().toString().trim();
+        String baseUrl = etUrl.getText().toString().trim();
+
         new Thread(() -> {
             try {
-                List<String> models = AITranslator.fetchModels(key, url);
+                List<String> models = autoFetchModels(key, baseUrl);
                 runOnUiThread(() -> {
                     btnFetch.setEnabled(true);
                     btnFetch.setText("📡 获取模型列表");
                     if (models.isEmpty()) {
-                        toast("未获取到");
+                        // 全部失败，提示手动输入
+                        new AlertDialog.Builder(SettingsActivity.this)
+                                .setTitle("获取失败")
+                                .setMessage("自动尝试了多种地址均无法获取模型列表。\n请检查 API Key 和 URL 是否正确，或手动输入模型名。")
+                                .setPositiveButton("知道了", null)
+                                .show();
                     } else {
                         showModelPicker(models);
                     }
@@ -213,10 +229,79 @@ public class SettingsActivity extends Activity {
                 runOnUiThread(() -> {
                     btnFetch.setEnabled(true);
                     btnFetch.setText("📡 获取模型列表");
-                    toast("失败: " + e.getMessage());
+                    // 显示详细错误，并允许手动输入
+                    new AlertDialog.Builder(SettingsActivity.this)
+                            .setTitle("获取失败")
+                            .setMessage("错误: " + e.getMessage() + "\n\n你可以手动输入模型名。")
+                            .setPositiveButton("手动输入", (dialog, which) -> {
+                                // 让用户聚焦到模型输入框
+                                etModel.requestFocus();
+                            })
+                            .setNegativeButton("取消", null)
+                            .show();
                 });
             }
         }).start();
+    }
+
+    // 自动尝试多种地址获取模型列表
+    private List<String> autoFetchModels(String key, String baseUrl) throws Exception {
+        // 从 baseUrl 提取基础地址
+        String base = baseUrl;
+        if (base.endsWith("/chat/completions")) {
+            base = base.substring(0, base.length() - "/chat/completions".length());
+        }
+        // 去掉末尾的 /v1 或 /v1/
+        if (base.endsWith("/v1")) {
+            base = base.substring(0, base.length() - 3);
+        } else if (base.endsWith("/v1/")) {
+            base = base.substring(0, base.length() - 4);
+        }
+        // 确保末尾有 /
+        if (!base.endsWith("/")) base += "/";
+
+        // 要尝试的地址列表
+        String[] urlsToTry = {
+                base + "v1/models",
+                base + "models",
+                base + "api/models"
+        };
+
+        List<String> lastErrors = new ArrayList<>();
+        OkHttpClient client = new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .build();
+
+        for (String url : urlsToTry) {
+            try {
+                Request req = new Request.Builder()
+                        .url(url)
+                        .header("Authorization", "Bearer " + key)
+                        .get()
+                        .build();
+
+                try (Response resp = client.newCall(req).execute()) {
+                    if (resp.isSuccessful()) {
+                        String s = resp.body().string();
+                        JSONObject json = new JSONObject(s);
+                        JSONArray data = json.getJSONArray("data");
+                        List<String> models = new ArrayList<>();
+                        for (int i = 0; i < data.length(); i++) {
+                            models.add(data.getJSONObject(i).getString("id"));
+                        }
+                        return models;
+                    } else {
+                        lastErrors.add(url + " -> HTTP " + resp.code());
+                    }
+                }
+            } catch (Exception e) {
+                lastErrors.add(url + " -> " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        }
+
+        // 全部失败，抛出异常附带详细信息
+        throw new Exception("尝试了以下地址均失败:\n" + String.join("\n", lastErrors));
     }
 
     private void showModelPicker(List<String> models) {
