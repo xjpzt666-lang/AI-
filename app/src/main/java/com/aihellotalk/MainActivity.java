@@ -28,14 +28,12 @@ public class MainActivity extends Activity {
     private LinearLayout messageContainer;
     private ScrollView messageScrollView;
     private EditText inputBox;
-    private Spinner promptSpinner;
     private Button sendBtn;
+    private Button attachBtn;
     private LinearLayout drawerContent;
 
     private String currentChatName = "自由对话";
     private List<ChatSession> chatSessions = new ArrayList<>();
-
-    private String[] promptNames = {"自由对话", "英语", "俄语", "乌克兰语", "西班牙语"};
 
     private OkHttpClient httpClient;
     private Handler mainHandler;
@@ -110,22 +108,33 @@ public class MainActivity extends Activity {
         messageScrollView.addView(messageContainer);
         mainContent.addView(messageScrollView);
 
-        // 底部输入区
+        // ── 底部输入区（含加号按钮）──
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
-        bottomBar.setPadding(12, 8, 12, 8);
-        bottomBar.setBackgroundColor(Color.parseColor("#E0E0E0"));
+        bottomBar.setPadding(8, 8, 8, 8);
+        bottomBar.setBackgroundColor(Color.parseColor("#F0F0F0"));
 
+        // 加号按钮
+        attachBtn = new Button(this);
+        attachBtn.setText("+");
+        attachBtn.setTextSize(24f);
+        attachBtn.setBackgroundColor(Color.TRANSPARENT);
+        attachBtn.setOnClickListener(v -> showAttachMenu());
+
+        // 输入框
         inputBox = new EditText(this);
         inputBox.setHint("输入消息...");
         inputBox.setBackgroundColor(Color.WHITE);
-        inputBox.setPadding(20, 20, 20, 20);
-        inputBox.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        inputBox.setPadding(16, 12, 16, 12);
+        inputBox.setLayoutParams(new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
+        // 发送按钮
         sendBtn = new Button(this);
         sendBtn.setText("发送");
         sendBtn.setOnClickListener(v -> sendMessage());
 
+        bottomBar.addView(attachBtn);
         bottomBar.addView(inputBox);
         bottomBar.addView(sendBtn);
         mainContent.addView(bottomBar);
@@ -153,6 +162,23 @@ public class MainActivity extends Activity {
 
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
+    }
+
+    // 加号菜单
+    private void showAttachMenu() {
+        String[] options = {"📷 拍照", "🖼️ 相册", "📎 文件"};
+        new AlertDialog.Builder(this)
+                .setTitle("选择附件")
+                .setItems(options, (dialog, which) -> {
+                    if (which == 0) {
+                        Toast.makeText(this, "拍照功能待实现", Toast.LENGTH_SHORT).show();
+                    } else if (which == 1) {
+                        Toast.makeText(this, "相册功能待实现", Toast.LENGTH_SHORT).show();
+                    } else if (which == 2) {
+                        Toast.makeText(this, "文件功能待实现", Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .show();
     }
 
     private void initChatSessions() {
@@ -249,6 +275,7 @@ public class MainActivity extends Activity {
         addMessage("user", text);
         inputBox.setText("");
 
+        // 从配置文件读取
         String apiKey = readConfig("api_key");
         String apiUrl = readConfig("api_url");
         String model = readConfig("model");
@@ -263,6 +290,17 @@ public class MainActivity extends Activity {
         if (model.isEmpty()) {
             addMessage("system", "⚠️ 请先在设置中选择模型");
             return;
+        }
+
+        // 自动补全 URL（如果只填了基础地址）
+        if (!apiUrl.endsWith("/chat/completions")) {
+            if (apiUrl.endsWith("/v1")) {
+                apiUrl = apiUrl + "/chat/completions";
+            } else if (!apiUrl.endsWith("/")) {
+                apiUrl = apiUrl + "/v1/chat/completions";
+            } else {
+                apiUrl = apiUrl + "v1/chat/completions";
+            }
         }
 
         addMessage("system", "🤔 正在思考...");
