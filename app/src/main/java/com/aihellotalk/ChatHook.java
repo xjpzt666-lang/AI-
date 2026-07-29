@@ -35,11 +35,11 @@ public class ChatHook {
     // 默认回复语言（对方是中文用户时使用）
     private static final String DEFAULT_REPLY_LANG = "en";
 
-    // 🆕 缓存 HelloTalk 的 av.a 类方法（语言映射）
+    // 缓存 HelloTalk 的 av.a 类方法（语言映射）
     private static Method langCodeMethod = null;      // av.a.a(int) → 大写ISO代码
     private static Method langNameMethod = null;      // av.a.b(int) → 英文语言名
 
-    // 🆕 最新从 chatUser 获取的信息（用于打开页面时立即识别）
+    // 最新从 chatUser 获取的信息（用于打开页面时立即识别）
     private static volatile String latestNationality = "";
     private static volatile int latestNativeLang = 1;
     private static volatile String latestPartnerName = "";
@@ -49,7 +49,7 @@ public class ChatHook {
     // ──────────────────────────────────────
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v9.3 (打开即识别 + 动态语言映射) ===");
+        log("=== Hook v9.4 (打开即识别·重试轮询) ===");
 
         // 缓存 av.a 类方法
         try {
@@ -61,12 +61,10 @@ public class ChatHook {
             log("⚠️ 缓存语言映射方法失败: " + e.getMessage());
         }
 
-        // 🆕 Hook startChat – 每次打开聊天页面必调
+        // Hook startChat – 每次打开聊天页面必调（含重试轮询读取chatUser）
         try { hookStartChat(cl); } catch (Throwable e) { log("startChat ❌ " + e); }
-        // 🆕 Hook chatUser 设置 – 异步加载用户资料后触发
-        try { hookSetChatUser(cl); } catch (Throwable e) { log("setChatUser ❌ " + e); }
 
-        // 保留原有的 hook（作为补充）
+        // 保留原有的 hook
         try { hookRecv(cl); } catch (Throwable e) { log("接收 ❌ " + e); }
         try { hookLang(cl); } catch (Throwable e) { log("语言 ❌ " + e); }
         try { hookBtnOld(cl); } catch (Throwable e) { log("旧版按钮 ❌ " + e); }
@@ -76,7 +74,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // 🆕 Hook startChat – 同步拿到 chatId
+    // 🆕 Hook startChat – 同步拿到 chatId + 轮询读取 chatUser
     // ──────────────────────────────────────
 
     private static void hookStartChat(ClassLoader cl) throws Exception {
@@ -91,51 +89,30 @@ public class ChatHook {
                         int chatId = (int) param.args[0];
                         currentChatId = String.valueOf(chatId);
                         log("📂 打开聊天 chatId=" + chatId);
+
+                        // 在新线程中轮询读取 chatUser 字段（最多6次，每次500ms）
+                        final Object vm = param.thisObject;
+                        new Thread(() -> {
+                            try {
+                                Field f = vm.getClass().getDeclaredField("chatUser");
+                                f.setAccessible(true);
+                                for (int i = 0; i < 6; i++) {
+                                    Object chatUser = f.get(vm);
+                                    if (chatUser != null) {
+                                        updateFromChatUser(chatUser);
+                                        return;
+                                    }
+                                    Thread.sleep(500);
+                                }
+                                log("⚠️ chatUser 读取超时（6次）");
+                            } catch (Exception e) {
+                                log("⚠️ 读 chatUser 失败: " + e.getMessage());
+                            }
+                        }).start();
                     }
                 }
         );
-        log("✅ startChat");
-    }
-
-    // ──────────────────────────────────────
-    // 🆕 Hook chatUser 设置 – 异步获取用户资料
-    // ──────────────────────────────────────
-
-    private static void hookSetChatUser(ClassLoader cl) throws Exception {
-        // 尝试多种可能的 setter 名称（Kotlin 编译器生成）
-        String[] possibleNames = {
-                "access$setChatUser$p",
-                "setChatUser",
-                "chatUser$setter",
-                "set_user",
-                "putChatUser"
-        };
-        boolean hooked = false;
-        for (String methodName : possibleNames) {
-            try {
-                XposedHelpers.findAndHookMethod(
-                        "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
-                        cl,
-                        methodName,
-                        "com.hellotalk.business.entity.userInfo.UserBaseInfo",
-                        new XC_MethodHook() {
-                            @Override
-                            protected void afterHookedMethod(MethodHookParam param) {
-                                Object chatUser = param.args[0];
-                                if (chatUser == null) return;
-                                updateFromChatUser(chatUser);
-                            }
-                        }
-                );
-                log("✅ setChatUser: " + methodName);
-                hooked = true;
-                break; // 找到一个就停止
-            } catch (Exception ignored) {}
-        }
-        if (!hooked) {
-            log("⚠️ 未找到 chatUser setter，尝试其他方式");
-            // 还可以尝试 Hook 构造函数或 init 方法，但先跳过
-        }
+        log("✅ startChat + 轮询");
     }
 
     // 🆕 从 chatUser 更新全局变量
@@ -159,11 +136,8 @@ public class ChatHook {
 
             // 立即注册朋友（即使没有消息往来）
             String langCode = getDynamicLangCode(nativeLang);
-            String storedLang = AITranslator.getFriendLang(currentChatId);
-            if (!langCode.equals(storedLang) || latestNationality.isEmpty() == false) {
-                AITranslator.registerFriend(currentChatId, currentPartnerName, langCode);
-                log("👤 注册朋友: " + currentPartnerName + " (" + langCode + ") 国籍=" + latestNationality);
-            }
+            AITranslator.registerFriend(currentChatId, currentPartnerName, langCode);
+            log("👤 注册朋友: " + currentPartnerName + " (" + langCode + ") 国籍=" + latestNationality);
 
             // 日志输出详细信息
             String langName = getDynamicLangName(nativeLang);
@@ -302,9 +276,6 @@ public class ChatHook {
                                 String name = getDynamicLangName(l);
                                 log("🌍 语言切换(消息): ID:" + l + " → " + code + " (" + name + ")");
                             }
-
-                            // 更新伙伴名（如果消息中有）
-                            // 这里可以不做，因为 hookRecv 已经做了
                         } catch (Throwable ignored) {}
                     }
                 });
@@ -322,7 +293,7 @@ public class ChatHook {
             @Override
             protected void afterHookedMethod(MethodHookParam p) {
                 View v = (View) p.thisObject;
-                v.postDelayed(() -> tryAddBtn_Old(v), 1800);
+                v.postDelayed(() -> tryAddBtn_Old(v), 2000);
             }
         });
         log("✅ 旧版按钮");
@@ -335,7 +306,7 @@ public class ChatHook {
             @Override
             protected void afterHookedMethod(MethodHookParam p) {
                 View v = (View) p.thisObject;
-                v.postDelayed(() -> tryAddBtn_New(v), 2200);
+                v.postDelayed(() -> tryAddBtn_New(v), 2500);
             }
         });
         log("✅ 新版按钮");
@@ -408,7 +379,7 @@ public class ChatHook {
         bg.setCornerRadius(8f);
         btn.setBackground(bg);
         btn.setTextColor(Color.parseColor("#FFFFFFFF"));
-        btn.setAlpha(0.89f);
+        btn.setAlpha(0.95f);
 
         btn.setVisibility(View.GONE);
 
@@ -425,7 +396,7 @@ public class ChatHook {
                     btn.setVisibility(View.VISIBLE);
                     btn.setEnabled(true);
                     btn.setText("译");
-                    btn.setAlpha(0.91f);
+                    btn.setAlpha(0.93f);
                 } else {
                     btn.setVisibility(View.GONE);
                 }
@@ -445,7 +416,7 @@ public class ChatHook {
 
             new Thread(() -> {
                 try {
-                    // 🆕 使用最新识别的目标语言
+                    // 使用最新识别的目标语言
                     String targetLang = determineSmartTargetLang();
                     log("🔄 AI翻译请求: 朋友=" + AITranslator.getFriendName(currentChatId)
                             + " 目标语言=" + targetLang + " 国籍=" + latestNationality);
@@ -459,14 +430,14 @@ public class ChatHook {
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("译");
-                        btn.setAlpha(0.87f);
+                        btn.setAlpha(0.92f);
                         showPicker(edit, result, history);
                     });
                 } catch (Exception e) {
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("译");
-                        btn.setAlpha(0.86f);
+                        btn.setAlpha(0.88f);
                         String errMsg = e.getMessage();
                         log("❌ AI翻译失败: " + errMsg);
                         Toast.makeText(
@@ -481,7 +452,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // 🆕 智能跟随：优先使用最新国籍/语言信息
+    // 智能跟随：优先使用最新国籍/语言信息
     // ──────────────────────────────────────
 
     private static String determineSmartTargetLang() {
@@ -525,7 +496,7 @@ public class ChatHook {
         return DEFAULT_REPLY_LANG;
     }
 
-    // 🆕 国籍 → 语言代码映射表
+    // 国籍 → 语言代码映射表
     private static String mapNationalityToLang(String nationality) {
         if (nationality == null || nationality.isEmpty()) return null;
         switch (nationality) {
@@ -573,7 +544,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // showPicker（不变）
+    // showPicker（使用最新伙伴名）
     // ──────────────────────────────────────
 
     private static void showPicker(EditText edit, String result, List<String[]> history) {
@@ -598,7 +569,7 @@ public class ChatHook {
 
         String[] items = versions.toArray(new String[0]);
 
-        // 🆕 使用最新伙伴名
+        // 使用最新伙伴名
         String displayName = !latestPartnerName.isEmpty() ? latestPartnerName : currentPartnerName;
         new AlertDialog.Builder(edit.getContext())
                 .setTitle("选版本(" + items.length + "个) - " + displayName)
