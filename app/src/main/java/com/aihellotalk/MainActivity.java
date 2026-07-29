@@ -16,6 +16,7 @@ import androidx.drawerlayout.widget.DrawerLayout;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
@@ -240,16 +241,14 @@ public class MainActivity extends Activity {
         messageContainer.removeAllViews();
     }
 
-    // ── 发送消息（读取配置文件 + 真实调用 API）──
+    // ── 发送消息 ──
     private void sendMessage() {
         String text = inputBox.getText().toString().trim();
         if (text.isEmpty()) return;
 
-        // 显示用户消息
         addMessage("user", text);
         inputBox.setText("");
 
-        // 从配置文件读取 API 信息（和设置页面保存的方式一致）
         String apiKey = readConfig("api_key");
         String apiUrl = readConfig("api_url");
         String model = readConfig("model");
@@ -266,7 +265,6 @@ public class MainActivity extends Activity {
             return;
         }
 
-        // 显示"正在思考..."
         addMessage("system", "🤔 正在思考...");
 
         try {
@@ -324,7 +322,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // 添加消息气泡
     private void addMessage(String role, String content) {
         if ("system".equals(role) && content.contains("正在思考")) {
             removeLastSystemMessage();
@@ -370,7 +367,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ── 读取配置文件（和 SettingsActivity 保存的格式一致）──
     private String readConfig(String key) {
         try {
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "cat /data/local/tmp/htai_config.txt"});
