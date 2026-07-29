@@ -32,8 +32,9 @@ public class MainActivity extends Activity {
     private Button attachBtn;
     private LinearLayout drawerContent;
 
-    private String currentChatName = "自由对话";
+    private String currentChatName = "";
     private List<ChatSession> chatSessions = new ArrayList<>();
+    private boolean hasSentFirstMessage = false;
 
     private OkHttpClient httpClient;
     private Handler mainHandler;
@@ -48,7 +49,8 @@ public class MainActivity extends Activity {
                 .build();
         mainHandler = new Handler(Looper.getMainLooper());
 
-        initChatSessions();
+        // 不再调用 initChatSessions，列表初始为空
+        chatSessions = new ArrayList<>();
 
         drawerLayout = new DrawerLayout(this);
 
@@ -87,9 +89,9 @@ public class MainActivity extends Activity {
         topBar.addView(rightMenuBtn);
         mainContent.addView(topBar);
 
-        // 当前对话提示条
+        // 当前对话提示条（初始为空）
         TextView chatTitle = new TextView(this);
-        chatTitle.setText("当前: " + currentChatName);
+        chatTitle.setText("当前: 暂无对话");
         chatTitle.setTag("chatTitle");
         chatTitle.setPadding(16, 12, 16, 12);
         chatTitle.setTextSize(14f);
@@ -108,20 +110,18 @@ public class MainActivity extends Activity {
         messageScrollView.addView(messageContainer);
         mainContent.addView(messageScrollView);
 
-        // ── 底部输入区（含加号按钮）──
+        // ── 底部输入区 ──
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setPadding(8, 8, 8, 8);
         bottomBar.setBackgroundColor(Color.parseColor("#F0F0F0"));
 
-        // 加号按钮
         attachBtn = new Button(this);
         attachBtn.setText("+");
         attachBtn.setTextSize(24f);
         attachBtn.setBackgroundColor(Color.TRANSPARENT);
         attachBtn.setOnClickListener(v -> showAttachMenu());
 
-        // 输入框
         inputBox = new EditText(this);
         inputBox.setHint("输入消息...");
         inputBox.setBackgroundColor(Color.WHITE);
@@ -129,7 +129,6 @@ public class MainActivity extends Activity {
         inputBox.setLayoutParams(new LinearLayout.LayoutParams(
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        // 发送按钮
         sendBtn = new Button(this);
         sendBtn.setText("发送");
         sendBtn.setOnClickListener(v -> sendMessage());
@@ -152,13 +151,20 @@ public class MainActivity extends Activity {
         drawerContent.setLayoutParams(lp);
 
         TextView drawerTitle = new TextView(this);
-        drawerTitle.setText("长按列表项可操作");
-        drawerTitle.setTextSize(14f);
-        drawerTitle.setTextColor(Color.GRAY);
+        drawerTitle.setText("对话列表");
+        drawerTitle.setTextSize(16f);
+        drawerTitle.setTextColor(Color.BLACK);
         drawerTitle.setPadding(0,0,0,20);
         drawerContent.addView(drawerTitle);
 
-        refreshDrawerList();
+        // 初始显示空列表提示
+        TextView emptyHint = new TextView(this);
+        emptyHint.setText("发送第一条消息后自动创建");
+        emptyHint.setTextSize(14f);
+        emptyHint.setTextColor(Color.GRAY);
+        emptyHint.setPadding(0, 20, 0, 20);
+        emptyHint.setTag("emptyHint");
+        drawerContent.addView(emptyHint);
 
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
@@ -181,42 +187,54 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    private void initChatSessions() {
-        chatSessions.add(new ChatSession("自由对话"));
-        chatSessions.add(new ChatSession("朋友A（俄语）"));
-        chatSessions.add(new ChatSession("朋友B（西班牙语）"));
-    }
-
+    // 刷新侧滑菜单列表
     private void refreshDrawerList() {
-        if (drawerContent.getChildCount() > 1) {
-            drawerContent.removeViews(1, drawerContent.getChildCount() - 1);
+        // 移除所有子 view（除了标题）
+        while (drawerContent.getChildCount() > 1) {
+            drawerContent.removeViewAt(1);
         }
-        for (ChatSession session : chatSessions) {
-            TextView itemView = new TextView(this);
-            itemView.setText("👤 " + session.name);
-            itemView.setTextSize(18f);
-            itemView.setPadding(20, 30, 20, 30);
-            itemView.setTextColor(Color.BLACK);
-            itemView.setOnClickListener(v -> {
-                switchToChat(session);
-                drawerLayout.closeDrawers();
-            });
-            itemView.setOnLongClickListener(v -> {
-                String[] options = {"重命名", "删除"};
-                new AlertDialog.Builder(MainActivity.this)
-                        .setTitle("操作: " + session.name)
-                        .setItems(options, (dialog, which) -> {
-                            if (which == 0) showRenameDialog(session);
-                            else if (which == 1) {
-                                chatSessions.remove(session);
-                                refreshDrawerList();
-                                Toast.makeText(MainActivity.this, "已删除", Toast.LENGTH_SHORT).show();
-                            }
-                        })
-                        .show();
-                return true;
-            });
-            drawerContent.addView(itemView);
+
+        if (chatSessions.isEmpty()) {
+            TextView emptyHint = new TextView(this);
+            emptyHint.setText("发送第一条消息后自动创建");
+            emptyHint.setTextSize(14f);
+            emptyHint.setTextColor(Color.GRAY);
+            emptyHint.setPadding(0, 20, 0, 20);
+            drawerContent.addView(emptyHint);
+        } else {
+            for (ChatSession session : chatSessions) {
+                TextView itemView = new TextView(this);
+                itemView.setText("💬 " + session.name);
+                itemView.setTextSize(16f);
+                itemView.setPadding(20, 20, 20, 20);
+                itemView.setTextColor(Color.BLACK);
+                itemView.setOnClickListener(v -> {
+                    switchToChat(session);
+                    drawerLayout.closeDrawers();
+                });
+                itemView.setOnLongClickListener(v -> {
+                    String[] options = {"重命名", "删除"};
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("操作: " + session.name)
+                            .setItems(options, (dialog, which) -> {
+                                if (which == 0) showRenameDialog(session);
+                                else if (which == 1) {
+                                    chatSessions.remove(session);
+                                    refreshDrawerList();
+                                    Toast.makeText(MainActivity.this, "已删除", Toast.LENGTH_SHORT).show();
+                                    // 如果删除的是当前对话，重置
+                                    if (currentChatName.equals(session.name)) {
+                                        currentChatName = "";
+                                        ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: 暂无对话");
+                                        messageContainer.removeAllViews();
+                                    }
+                                }
+                            })
+                            .show();
+                    return true;
+                });
+                drawerContent.addView(itemView);
+            }
         }
     }
 
@@ -233,7 +251,9 @@ public class MainActivity extends Activity {
                         session.name = newName;
                         refreshDrawerList();
                         Toast.makeText(MainActivity.this, "已重命名为: " + newName, Toast.LENGTH_SHORT).show();
-                        if (currentChatName.equals(session.name)) switchToChat(session);
+                        if (currentChatName.equals(session.name)) {
+                            ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: " + currentChatName);
+                        }
                     }
                 })
                 .setNegativeButton("取消", null)
@@ -247,9 +267,10 @@ public class MainActivity extends Activity {
         popup.setOnMenuItemClickListener(item -> {
             if (item.getItemId() == 1) {
                 messageContainer.removeAllViews();
-                currentChatName = "新对话";
-                ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: " + currentChatName);
-                Toast.makeText(this, "已清空屏幕，开启新对话", Toast.LENGTH_SHORT).show();
+                currentChatName = "";
+                hasSentFirstMessage = false;
+                ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: 暂无对话");
+                Toast.makeText(this, "已开启新对话", Toast.LENGTH_SHORT).show();
                 return true;
             } else if (item.getItemId() == 2) {
                 startActivity(new Intent(this, SettingsActivity.class));
@@ -265,6 +286,7 @@ public class MainActivity extends Activity {
         TextView chatTitle = (TextView) drawerLayout.findViewWithTag("chatTitle");
         if (chatTitle != null) chatTitle.setText("当前: " + currentChatName);
         messageContainer.removeAllViews();
+        // 这里可以恢复该对话的历史消息（后续实现）
     }
 
     // ── 发送消息 ──
@@ -272,6 +294,21 @@ public class MainActivity extends Activity {
         String text = inputBox.getText().toString().trim();
         if (text.isEmpty()) return;
 
+        // 如果是第一条消息，自动创建新对话
+        if (!hasSentFirstMessage) {
+            String chatName = text.length() > 10 ? text.substring(0, 10) + "..." : text;
+            ChatSession newSession = new ChatSession(chatName);
+            chatSessions.add(newSession);
+            currentChatName = chatName;
+            hasSentFirstMessage = true;
+            
+            TextView chatTitle = (TextView) drawerLayout.findViewWithTag("chatTitle");
+            if (chatTitle != null) chatTitle.setText("当前: " + currentChatName);
+            
+            refreshDrawerList();
+        }
+
+        // 显示用户消息（右对齐，绿色气泡）
         addMessage("user", text);
         inputBox.setText("");
 
@@ -292,7 +329,7 @@ public class MainActivity extends Activity {
             return;
         }
 
-        // 自动补全 URL（如果只填了基础地址）
+        // 自动补全 URL
         if (!apiUrl.endsWith("/chat/completions")) {
             if (apiUrl.endsWith("/v1")) {
                 apiUrl = apiUrl + "/chat/completions";
@@ -344,6 +381,7 @@ public class MainActivity extends Activity {
                                         .getJSONObject(0)
                                         .getJSONObject("message")
                                         .getString("content");
+                                // 显示 AI 回复（左对齐，灰色气泡）
                                 addMessage("ai", reply);
                             } catch (Exception e) {
                                 addMessage("system", "❌ 解析响应失败: " + e.getMessage());
@@ -360,14 +398,15 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ── 添加消息气泡 ──
     private void addMessage(String role, String content) {
         if ("system".equals(role) && content.contains("正在思考")) {
             removeLastSystemMessage();
         }
 
         LinearLayout msgRow = new LinearLayout(this);
-        msgRow.setOrientation(LinearLayout.HORIZONTAL);
-        msgRow.setPadding(0, 4, 0, 4);
+        msgRow.setOrientation(LinearLayout.VERTICAL);
+        msgRow.setPadding(0, 8, 0, 8);
 
         TextView bubble = new TextView(this);
         bubble.setText(content);
@@ -376,26 +415,31 @@ public class MainActivity extends Activity {
         bubble.setLineSpacing(4f, 1f);
 
         if ("user".equals(role)) {
+            // 用户消息：右对齐，绿色气泡
             bubble.setBackgroundColor(Color.parseColor("#DCF8C6"));
             msgRow.setGravity(Gravity.END);
         } else if ("ai".equals(role)) {
+            // AI 消息：左对齐，灰色气泡
             bubble.setBackgroundColor(Color.parseColor("#E8E8E8"));
             msgRow.setGravity(Gravity.START);
         } else {
+            // 系统消息：居中，黄色气泡
             bubble.setBackgroundColor(Color.parseColor("#FFF3CD"));
             msgRow.setGravity(Gravity.CENTER);
             bubble.setTextSize(13f);
         }
 
+        // 气泡最大宽度设为屏幕宽度的 80%
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.75);
+        lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.8);
         bubble.setLayoutParams(lp);
 
         msgRow.addView(bubble);
         messageContainer.addView(msgRow);
 
+        // 自动滚动到底部
         messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
     }
 
