@@ -48,6 +48,12 @@ public class AITranslator {
     public static String promptUK = "";
 
     // ──────────────────────────────────────
+    // 朋友管理系统（新增）
+    // ──────────────────────────────────────
+    private static File friendsFile = new File("/data/data/com.hellotalk/files/htai_friends.json");
+    private static JSONObject friendsData = new JSONObject();
+
+    // ──────────────────────────────────────
     // 初始化
     // ──────────────────────────────────────
 
@@ -66,9 +72,10 @@ public class AITranslator {
         promptFile = new File("/data/local/tmp/htai_prompts.txt");
 
         loadCache();
+        loadFriends();  // 加载朋友数据
         loadPrompts();
 
-        Log.i(TAG, "缓存:" + cache.size() + "条");
+        Log.i(TAG, "缓存:" + cache.size() + "条, 朋友:" + friendsData.length() + "位");
     }
 
     public static void initForFetch(String key, String url) {
@@ -79,6 +86,109 @@ public class AITranslator {
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(45, TimeUnit.SECONDS)
                 .build();
+    }
+
+    // ──────────────────────────────────────
+    // 朋友管理（新增）
+    // ──────────────────────────────────────
+
+    public static void loadFriends() {
+        try {
+            if (friendsFile.exists()) {
+                BufferedReader r = new BufferedReader(new FileReader(friendsFile));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = r.readLine()) != null) sb.append(line);
+                r.close();
+                friendsData = new JSONObject(sb.toString());
+            }
+        } catch (Exception ignored) {}
+    }
+
+    public static void saveFriends() {
+        try {
+            friendsFile.getParentFile().mkdirs();
+            BufferedWriter w = new BufferedWriter(new FileWriter(friendsFile));
+            w.write(friendsData.toString());
+            w.close();
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * 注册或更新一个朋友
+     * @param chatId 聊天会话ID（来自 getChatId()）
+     * @param name 对方名字（来自 getSenderName() 或 getUserName()）
+     * @param langCode 语言代码 en/ru/uk 等
+     */
+    public static void registerFriend(String chatId, String name, String langCode) {
+        try {
+            if (chatId == null || chatId.isEmpty()) return;
+            JSONObject friend = new JSONObject();
+            if (friendsData.has(chatId)) {
+                friend = friendsData.getJSONObject(chatId);
+            }
+            // 只在名字非空时更新（避免覆盖已有名字）
+            if (name != null && !name.isEmpty()) {
+                friend.put("name", name);
+            } else if (!friend.has("name")) {
+                friend.put("name", chatId);  // 兜底用chatId
+            }
+            friend.put("lang", langCode != null ? langCode : "en");
+            friend.put("lastTime", System.currentTimeMillis());
+            friendsData.put(chatId, friend);
+            saveFriends();
+            Log.i(TAG, "注册朋友: " + friend.optString("name") + " (" + langCode + ")");
+        } catch (JSONException ignored) {}
+    }
+
+    /**
+     * 获取朋友语言代码，默认 en
+     */
+    public static String getFriendLang(String chatId) {
+        try {
+            if (friendsData.has(chatId)) {
+                return friendsData.getJSONObject(chatId).optString("lang", "en");
+            }
+        } catch (JSONException ignored) {}
+        return "en";
+    }
+
+    /**
+     * 获取朋友名字，没有则返回 chatId
+     */
+    public static String getFriendName(String chatId) {
+        try {
+            if (friendsData.has(chatId)) {
+                return friendsData.getJSONObject(chatId).optString("name", chatId);
+            }
+        } catch (JSONException ignored) {}
+        return chatId;
+    }
+
+    /**
+     * 获取所有朋友列表（供侧栏使用）
+     * 返回 JSONArray，每个元素: {id, name, lang, lastTime, count}
+     */
+    public static JSONArray getAllFriends() {
+        JSONArray list = new JSONArray();
+        try {
+            JSONArray ids = friendsData.names();
+            if (ids == null) return list;
+            for (int i = 0; i < ids.length(); i++) {
+                String id = ids.getString(i);
+                JSONObject info = friendsData.getJSONObject(id);
+                JSONObject item = new JSONObject();
+                item.put("id", id);
+                item.put("name", info.optString("name", id));
+                item.put("lang", info.optString("lang", "en"));
+                item.put("lastTime", info.optLong("lastTime", 0));
+                // 统计翻译历史条数
+                JSONArray hist = loadHistory(id);
+                item.put("count", hist.length());
+                list.put(item);
+            }
+        } catch (JSONException ignored) {}
+        return list;
     }
 
     // ──────────────────────────────────────
@@ -155,7 +265,6 @@ public class AITranslator {
             }
         } catch (Exception ignored) {}
 
-        // 默认值
         if (receivePrompt.isEmpty())
             receivePrompt = "你是一个社交情报传译员。代入对方身份，将外语翻译成地道有呼吸感的中文。";
         if (promptEN.isEmpty())
@@ -178,6 +287,7 @@ public class AITranslator {
     // ──────────────────────────────────────
 
     public static boolean isChinese(String s) {
+        if (s == null) return false;
         for (char c : s.toCharArray()) {
             Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
             if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
@@ -218,11 +328,10 @@ public class AITranslator {
         }
     }
 
-    public static String translateWithHistory(String text, String langCode, int chatId) throws IOException {
+    public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
         try {
             JSONArray messages = new JSONArray();
 
-            // System prompt（根据语言选择）
             String sysPrompt;
             switch (langCode) {
                 case "ru":
@@ -241,13 +350,11 @@ public class AITranslator {
             sys.put("content", sysPrompt);
             messages.put(sys);
 
-            // 加载历史
             JSONArray history = loadHistory(chatId);
             for (int i = 0; i < history.length(); i++) {
                 messages.put(history.get(i));
             }
 
-            // 用户消息
             JSONObject user = new JSONObject();
             user.put("role", "user");
             user.put("content", "待翻译中文：" + text);
@@ -336,7 +443,6 @@ public class AITranslator {
         if (url.endsWith("/chat/completions")) {
             return url;
         }
-        // 自动补全
         if (!url.endsWith("/")) url += "/";
         int idx = url.indexOf("/v1");
         if (idx >= 0) {
@@ -382,56 +488,14 @@ public class AITranslator {
     }
 
     // ──────────────────────────────────────
-    // 文本提取
+    // 聊天历史（改用 String chatId）
     // ──────────────────────────────────────
 
-    public static String extractText(String s) {
-        if (s == null || s.isEmpty()) return "";
-        if (s.startsWith("{")) {
-            try {
-                return new JSONObject(s).optString("text", s);
-            } catch (Exception e) {
-                return s;
-            }
-        }
-        return s;
-    }
-
-    // ──────────────────────────────────────
-    // 多版本解析
-    // ──────────────────────────────────────
-
-    public static List<String> parseVersions(String text) {
-        List<String> list = new ArrayList<>();
-        String[] lines = text.split("\n");
-        for (String line : lines) {
-            line = line.trim();
-            if (line.isEmpty()) continue;
-            // 匹配 "1) xxx" 或 "1. xxx" 格式
-            if (line.matches("^\\d[\\.\\)].*")) {
-                // 去掉前面的数字编号
-                String content = line.replaceFirst("^\\d[\\.\\)]\\s*", "");
-                // 清理括号
-                content = content.replace("（", "").replace("）", "")
-                        .replace("【", "").replace("】", "");
-                list.add(content.trim());
-            }
-        }
-        if (list.isEmpty() && !text.isEmpty()) {
-            list.add(text);
-        }
-        return list;
-    }
-
-    // ──────────────────────────────────────
-    // 聊天历史
-    // ──────────────────────────────────────
-
-    private static File historyFile(int chatId) {
+    private static File historyFile(String chatId) {
         return new File("/data/data/com.hellotalk/files/htai_hist_" + chatId + ".json");
     }
 
-    public static JSONArray loadHistory(int chatId) {
+    public static JSONArray loadHistory(String chatId) {
         File f = historyFile(chatId);
         if (!f.exists()) return new JSONArray();
         try (BufferedReader r = new BufferedReader(new FileReader(f))) {
@@ -444,13 +508,12 @@ public class AITranslator {
         }
     }
 
-    public static void appendHistory(int chatId, String role, String content) {
+    public static void appendHistory(String chatId, String role, String content) {
         if (content == null || content.isEmpty()) return;
         try {
             JSONArray history = loadHistory(chatId);
             JSONObject entry = new JSONObject();
             entry.put("role", role);
-            // 截断过长的内容
             String display = content.length() > 200 ? content.substring(0, 200) : content;
             entry.put("content", display);
             history.put(entry);
@@ -463,7 +526,7 @@ public class AITranslator {
         } catch (Exception ignored) {}
     }
 
-    public static List<String[]> loadHistoryForDisplay(int chatId) {
+    public static List<String[]> loadHistoryForDisplay(String chatId) {
         List<String[]> list = new ArrayList<>();
         JSONArray history = loadHistory(chatId);
         for (int i = 0; i < history.length(); i++) {
