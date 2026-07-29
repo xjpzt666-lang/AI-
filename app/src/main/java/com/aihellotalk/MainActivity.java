@@ -13,7 +13,6 @@ import android.graphics.Color;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.method.LinkMovementMethod;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -43,7 +42,6 @@ public class MainActivity extends Activity {
     private String currentChatName = "";
     private List<ChatSession> chatSessions = new ArrayList<>();
 
-    // 记录上一条用户消息，用于重新回答
     private String lastUserMessage = "";
 
     private OkHttpClient httpClient;
@@ -52,7 +50,6 @@ public class MainActivity extends Activity {
 
     private static final int MAX_HISTORY_ROUNDS = 100;
 
-    // 缓存配置
     private String cachedApiKey = "";
     private String cachedApiUrl = "";
     private String cachedModel = "";
@@ -69,19 +66,15 @@ public class MainActivity extends Activity {
         mainHandler = new Handler(Looper.getMainLooper());
         dbHelper = new DatabaseHelper(this);
 
-        // 启动时一次性读取配置（优先 SharedPreferences，其次 Root 文件）
         loadConfigOnce();
-
         loadChatSessions();
 
         drawerLayout = new DrawerLayout(this);
 
-        // ── 主聊天区 ──
         LinearLayout mainContent = new LinearLayout(this);
         mainContent.setOrientation(LinearLayout.VERTICAL);
         mainContent.setBackgroundColor(Color.WHITE);
 
-        // 顶部栏
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setPadding(16, 16, 16, 16);
@@ -111,7 +104,6 @@ public class MainActivity extends Activity {
         topBar.addView(rightMenuBtn);
         mainContent.addView(topBar);
 
-        // 当前对话提示条
         TextView chatTitle = new TextView(this);
         chatTitle.setText("当前: 暂无对话");
         chatTitle.setTag("chatTitle");
@@ -121,7 +113,6 @@ public class MainActivity extends Activity {
         chatTitle.setBackgroundColor(Color.parseColor("#F9F9F9"));
         mainContent.addView(chatTitle);
 
-        // 消息滚动区
         messageScrollView = new ScrollView(this);
         messageScrollView.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -132,7 +123,6 @@ public class MainActivity extends Activity {
         messageScrollView.addView(messageContainer);
         mainContent.addView(messageScrollView);
 
-        // ── 底部输入区 ──
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setPadding(8, 8, 8, 8);
@@ -162,7 +152,6 @@ public class MainActivity extends Activity {
 
         drawerLayout.addView(mainContent);
 
-        // ── 侧滑菜单区 ──
         drawerContent = new LinearLayout(this);
         drawerContent.setOrientation(LinearLayout.VERTICAL);
         drawerContent.setPadding(20, 50, 20, 20);
@@ -186,20 +175,16 @@ public class MainActivity extends Activity {
     }
 
     private void loadConfigOnce() {
-        // 优先读取 SharedPreferences（保证关闭后台后不丢失）
         SharedPreferences prefs = getSharedPreferences("htai_settings", MODE_PRIVATE);
         cachedApiKey = prefs.getString("api_key", "");
         cachedApiUrl = prefs.getString("api_url", "");
         cachedModel = prefs.getString("model", "");
 
-        // 如果 SharedPreferences 没有，再从 Root 文件读取
         if (cachedApiKey.isEmpty()) cachedApiKey = readConfig("api_key");
         if (cachedApiUrl.isEmpty()) cachedApiUrl = readConfig("api_url");
         if (cachedModel.isEmpty()) cachedModel = readConfig("model");
 
-        // 如果都没有，使用默认值
         if (cachedApiUrl.isEmpty()) cachedApiUrl = "https://www.wintoken.dev";
-
         configLoaded = true;
     }
 
@@ -312,9 +297,7 @@ public class MainActivity extends Activity {
                             .setTitle("操作: " + session.name)
                             .setItems(options, (dialog, which) -> {
                                 if (which == 0) showRenameDialog(session);
-                                else if (which == 1) {
-                                    deleteChat(session);
-                                }
+                                else if (which == 1) deleteChat(session);
                             })
                             .show();
                     return true;
@@ -399,12 +382,10 @@ public class MainActivity extends Activity {
         refreshDrawerList();
     }
 
-    // ── 发送消息 ──
     private void sendMessage() {
         String text = inputBox.getText().toString().trim();
         if (text.isEmpty()) return;
 
-        // 记录上一条用户消息
         lastUserMessage = text;
 
         if (currentChatId.isEmpty()) {
@@ -433,7 +414,6 @@ public class MainActivity extends Activity {
         saveMessageToDb(currentChatId, "user", text);
         inputBox.setText("");
 
-        // 使用缓存的配置
         String apiKey = cachedApiKey;
         String apiUrl = cachedApiUrl;
         String model = cachedModel;
@@ -534,21 +514,16 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ── 重新回答（点击旋转符号触发）──
     private void regenerateAnswer() {
         if (lastUserMessage.isEmpty()) {
             Toast.makeText(this, "没有可重新回答的消息", Toast.LENGTH_SHORT).show();
             return;
         }
-        // 把最后一条 AI 回复从界面上移除（但不删数据库）
         removeLastAiMessage();
-
-        // 重新发送上一条用户消息
         inputBox.setText(lastUserMessage);
         sendMessage();
     }
 
-    // 移除最后一条 AI 消息（界面显示）
     private void removeLastAiMessage() {
         for (int i = messageContainer.getChildCount() - 1; i >= 0; i--) {
             View child = messageContainer.getChildAt(i);
@@ -557,12 +532,9 @@ public class MainActivity extends Activity {
                 if (row.getChildCount() > 0 && row.getChildAt(0) instanceof TextView) {
                     TextView bubble = (TextView) row.getChildAt(0);
                     String text = bubble.getText().toString();
-                    // 只移除 AI 回复（不含系统消息）
                     if (!text.contains("正在思考") && !text.contains("⚠️") && !text.contains("❌")) {
-                        // 检查气泡颜色（灰色 = AI）
                         if (bubble.getCurrentTextColor() == Color.parseColor("#E8E8E8") ||
                                 bubble.getBackground() != null) {
-                            // 简化判断：直接移除最后一个非系统消息
                             messageContainer.removeViewAt(i);
                             return;
                         }
@@ -572,18 +544,14 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ── 显示消息（过滤星号和破折号，添加自由复制和旋转功能）──
     private void displayMessage(String role, String content) {
-        // 过滤星号和破折号
         String filteredContent = content.replaceAll("[*\\-]", "");
 
         LinearLayout msgRow = new LinearLayout(this);
         msgRow.setOrientation(LinearLayout.HORIZONTAL);
         msgRow.setPadding(0, 8, 0, 8);
 
-        // 如果是 AI 消息，左边放气泡，右边放旋转符号
         if ("ai".equals(role)) {
-            // 消息气泡
             LinearLayout bubbleWrapper = new LinearLayout(this);
             bubbleWrapper.setOrientation(LinearLayout.VERTICAL);
             bubbleWrapper.setLayoutParams(new LinearLayout.LayoutParams(
@@ -595,8 +563,6 @@ public class MainActivity extends Activity {
             bubble.setPadding(16, 12, 16, 12);
             bubble.setLineSpacing(4f, 1f);
             bubble.setBackgroundColor(Color.parseColor("#E8E8E8"));
-
-            // ★ 开启自由文本选择 ★
             bubble.setTextIsSelectable(true);
 
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -608,7 +574,6 @@ public class MainActivity extends Activity {
             bubbleWrapper.addView(bubble);
             msgRow.addView(bubbleWrapper);
 
-            // 旋转符号按钮
             Button rotateBtn = new Button(this);
             rotateBtn.setText("🔄");
             rotateBtn.setTextSize(18f);
@@ -618,15 +583,12 @@ public class MainActivity extends Activity {
 
             msgRow.setGravity(Gravity.START);
         } else if ("user".equals(role)) {
-            // 用户消息
             TextView bubble = new TextView(this);
             bubble.setText(filteredContent);
             bubble.setTextSize(15f);
             bubble.setPadding(16, 12, 16, 12);
             bubble.setLineSpacing(4f, 1f);
             bubble.setBackgroundColor(Color.parseColor("#DCF8C6"));
-
-            // ★ 开启自由文本选择 ★
             bubble.setTextIsSelectable(true);
 
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -635,22 +597,18 @@ public class MainActivity extends Activity {
             lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.65);
             bubble.setLayoutParams(lp);
 
-            // 为了对齐，左边放一个空白占位
             LinearLayout spacer = new LinearLayout(this);
             spacer.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             msgRow.addView(spacer);
             msgRow.addView(bubble);
             msgRow.setGravity(Gravity.END);
         } else {
-            // 系统消息
             TextView bubble = new TextView(this);
             bubble.setText(filteredContent);
             bubble.setTextSize(13f);
             bubble.setPadding(16, 12, 16, 12);
             bubble.setLineSpacing(4f, 1f);
             bubble.setBackgroundColor(Color.parseColor("#FFF3CD"));
-
-            // ★ 开启自由文本选择 ★
             bubble.setTextIsSelectable(true);
 
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
@@ -722,4 +680,33 @@ public class MainActivity extends Activity {
     }
 
     static class DatabaseHelper extends SQLiteOpenHelper {
-        private static final String DB_NAME
+        private static final String DB_NAME = "chat_history.db";
+        private static final int DB_VERSION = 1;
+
+        DatabaseHelper(Context context) {
+            super(context, DB_NAME, null, DB_VERSION);
+        }
+
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE chats (" +
+                    "id TEXT PRIMARY KEY, " +
+                    "name TEXT NOT NULL, " +
+                    "updated_at INTEGER NOT NULL)");
+            db.execSQL("CREATE TABLE messages (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    "chat_id TEXT NOT NULL, " +
+                    "role TEXT NOT NULL, " +
+                    "content TEXT NOT NULL, " +
+                    "timestamp INTEGER NOT NULL, " +
+                    "FOREIGN KEY (chat_id) REFERENCES chats(id))");
+        }
+
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            db.execSQL("DROP TABLE IF EXISTS messages");
+            db.execSQL("DROP TABLE IF EXISTS chats");
+            onCreate(db);
+        }
+    }
+}
