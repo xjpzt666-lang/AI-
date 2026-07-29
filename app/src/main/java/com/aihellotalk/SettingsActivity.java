@@ -2,6 +2,7 @@ package com.aihellotalk;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.view.View;
@@ -33,9 +34,13 @@ public class SettingsActivity extends Activity {
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK;
     private Button btnFetch, btnSave, btnTest;
 
+    private SharedPreferences prefs;
+
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
+
+        prefs = getSharedPreferences("htai_settings", MODE_PRIVATE);
 
         ScrollView sv = new ScrollView(this);
         LinearLayout ll = new LinearLayout(this);
@@ -45,12 +50,13 @@ public class SettingsActivity extends Activity {
         ll.addView(tip("HT AI翻译 v5.0\n接收自动翻译 + 点[文A]按钮选版本"));
 
         ll.addView(lab("API Key:"));
-        etKey = edit("");
+        etKey = edit(prefs.getString("api_key", ""));
         etKey.setHint("输入你的 API Key");
         ll.addView(etKey);
 
         ll.addView(lab("API URL:"));
-        etUrl = edit("https://api.openai.com/v1/chat/completions");
+        // 默认地址改为 wintoken.dev
+        etUrl = edit(prefs.getString("api_url", "https://www.wintoken.dev"));
         ll.addView(etUrl);
 
         btnFetch = btn("📡 获取模型列表");
@@ -58,26 +64,26 @@ public class SettingsActivity extends Activity {
         ll.addView(btnFetch);
 
         ll.addView(lab("模型:"));
-        etModel = edit("");
+        etModel = edit(prefs.getString("model", ""));
         etModel.setHint("先获取后选择，或手动输入");
         ll.addView(etModel);
 
         ll.addView(div());
 
         ll.addView(lab("🇨🇳 接收翻译 Prompt (外语→中文):"));
-        etPromptZH = bigEdit("");
+        etPromptZH = bigEdit(prefs.getString("prompt_zh", ""));
         ll.addView(etPromptZH);
 
         ll.addView(lab("🇬🇧 英语 Prompt (发送):"));
-        etPromptEN = bigEdit("");
+        etPromptEN = bigEdit(prefs.getString("prompt_en", ""));
         ll.addView(etPromptEN);
 
         ll.addView(lab("🇷🇺 俄语 Prompt (发送):"));
-        etPromptRU = bigEdit("");
+        etPromptRU = bigEdit(prefs.getString("prompt_ru", ""));
         ll.addView(etPromptRU);
 
         ll.addView(lab("🇺🇦 乌克兰语 Prompt (发送):"));
-        etPromptUK = bigEdit("");
+        etPromptUK = bigEdit(prefs.getString("prompt_uk", ""));
         ll.addView(etPromptUK);
 
         btnSave = btn("💾 保存全部配置");
@@ -215,7 +221,6 @@ public class SettingsActivity extends Activity {
                     btnFetch.setEnabled(true);
                     btnFetch.setText("📡 获取模型列表");
                     if (models.isEmpty()) {
-                        // 全部失败，提示手动输入
                         new AlertDialog.Builder(SettingsActivity.this)
                                 .setTitle("获取失败")
                                 .setMessage("自动尝试了多种地址均无法获取模型列表。\n请检查 API Key 和 URL 是否正确，或手动输入模型名。")
@@ -229,12 +234,10 @@ public class SettingsActivity extends Activity {
                 runOnUiThread(() -> {
                     btnFetch.setEnabled(true);
                     btnFetch.setText("📡 获取模型列表");
-                    // 显示详细错误，并允许手动输入
                     new AlertDialog.Builder(SettingsActivity.this)
                             .setTitle("获取失败")
                             .setMessage("错误: " + e.getMessage() + "\n\n你可以手动输入模型名。")
                             .setPositiveButton("手动输入", (dialog, which) -> {
-                                // 让用户聚焦到模型输入框
                                 etModel.requestFocus();
                             })
                             .setNegativeButton("取消", null)
@@ -246,21 +249,17 @@ public class SettingsActivity extends Activity {
 
     // 自动尝试多种地址获取模型列表
     private List<String> autoFetchModels(String key, String baseUrl) throws Exception {
-        // 从 baseUrl 提取基础地址
         String base = baseUrl;
         if (base.endsWith("/chat/completions")) {
             base = base.substring(0, base.length() - "/chat/completions".length());
         }
-        // 去掉末尾的 /v1 或 /v1/
         if (base.endsWith("/v1")) {
             base = base.substring(0, base.length() - 3);
         } else if (base.endsWith("/v1/")) {
             base = base.substring(0, base.length() - 4);
         }
-        // 确保末尾有 /
         if (!base.endsWith("/")) base += "/";
 
-        // 要尝试的地址列表
         String[] urlsToTry = {
                 base + "v1/models",
                 base + "models",
@@ -300,7 +299,6 @@ public class SettingsActivity extends Activity {
             }
         }
 
-        // 全部失败，抛出异常附带详细信息
         throw new Exception("尝试了以下地址均失败:\n" + String.join("\n", lastErrors));
     }
 
@@ -313,7 +311,7 @@ public class SettingsActivity extends Activity {
                 .show();
     }
 
-    // ── 保存配置 ──
+    // ── 保存配置（同时保存到 SharedPreferences 和 Root 文件）──
 
     private void saveAll() {
         btnSave.setEnabled(false);
@@ -326,6 +324,17 @@ public class SettingsActivity extends Activity {
         String en = etPromptEN.getText().toString().trim();
         String ru = etPromptRU.getText().toString().trim();
         String uk = etPromptUK.getText().toString().trim();
+
+        // 保存到 SharedPreferences（保证关闭后台后不丢失）
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.putString("api_key", key);
+        editor.putString("api_url", url);
+        editor.putString("model", mdl);
+        editor.putString("prompt_zh", zh);
+        editor.putString("prompt_en", en);
+        editor.putString("prompt_ru", ru);
+        editor.putString("prompt_uk", uk);
+        editor.apply();
 
         new Thread(() -> {
             try {
