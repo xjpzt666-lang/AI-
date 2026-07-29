@@ -1,14 +1,15 @@
 package com.aihellotalk;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.graphics.Color;
 import android.os.Bundle;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.*;
-import android.graphics.Color;
-import android.graphics.drawable.GradientDrawable;
 import androidx.drawerlayout.widget.DrawerLayout;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,14 +22,12 @@ public class MainActivity extends Activity {
     private EditText inputBox;
     private Spinner promptSpinner;
     private Button sendBtn;
+    private LinearLayout drawerContent; // 侧滑菜单的容器
 
     private String currentChatName = "自由对话";
-    private String currentPrompt = "";
-
     private List<ChatSession> chatSessions = new ArrayList<>();
 
-    private String[] promptNames = {"自由对话", "英语翻译", "俄语翻译", "乌克兰语翻译", "日语翻译"};
-    private String[] promptValues = {"", "", "", "", ""};
+    private String[] promptNames = {"自由对话", "英语", "俄语", "乌克兰语", "西班牙语"};
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -38,6 +37,7 @@ public class MainActivity extends Activity {
 
         drawerLayout = new DrawerLayout(this);
 
+        // ── 主聊天区 ──
         LinearLayout mainContent = new LinearLayout(this);
         mainContent.setOrientation(LinearLayout.VERTICAL);
         mainContent.setBackgroundColor(Color.WHITE);
@@ -51,26 +51,28 @@ public class MainActivity extends Activity {
         Button leftMenuBtn = new Button(this);
         leftMenuBtn.setText("☰");
         leftMenuBtn.setTextSize(20f);
+        leftMenuBtn.setBackgroundColor(Color.TRANSPARENT);
         leftMenuBtn.setOnClickListener(v -> drawerLayout.openDrawer(Gravity.LEFT));
 
         TextView title = new TextView(this);
-        title.setText("HT AI 翻译");
+        title.setText("HT AI 聊天");
         title.setTextSize(18f);
+        title.setTextColor(Color.BLACK);
         title.setGravity(Gravity.CENTER);
-        title.setLayoutParams(new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        title.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         Button rightMenuBtn = new Button(this);
         rightMenuBtn.setText("⋮");
-        rightMenuBtn.setTextSize(28f);
-        rightMenuBtn.setOnClickListener(v -> showPopupMenu(v));
+        rightMenuBtn.setTextSize(24f);
+        rightMenuBtn.setBackgroundColor(Color.TRANSPARENT);
+        rightMenuBtn.setOnClickListener(this::showPopupMenu);
 
         topBar.addView(leftMenuBtn);
         topBar.addView(title);
         topBar.addView(rightMenuBtn);
         mainContent.addView(topBar);
 
-        // 对话标题
+        // 当前对话提示条
         TextView chatTitle = new TextView(this);
         chatTitle.setText("当前: " + currentChatName);
         chatTitle.setTag("chatTitle");
@@ -80,7 +82,7 @@ public class MainActivity extends Activity {
         chatTitle.setBackgroundColor(Color.parseColor("#F9F9F9"));
         mainContent.addView(chatTitle);
 
-        // 消息列表
+        // 消息滚动区
         messageScrollView = new ScrollView(this);
         messageScrollView.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -91,39 +93,34 @@ public class MainActivity extends Activity {
         messageScrollView.addView(messageContainer);
         mainContent.addView(messageScrollView);
 
-        // Prompt 选择器
+        // 指令选择器
         LinearLayout promptBar = new LinearLayout(this);
         promptBar.setOrientation(LinearLayout.HORIZONTAL);
         promptBar.setPadding(12, 4, 12, 4);
         promptBar.setBackgroundColor(Color.parseColor("#F0F0F0"));
-
         TextView promptLabel = new TextView(this);
         promptLabel.setText("指令: ");
         promptLabel.setTextSize(14f);
-        promptLabel.setGravity(Gravity.CENTER_VERTICAL);
-
         promptSpinner = new Spinner(this);
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_item, promptNames);
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, promptNames);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         promptSpinner.setAdapter(adapter);
-        promptSpinner.setLayoutParams(new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
+        promptSpinner.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         promptBar.addView(promptLabel);
         promptBar.addView(promptSpinner);
         mainContent.addView(promptBar);
 
-        // 底部输入框
+        // 底部输入区
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setPadding(12, 8, 12, 8);
-        bottomBar.setBackgroundColor(Color.parseColor("#F0F0F0"));
+        bottomBar.setBackgroundColor(Color.parseColor("#E0E0E0"));
 
         inputBox = new EditText(this);
-        inputBox.setHint("输入内容...");
-        inputBox.setLayoutParams(new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        inputBox.setHint("输入消息...");
+        inputBox.setBackgroundColor(Color.WHITE);
+        inputBox.setPadding(20, 20, 20, 20);
+        inputBox.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         sendBtn = new Button(this);
         sendBtn.setText("发送");
@@ -135,193 +132,177 @@ public class MainActivity extends Activity {
 
         drawerLayout.addView(mainContent);
 
-        // 侧滑菜单
-        LinearLayout drawerContent = new LinearLayout(this);
+        // ── 侧滑菜单区 ──
+        drawerContent = new LinearLayout(this);
         drawerContent.setOrientation(LinearLayout.VERTICAL);
         drawerContent.setPadding(20, 50, 20, 20);
         drawerContent.setBackgroundColor(Color.parseColor("#FAFAFA"));
-        drawerContent.setLayoutParams(new DrawerLayout.LayoutParams(
-                320, ViewGroup.LayoutParams.MATCH_PARENT));
+        
+        // 修复之前报错的宽度设置，直接使用 width
+        DrawerLayout.LayoutParams lp = new DrawerLayout.LayoutParams(dpToPx(280), ViewGroup.LayoutParams.MATCH_PARENT);
+        lp.gravity = Gravity.LEFT;
+        drawerContent.setLayoutParams(lp);
 
         TextView drawerTitle = new TextView(this);
-        drawerTitle.setText("对话列表");
-        drawerTitle.setTextSize(18f);
-        drawerTitle.setTextColor(Color.BLACK);
+        drawerTitle.setText("长按列表项可操作");
+        drawerTitle.setTextSize(14f);
+        drawerTitle.setTextColor(Color.GRAY);
+        drawerTitle.setPadding(0,0,0,20);
         drawerContent.addView(drawerTitle);
 
-        View divider = new View(this);
-        divider.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 1));
-        divider.setBackgroundColor(Color.parseColor("#DDDDDD"));
-        drawerContent.addView(divider);
+        refreshDrawerList(); // 渲染列表
+
+        drawerLayout.addView(drawerContent);
+        setContentView(drawerLayout);
+    }
+
+    // 初始化假数据
+    private void initChatSessions() {
+        chatSessions.add(new ChatSession("自由对话"));
+        chatSessions.add(new ChatSession("朋友A（俄语）"));
+        chatSessions.add(new ChatSession("朋友B（西班牙语）"));
+    }
+
+    // 刷新侧滑菜单列表
+    private void refreshDrawerList() {
+        // 保留第一个 Title，移除后面的所有旧列表项
+        if (drawerContent.getChildCount() > 1) {
+            drawerContent.removeViews(1, drawerContent.getChildCount() - 1);
+        }
 
         for (ChatSession session : chatSessions) {
-            View itemView = createDrawerItem(session.name, session.promptName);
+            TextView itemView = new TextView(this);
+            itemView.setText("👤 " + session.name);
+            itemView.setTextSize(18f);
+            itemView.setPadding(20, 30, 20, 30);
+            itemView.setTextColor(Color.BLACK);
+
+            // 【单击】：切换对话
             itemView.setOnClickListener(v -> {
                 switchToChat(session);
                 drawerLayout.closeDrawers();
             });
+
+            // 【长按】：弹出 重命名/删除 菜单
+            itemView.setOnLongClickListener(v -> {
+                String[] options = {"重命名", "删除"};
+                new AlertDialog.Builder(MainActivity.this)
+                        .setTitle("操作: " + session.name)
+                        .setItems(options, (dialog, which) -> {
+                            if (which == 0) {
+                                showRenameDialog(session);
+                            } else if (which == 1) {
+                                chatSessions.remove(session);
+                                refreshDrawerList(); // 重新渲染列表
+                                Toast.makeText(MainActivity.this, "已删除", Toast.LENGTH_SHORT).show();
+                            }
+                        })
+                        .show();
+                return true;
+            });
+
             drawerContent.addView(itemView);
         }
-
-        drawerLayout.addView(drawerContent);
-
-        DrawerLayout.LayoutParams lp = (DrawerLayout.LayoutParams) drawerContent.getLayoutParams();
-        lp.gravity = Gravity.LEFT;
-        drawerContent.setLayoutParams(lp);
-
-        setContentView(drawerLayout);
     }
 
-    private void initChatSessions() {
-        chatSessions.add(new ChatSession("自由对话", "自由对话", ""));
-        chatSessions.add(new ChatSession("朋友A（俄语）", "俄语翻译", ""));
-        chatSessions.add(new ChatSession("朋友B（乌克兰语）", "乌克兰语翻译", ""));
-        chatSessions.add(new ChatSession("朋友C（中文）", "英语翻译", ""));
+    // 重命名弹窗
+    private void showRenameDialog(ChatSession session) {
+        final EditText input = new EditText(this);
+        input.setText(session.name);
+        input.setSelection(session.name.length()); // 光标移到最后
+
+        new AlertDialog.Builder(this)
+                .setTitle("重命名对话")
+                .setView(input)
+                .setPositiveButton("确定", (dialog, which) -> {
+                    String newName = input.getText().toString().trim();
+                    if (!newName.isEmpty()) {
+                        session.name = newName;
+                        refreshDrawerList(); // 重新渲染列表
+                        Toast.makeText(MainActivity.this, "已重命名为: " + newName, Toast.LENGTH_SHORT).show();
+                        
+                        // 如果当前正好在聊这个对话，把头部的标题也改了
+                        if (currentChatName.equals(session.name)) {
+                            switchToChat(session); 
+                        }
+                    }
+                })
+                .setNegativeButton("取消", null)
+                .show();
     }
 
-    private View createDrawerItem(String name, String promptName) {
-        LinearLayout item = new LinearLayout(this);
-        item.setOrientation(LinearLayout.HORIZONTAL);
-        item.setPadding(0, 12, 0, 12);
-
-        TextView nameText = new TextView(this);
-        nameText.setText(name);
-        nameText.setTextSize(15f);
-        nameText.setTextColor(Color.DKGRAY);
-        nameText.setLayoutParams(new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-        TextView promptTag = new TextView(this);
-        promptTag.setText("[" + promptName + "]");
-        promptTag.setTextSize(12f);
-        promptTag.setTextColor(Color.GRAY);
-
-        item.addView(nameText);
-        item.addView(promptTag);
-        return item;
-    }
-
-    private void switchToChat(ChatSession session) {
-        currentChatName = session.name;
-        currentPrompt = session.prompt;
-
-        TextView chatTitle = (TextView) drawerLayout.findViewWithTag("chatTitle");
-        if (chatTitle != null) {
-            chatTitle.setText("当前: " + currentChatName);
-        }
-
-        messageContainer.removeAllViews();
-        addMessage("system", "已切换到「" + currentChatName + "」对话");
-
-        for (int i = 0; i < promptNames.length; i++) {
-            if (promptNames[i].equals(session.promptName)) {
-                promptSpinner.setSelection(i);
-                break;
-            }
-        }
-    }
-
-    private void sendMessage() {
-        String text = inputBox.getText().toString().trim();
-        if (text.isEmpty()) return;
-
-        addMessage("user", text);
-        inputBox.setText("");
-
-        int selectedPos = promptSpinner.getSelectedItemPosition();
-        String selectedPrompt = promptValues[selectedPos];
-
-        String reply = simulateAIResponse(text, selectedPrompt);
-        addMessage("ai", reply);
-    }
-
-    private void addMessage(String role, String content) {
-        LinearLayout msgRow = new LinearLayout(this);
-        msgRow.setOrientation(LinearLayout.HORIZONTAL);
-        msgRow.setPadding(0, 4, 0, 4);
-
-        TextView bubble = new TextView(this);
-        bubble.setText(content);
-        bubble.setTextSize(15f);
-        bubble.setPadding(16, 12, 16, 12);
-        bubble.setLineSpacing(4f, 1f);
-
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setCornerRadius(16f);
-        if ("user".equals(role)) {
-            drawable.setColor(Color.parseColor("#DCF8C6"));
-            msgRow.setGravity(Gravity.END);
-        } else if ("ai".equals(role)) {
-            drawable.setColor(Color.parseColor("#E8E8E8"));
-            msgRow.setGravity(Gravity.START);
-        } else {
-            drawable.setColor(Color.parseColor("#FFF3CD"));
-            msgRow.setGravity(Gravity.CENTER);
-            bubble.setTextSize(13f);
-        }
-        bubble.setBackground(drawable);
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.7);
-        bubble.setLayoutParams(lp);
-
-        msgRow.addView(bubble);
-        messageContainer.addView(msgRow);
-
-        messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
-    }
-
-    private String simulateAIResponse(String userText, String prompt) {
-        if (prompt == null || prompt.isEmpty()) {
-            return "你好！我是 AI 助手。你说了: " + userText;
-        } else {
-            return "[使用指令翻译]\n" + userText + "\n→ 翻译结果（待接入真实 API）";
-        }
-    }
-
-    private void showPopupMenu(View anchor) {
-        PopupMenu popup = new PopupMenu(this, anchor);
-        popup.getMenuInflater().inflate(R.menu.main_popup_menu, popup.getMenu());
-
+    // 右上角 ⋮ 菜单
+    private void showPopupMenu(View v) {
+        PopupMenu popup = new PopupMenu(this, v);
+        popup.getMenu().add(0, 1, 0, "💬 开启新对话");
+        popup.getMenu().add(0, 2, 0, "⚙️ 设置/API配置"); 
+        
         popup.setOnMenuItemClickListener(item -> {
-            int id = item.getItemId();
-            if (id == R.id.action_settings) {
-                startActivity(new Intent(this, SettingsActivity.class));
+            if (item.getItemId() == 1) {
+                // 开启新对话
+                messageContainer.removeAllViews();
+                currentChatName = "新对话";
+                ((TextView) findViewWithTag("chatTitle")).setText("当前: " + currentChatName);
+                Toast.makeText(this, "已清空屏幕，开启新对话", Toast.LENGTH_SHORT).show();
                 return true;
-            } else if (id == R.id.action_new_chat) {
-                ChatSession newSession = new ChatSession("新对话", "自由对话", "");
-                chatSessions.add(newSession);
-                switchToChat(newSession);
-                Toast.makeText(this, "已创建新对话", Toast.LENGTH_SHORT).show();
-                return true;
-            } else if (id == R.id.action_temp) {
-                Toast.makeText(this, "温度设置待实现", Toast.LENGTH_SHORT).show();
-                return true;
-            } else if (id == R.id.action_token) {
-                Toast.makeText(this, "Token 设置待实现", Toast.LENGTH_SHORT).show();
-                return true;
-            } else if (id == R.id.action_context) {
-                Toast.makeText(this, "上下文数设置待实现", Toast.LENGTH_SHORT).show();
+            } else if (item.getItemId() == 2) {
+                // 跳转到 SettingsActivity 页面
+                Intent intent = new Intent(MainActivity.this, SettingsActivity.class);
+                startActivity(intent);
                 return true;
             }
             return false;
         });
-
         popup.show();
     }
 
-    private static class ChatSession {
-        String name;
-        String promptName;
-        String prompt;
+    // 切换对话
+    private void switchToChat(ChatSession session) {
+        currentChatName = session.name;
+        TextView chatTitle = (TextView) findViewWithTag("chatTitle");
+        if (chatTitle != null) {
+            chatTitle.setText("当前: " + currentChatName);
+        }
+        messageContainer.removeAllViews();
+    }
 
-        ChatSession(String name, String promptName, String prompt) {
+    // 发送消息上屏
+    private void sendMessage() {
+        String text = inputBox.getText().toString().trim();
+        if (text.isEmpty()) return;
+
+        // 用户消息
+        TextView userMsg = new TextView(this);
+        userMsg.setText("我: " + text);
+        userMsg.setTextSize(16f);
+        userMsg.setTextColor(Color.parseColor("#333333"));
+        userMsg.setPadding(0, 20, 0, 10);
+        messageContainer.addView(userMsg);
+        
+        inputBox.setText("");
+
+        // 模拟AI消息 (后续可以在这里接你的 AITranslator)
+        TextView aiMsg = new TextView(this);
+        aiMsg.setText("AI回复: 测试内容 (待接入真实API)");
+        aiMsg.setTextSize(16f);
+        aiMsg.setTextColor(Color.parseColor("#0066CC"));
+        aiMsg.setPadding(0, 10, 0, 20);
+        messageContainer.addView(aiMsg);
+
+        messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
+    }
+
+    // dp 转 px 工具 (解决报错)
+    private int dpToPx(int dp) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
+    }
+
+    // 会话数据结构
+    static class ChatSession {
+        String name;
+        public ChatSession(String name) {
             this.name = name;
-            this.promptName = promptName;
-            this.prompt = prompt;
         }
     }
 }
