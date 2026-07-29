@@ -33,7 +33,7 @@ public class ChatHook {
     // ──────────────────────────────────────
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v8.0 (认人版) ===");
+        log("=== Hook v8.1 (认人+修复版) ===");
 
         try { hookRecv(cl); } catch (Throwable e) { log("接收 ❌ " + e); }
         try { hookLang(cl); } catch (Throwable e) { log("语言 ❌ " + e); }
@@ -44,7 +44,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // 1. 接收消息 Hook（新版）
+    // 1. 接收消息 Hook
     // ──────────────────────────────────────
 
     private static void hookRecv(ClassLoader cl) throws Exception {
@@ -66,14 +66,13 @@ public class ChatHook {
                     }
                     if (text == null || text.isEmpty()) return;
 
-                    // 获取聊天ID和朋友信息
                     int cidInt = 0;
                     try {
                         cidInt = (Integer) XposedHelpers.callMethod(msg, "getChatId");
                     } catch (Exception ignored) {}
                     currentChatId = String.valueOf(cidInt);
 
-                    // 🆕 获取对方名字
+                    // 获取对方名字
                     String senderName = null;
                     try {
                         senderName = (String) XposedHelpers.callMethod(msg, "getSenderName");
@@ -82,16 +81,22 @@ public class ChatHook {
                         currentPartnerName = senderName;
                     }
 
-                    // 🆕 注册朋友到数据库
+                    // 注册朋友
                     String langCode = langCode(partnerLang);
                     AITranslator.registerFriend(currentChatId, currentPartnerName, langCode);
 
-                    // 记录历史
+                    // 记录历史（无论是否翻译都记录）
                     String prefix = isMine ? "我: " : "她: ";
                     AITranslator.appendHistory(currentChatId, "user", prefix + text);
 
-                    // 自己发的或已是中文 → 不翻译
-                    if (isMine || AITranslator.isChinese(text)) return;
+                    // 自己发的 → 不翻译
+                    if (isMine) return;
+
+                    // 🆕 使用新的判断逻辑：日语/中文都不翻译
+                    if (!AITranslator.needTranslateToChinese(text)) {
+                        log("跳过翻译: " + text.substring(0, Math.min(20, text.length())));
+                        return;
+                    }
 
                     // 获取 msgId 用于缓存
                     String mid = null;
@@ -138,7 +143,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // 2. 语言检测 Hook（适配 v5.7.0 新签名）
+    // 2. 语言检测 Hook
     // ──────────────────────────────────────
 
     private static void hookLang(ClassLoader cl) throws Exception {
@@ -149,23 +154,20 @@ public class ChatHook {
 
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
 
-        // 🆕 新签名: generateChatMessage(HTIMMessage, boolean)，有返回值
         XposedHelpers.findAndHookMethod(vm, "generateChatMessage", hm, boolean.class,
                 new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam p) {
                         try {
-                            // 从 ViewModel 获取当前聊天用户
                             Object u = uf.get(p.thisObject);
                             if (u == null) return;
 
                             int l = (Integer) XposedHelpers.callMethod(u, "getNativeLang");
                             if (l != partnerLang) {
                                 partnerLang = l;
-                                log("🌍 语言切换: " + langName(l));
+                                log("🌍 语言切换: " + langName(l) + " (ID:" + l + ")");
                             }
 
-                            // 🆕 获取用户名和昵称
                             String userName = null;
                             try {
                                 userName = (String) XposedHelpers.callMethod(u, "getUserName");
@@ -175,14 +177,12 @@ public class ChatHook {
                                 nickName = (String) XposedHelpers.callMethod(u, "getNickName");
                             } catch (Exception ignored) {}
 
-                            // 优先用 userName，其次 nickName
                             if (userName != null && !userName.isEmpty()) {
                                 currentPartnerName = userName;
                             } else if (nickName != null && !nickName.isEmpty()) {
                                 currentPartnerName = nickName;
                             }
 
-                            // 注册/更新朋友信息
                             if (currentChatId != null && !currentChatId.equals("0")) {
                                 AITranslator.registerFriend(
                                         currentChatId,
@@ -233,7 +233,6 @@ public class ChatHook {
 
     private static void tryAddBtn_New(View box) {
         try {
-            // 🆕 优先尝试 obtainEditView() 公开方法
             try {
                 Object etObj = XposedHelpers.callMethod(box, "obtainEditView");
                 if (etObj instanceof EditText) {
@@ -242,7 +241,6 @@ public class ChatHook {
                 }
             } catch (Exception ignored) {}
 
-            // 兜底：反射 binding.etInput
             Field bf = box.getClass().getDeclaredField("binding");
             bf.setAccessible(true);
             Object binding = bf.get(box);
@@ -267,7 +265,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // addTranslateBtn
+    // addTranslateBtn — 修复按钮卡死
     // ──────────────────────────────────────
 
     private static void addTranslateBtn(ViewGroup layout, EditText edit) {
@@ -284,32 +282,51 @@ public class ChatHook {
         layout.addView(btn);
         layout.setTag("HT_AI_BTN");
 
+        // TextWatcher：仅中文输入时显示按钮
         edit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
             @Override public void afterTextChanged(Editable s) {}
             @Override
             public void onTextChanged(CharSequence s, int st, int b, int c) {
+                // 只有输入不为空且包含中文时才显示按钮
                 if (s != null && !s.toString().trim().isEmpty()
-                        && AITranslator.isChinese(s.toString())) {
+                        && AITranslator.isChineseOnly(s.toString())) {
                     btn.setVisibility(View.VISIBLE);
+                    btn.setEnabled(true);  // 🆕 确保按钮可点
+                    btn.setText("译");      // 🆕 重置按钮文字
                 } else {
                     btn.setVisibility(View.GONE);
                 }
             }
         });
 
+        // 点击事件
         btn.setOnClickListener(v -> {
             String text = edit.getText().toString().trim();
-            if (text.isEmpty() || !AITranslator.isChinese(text)) return;
+            if (text.isEmpty() || !AITranslator.isChineseOnly(text)) {
+                btn.setVisibility(View.GONE);
+                return;
+            }
+
+            // 🆕 如果当前朋友是中文用户，提示无需翻译
+            String friendLang = AITranslator.getFriendLang(currentChatId);
+            if ("zh".equals(friendLang)) {
+                android.widget.Toast.makeText(
+                        edit.getContext(),
+                        "对方是中文用户，无需翻译",
+                        android.widget.Toast.LENGTH_SHORT
+                ).show();
+                btn.setVisibility(View.GONE);
+                return;
+            }
 
             btn.setEnabled(false);
             btn.setText("...");
 
             new Thread(() -> {
                 try {
-                    // 🆕 使用朋友数据库里的语言（而非全局 partnerLang）
-                    String langCode = AITranslator.getFriendLang(currentChatId);
-                    if (langCode == null || langCode.isEmpty()) {
+                    String langCode = friendLang;
+                    if (langCode == null || langCode.isEmpty() || "zh".equals(langCode)) {
                         langCode = langCode(partnerLang);
                     }
                     String result = AITranslator.translateWithHistory(
@@ -318,16 +335,26 @@ public class ChatHook {
                     AITranslator.appendHistory(currentChatId, "assistant", result);
                     List<String[]> history = AITranslator.loadHistoryForDisplay(currentChatId);
 
-                    // 🆕 打印当前朋友信息，方便调试
                     log("🔄 翻译请求: 朋友=" + AITranslator.getFriendName(currentChatId)
                             + " 语言=" + langCode);
 
-                    edit.post(() -> showPicker(edit, result, history));
+                    edit.post(() -> {
+                        // 🆕 关键修复：无论成功失败，都恢复按钮状态
+                        btn.setEnabled(true);
+                        btn.setText("译");
+                        showPicker(edit, result, history);
+                    });
                 } catch (Exception e) {
                     edit.post(() -> {
+                        // 🆕 异常时也恢复按钮
                         btn.setEnabled(true);
                         btn.setText("译");
                         log("❌ 翻译失败: " + e.getMessage());
+                        android.widget.Toast.makeText(
+                                edit.getContext(),
+                                "翻译失败: " + e.getMessage(),
+                                android.widget.Toast.LENGTH_SHORT
+                        ).show();
                     });
                 }
             }).start();
@@ -335,7 +362,7 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // showPicker — 多版本选择器
+    // showPicker
     // ──────────────────────────────────────
 
     private static void showPicker(EditText edit, String result, List<String[]> history) {
@@ -366,22 +393,47 @@ public class ChatHook {
                     edit.setText(items[which]);
                     edit.setSelection(items[which].length());
                     dialog.dismiss();
+                    // 🆕 选择后隐藏按钮
+                    edit.post(() -> {
+                        // 触发 TextWatcher 重新判断
+                        edit.setText(edit.getText().toString());
+                    });
                 })
-                .setNegativeButton("取消", null)
+                .setNegativeButton("取消", (dialog, which) -> {
+                    // 🆕 取消时也恢复按钮
+                    edit.post(() -> {
+                        edit.setText(edit.getText().toString());
+                    });
+                })
                 .show();
     }
 
     // ──────────────────────────────────────
-    // 语言映射
+    // 语言映射（补全）
     // ──────────────────────────────────────
 
     static String langCode(int l) {
-        // 根据你的师父分析，HelloTalk 语言ID映射
         switch (l) {
             case 1: return "en";   // English
-            case 2: return "ru";   // Polish → 暂且当俄语处理
+            case 2: return "ru";   // Polish
             case 3: return "uk";   // Ukrainian
+            case 4: return "vi";   // Vietnamese
+            case 5: return "th";   // Thai
             case 6: return "ru";   // Russian
+            case 7: return "ja";   // Japanese
+            case 8: return "ko";   // Korean
+            case 9: return "fr";   // French
+            case 10: return "de";  // German
+            case 11: return "es";  // Spanish
+            case 12: return "pt";  // Portuguese
+            case 13: return "it";  // Italian
+            case 14: return "ar";  // Arabic
+            case 15: return "hi";  // Hindi
+            case 16: return "id";  // Indonesian
+            case 17: return "ms";  // Malay
+            case 18: return "zh";  // ← 🆕 你日志里的 18 号语言，暂定为中文
+            case 19: return "tr";  // Turkish
+            case 20: return "nl";  // Dutch
             default: return "en";
         }
     }
@@ -394,6 +446,20 @@ public class ChatHook {
             case 4: return "Vietnamese";
             case 5: return "Thai";
             case 6: return "Russian";
+            case 7: return "Japanese";
+            case 8: return "Korean";
+            case 9: return "French";
+            case 10: return "German";
+            case 11: return "Spanish";
+            case 12: return "Portuguese";
+            case 13: return "Italian";
+            case 14: return "Arabic";
+            case 15: return "Hindi";
+            case 16: return "Indonesian";
+            case 17: return "Malay";
+            case 18: return "Chinese(可能)";
+            case 19: return "Turkish";
+            case 20: return "Dutch";
             default: return "Unknown(" + l + ")";
         }
     }
