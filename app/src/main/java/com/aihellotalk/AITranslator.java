@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -34,24 +35,23 @@ public class AITranslator {
     private static String model;
     private static OkHttpClient client;
 
-    // 翻译缓存
     public static final Map<String, String> cache = new ConcurrentHashMap<>();
     private static File cacheFile;
-
-    // Prompt 文件
     private static File promptFile;
 
-    // 4种语言的 System Prompt
     public static String receivePrompt = "";
     public static String promptEN = "";
     public static String promptRU = "";
     public static String promptUK = "";
 
-    // ──────────────────────────────────────
-    // 朋友管理系统（新增）
-    // ──────────────────────────────────────
+    // 朋友管理
     private static File friendsFile = new File("/data/data/com.hellotalk/files/htai_friends.json");
     private static JSONObject friendsData = new JSONObject();
+
+    // 日语检测正则（平假名+片假名+日文汉字范围）
+    private static final Pattern JAPANESE_PATTERN = Pattern.compile(
+            "[\\p{InHiragana}\\p{InKatakana}\\u3040-\\u30FF\\u3400-\\u4DBF\\u4E00-\\u9FFF]+"
+    );
 
     // ──────────────────────────────────────
     // 初始化
@@ -64,7 +64,7 @@ public class AITranslator {
 
         client = new OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(45, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
                 .writeTimeout(10, TimeUnit.SECONDS)
                 .build();
 
@@ -72,7 +72,7 @@ public class AITranslator {
         promptFile = new File("/data/local/tmp/htai_prompts.txt");
 
         loadCache();
-        loadFriends();  // 加载朋友数据
+        loadFriends();
         loadPrompts();
 
         Log.i(TAG, "缓存:" + cache.size() + "条, 朋友:" + friendsData.length() + "位");
@@ -89,7 +89,7 @@ public class AITranslator {
     }
 
     // ──────────────────────────────────────
-    // 朋友管理（新增）
+    // 朋友管理
     // ──────────────────────────────────────
 
     public static void loadFriends() {
@@ -114,12 +114,6 @@ public class AITranslator {
         } catch (Exception ignored) {}
     }
 
-    /**
-     * 注册或更新一个朋友
-     * @param chatId 聊天会话ID（来自 getChatId()）
-     * @param name 对方名字（来自 getSenderName() 或 getUserName()）
-     * @param langCode 语言代码 en/ru/uk 等
-     */
     public static void registerFriend(String chatId, String name, String langCode) {
         try {
             if (chatId == null || chatId.isEmpty()) return;
@@ -127,11 +121,10 @@ public class AITranslator {
             if (friendsData.has(chatId)) {
                 friend = friendsData.getJSONObject(chatId);
             }
-            // 只在名字非空时更新（避免覆盖已有名字）
             if (name != null && !name.isEmpty()) {
                 friend.put("name", name);
             } else if (!friend.has("name")) {
-                friend.put("name", chatId);  // 兜底用chatId
+                friend.put("name", chatId);
             }
             friend.put("lang", langCode != null ? langCode : "en");
             friend.put("lastTime", System.currentTimeMillis());
@@ -141,9 +134,6 @@ public class AITranslator {
         } catch (JSONException ignored) {}
     }
 
-    /**
-     * 获取朋友语言代码，默认 en
-     */
     public static String getFriendLang(String chatId) {
         try {
             if (friendsData.has(chatId)) {
@@ -153,9 +143,6 @@ public class AITranslator {
         return "en";
     }
 
-    /**
-     * 获取朋友名字，没有则返回 chatId
-     */
     public static String getFriendName(String chatId) {
         try {
             if (friendsData.has(chatId)) {
@@ -165,10 +152,6 @@ public class AITranslator {
         return chatId;
     }
 
-    /**
-     * 获取所有朋友列表（供侧栏使用）
-     * 返回 JSONArray，每个元素: {id, name, lang, lastTime, count}
-     */
     public static JSONArray getAllFriends() {
         JSONArray list = new JSONArray();
         try {
@@ -182,13 +165,253 @@ public class AITranslator {
                 item.put("name", info.optString("name", id));
                 item.put("lang", info.optString("lang", "en"));
                 item.put("lastTime", info.optLong("lastTime", 0));
-                // 统计翻译历史条数
                 JSONArray hist = loadHistory(id);
                 item.put("count", hist.length());
                 list.put(item);
             }
         } catch (JSONException ignored) {}
         return list;
+    }
+
+    // ──────────────────────────────────────
+    // 语言/文字检测
+    // ──────────────────────────────────────
+
+    /**
+     * 是否包含日语（平假名/片假名/日文汉字）
+     */
+    public static boolean containsJapanese(String s) {
+        if (s == null || s.isEmpty()) return false;
+        return JAPANESE_PATTERN.matcher(s).find();
+    }
+
+    /**
+     * 是否纯中文（不含日语、不含明显外语）
+     */
+    public static boolean isChineseOnly(String s) {
+        if (s == null || s.isEmpty()) return false;
+        // 如果包含日语，不算纯中文
+        if (containsJapanese(s)) return false;
+        // 检查是否包含中日韩统一汉字
+        for (char c : s.toCharArray()) {
+            Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
+            if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
+                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+                    || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 是否需要翻译（外语 → 中文）
+     * 返回 true 表示需要翻译
+     */
+    public static boolean needTranslateToChinese(String text) {
+        if (text == null || text.trim().isEmpty()) return false;
+        // 日语不翻译
+        if (containsJapanese(text)) {
+            Log.i(TAG, "跳过翻译(日语): " + text.substring(0, Math.min(20, text.length())));
+            return false;
+        }
+        // 纯中文不翻译
+        if (isChineseOnly(text)) {
+            return false;
+        }
+        // 其他情况（外语）需要翻译
+        return true;
+    }
+
+    // ──────────────────────────────────────
+    // 翻译
+    // ──────────────────────────────────────
+
+    public static String toChinese(String text) throws IOException {
+        text = text.trim();
+        if (text.isEmpty()) return text;
+        if (!needTranslateToChinese(text)) return text;
+        String prompt = receivePrompt + "\n\n需要翻译的外语消息：\n" + text;
+        return callChatSimple(prompt);
+    }
+
+    public static String fromChinese(String text, String lang) throws IOException {
+        text = text.trim();
+        if (text.isEmpty()) return text;
+        String prompt = "把以下中文翻译成" + lang + "：" + text;
+        return callChatSimple(prompt);
+    }
+
+    public static String translateTest(String text, String lang) throws IOException {
+        if (isChineseOnly(text)) {
+            String prompt = "把以下中文翻译成" + lang + "：" + text;
+            return callChatSimple(prompt);
+        } else {
+            return toChinese(text);
+        }
+    }
+
+    public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
+        try {
+            JSONArray messages = new JSONArray();
+
+            String sysPrompt;
+            switch (langCode) {
+                case "ru":
+                    sysPrompt = promptRU;
+                    break;
+                case "uk":
+                    sysPrompt = promptUK;
+                    break;
+                default:
+                    sysPrompt = promptEN;
+                    break;
+            }
+
+            JSONObject sys = new JSONObject();
+            sys.put("role", "system");
+            sys.put("content", sysPrompt);
+            messages.put(sys);
+
+            JSONArray history = loadHistory(chatId);
+            for (int i = 0; i < history.length(); i++) {
+                messages.put(history.get(i));
+            }
+
+            JSONObject user = new JSONObject();
+            user.put("role", "user");
+            user.put("content", "待翻译中文：" + text);
+            messages.put(user);
+
+            return callChatMessages(messages);
+        } catch (JSONException e) {
+            throw new IOException("构建Messages失败");
+        }
+    }
+
+    // ──────────────────────────────────────
+    // API 调用
+    // ──────────────────────────────────────
+
+    private static String callChatSimple(String prompt) throws IOException {
+        if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
+        if (client == null) throw new IOException("未初始化");
+
+        try {
+            JSONObject body = new JSONObject();
+            body.put("model", model);
+            body.put("max_tokens", 2000);  // 新增：支持长输出
+
+            JSONArray msgs = new JSONArray();
+            JSONObject m = new JSONObject();
+            m.put("role", "user");
+            m.put("content", prompt);
+            msgs.put(m);
+            body.put("messages", msgs);
+
+            return executeRequest(body);
+        } catch (JSONException e) {
+            throw new IOException("构建失败");
+        }
+    }
+
+    private static String callChatMessages(JSONArray messages) throws IOException {
+        if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
+        if (client == null) throw new IOException("未初始化");
+
+        try {
+            JSONObject body = new JSONObject();
+            body.put("model", model);
+            body.put("max_tokens", 2000);  // 新增：支持长输出
+
+            body.put("messages", messages);
+
+            return executeRequest(body);
+        } catch (JSONException e) {
+            throw new IOException("构建失败");
+        }
+    }
+
+    private static String executeRequest(JSONObject body) throws IOException {
+        Request req = new Request.Builder()
+                .url(fixUrl(apiUrl))
+                .header("Authorization", "Bearer " + apiKey)
+                .header("Content-Type", "application/json")
+                .post(RequestBody.create(body.toString(), JSON_TYPE))
+                .build();
+
+        try (Response resp = client.newCall(req).execute()) {
+            if (!resp.isSuccessful()) {
+                throw new IOException("HTTP " + resp.code());
+            }
+            String s = resp.body().string();
+            try {
+                JSONObject json = new JSONObject(s);
+                return json.getJSONArray("choices")
+                        .getJSONObject(0)
+                        .getJSONObject("message")
+                        .getString("content")
+                        .trim();
+            } catch (JSONException e) {
+                throw new IOException("JSON:" + e.getMessage());
+            }
+        }
+    }
+
+    // ──────────────────────────────────────
+    // URL 处理
+    // ──────────────────────────────────────
+
+    private static String fixUrl(String url) {
+        if (url == null || url.isEmpty()) {
+            return "https://api.openai.com/v1/chat/completions";
+        }
+        if (url.endsWith("/chat/completions")) {
+            return url;
+        }
+        if (!url.endsWith("/")) url += "/";
+        int idx = url.indexOf("/v1");
+        if (idx >= 0) {
+            url = url.substring(0, idx);
+        }
+        if (!url.endsWith("/")) url += "/";
+        return url + "v1/chat/completions";
+    }
+
+    public static List<String> fetchModels(String key, String baseUrl) throws IOException {
+        List<String> result = new ArrayList<>();
+        String url = baseUrl;
+        if (url.endsWith("/chat/completions")) {
+            url = url.substring(0, url.length() - "/chat/completions".length());
+        }
+        int idx = url.indexOf("/v1");
+        if (idx >= 0) {
+            url = url.substring(0, idx);
+        }
+        if (!url.endsWith("/")) url += "/";
+        url += "v1/models";
+
+        initForFetch(key, url);
+
+        Request req = new Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer " + key)
+                .get()
+                .build();
+
+        try (Response resp = client.newCall(req).execute()) {
+            if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
+            String s = resp.body().string();
+            JSONObject json = new JSONObject(s);
+            JSONArray data = json.getJSONArray("data");
+            for (int i = 0; i < data.length(); i++) {
+                result.add(data.getJSONObject(i).getString("id"));
+            }
+        } catch (JSONException e) {
+            throw new IOException("解析模型列表失败");
+        }
+        return result;
     }
 
     // ──────────────────────────────────────
@@ -283,212 +506,7 @@ public class AITranslator {
     }
 
     // ──────────────────────────────────────
-    // 中文检测
-    // ──────────────────────────────────────
-
-    public static boolean isChinese(String s) {
-        if (s == null) return false;
-        for (char c : s.toCharArray()) {
-            Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
-            if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-                    || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // ──────────────────────────────────────
-    // 翻译
-    // ──────────────────────────────────────
-
-    public static String toChinese(String text) throws IOException {
-        text = text.trim();
-        if (text.isEmpty()) return text;
-        if (isChinese(text)) return text;
-        String prompt = "把以下消息翻译成地道的中文：" + text;
-        return callChatSimple(prompt);
-    }
-
-    public static String fromChinese(String text, String lang) throws IOException {
-        text = text.trim();
-        if (text.isEmpty()) return text;
-        String prompt = "把以下中文翻译成" + lang + "：" + text;
-        return callChatSimple(prompt);
-    }
-
-    public static String translateTest(String text, String lang) throws IOException {
-        if (isChinese(text)) {
-            String prompt = "把以下中文翻译成" + lang + "：" + text;
-            return callChatSimple(prompt);
-        } else {
-            return toChinese(text);
-        }
-    }
-
-    public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
-        try {
-            JSONArray messages = new JSONArray();
-
-            String sysPrompt;
-            switch (langCode) {
-                case "ru":
-                    sysPrompt = promptRU;
-                    break;
-                case "uk":
-                    sysPrompt = promptUK;
-                    break;
-                default:
-                    sysPrompt = promptEN;
-                    break;
-            }
-
-            JSONObject sys = new JSONObject();
-            sys.put("role", "system");
-            sys.put("content", sysPrompt);
-            messages.put(sys);
-
-            JSONArray history = loadHistory(chatId);
-            for (int i = 0; i < history.length(); i++) {
-                messages.put(history.get(i));
-            }
-
-            JSONObject user = new JSONObject();
-            user.put("role", "user");
-            user.put("content", "待翻译中文：" + text);
-            messages.put(user);
-
-            return callChatMessages(messages);
-        } catch (JSONException e) {
-            throw new IOException("构建Messages失败");
-        }
-    }
-
-    // ──────────────────────────────────────
-    // API 调用
-    // ──────────────────────────────────────
-
-    private static String callChatSimple(String prompt) throws IOException {
-        if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
-        if (client == null) throw new IOException("未初始化");
-
-        try {
-            JSONObject body = new JSONObject();
-            body.put("model", model);
-
-            JSONArray msgs = new JSONArray();
-            JSONObject m = new JSONObject();
-            m.put("role", "user");
-            m.put("content", prompt);
-            msgs.put(m);
-            body.put("messages", msgs);
-
-            return executeRequest(body);
-        } catch (JSONException e) {
-            throw new IOException("构建失败");
-        }
-    }
-
-    private static String callChatMessages(JSONArray messages) throws IOException {
-        if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
-        if (client == null) throw new IOException("未初始化");
-
-        try {
-            JSONObject body = new JSONObject();
-            body.put("model", model);
-            body.put("messages", messages);
-
-            return executeRequest(body);
-        } catch (JSONException e) {
-            throw new IOException("构建失败");
-        }
-    }
-
-    private static String executeRequest(JSONObject body) throws IOException {
-        Request req = new Request.Builder()
-                .url(fixUrl(apiUrl))
-                .header("Authorization", "Bearer " + apiKey)
-                .header("Content-Type", "application/json")
-                .post(RequestBody.create(body.toString(), JSON_TYPE))
-                .build();
-
-        try (Response resp = client.newCall(req).execute()) {
-            if (!resp.isSuccessful()) {
-                throw new IOException("HTTP " + resp.code());
-            }
-            String s = resp.body().string();
-            try {
-                JSONObject json = new JSONObject(s);
-                return json.getJSONArray("choices")
-                        .getJSONObject(0)
-                        .getJSONObject("message")
-                        .getString("content")
-                        .trim();
-            } catch (JSONException e) {
-                throw new IOException("JSON:" + e.getMessage());
-            }
-        }
-    }
-
-    // ──────────────────────────────────────
-    // URL 处理
-    // ──────────────────────────────────────
-
-    private static String fixUrl(String url) {
-        if (url == null || url.isEmpty()) {
-            return "https://api.openai.com/v1/chat/completions";
-        }
-        if (url.endsWith("/chat/completions")) {
-            return url;
-        }
-        if (!url.endsWith("/")) url += "/";
-        int idx = url.indexOf("/v1");
-        if (idx >= 0) {
-            url = url.substring(0, idx);
-        }
-        if (!url.endsWith("/")) url += "/";
-        return url + "v1/chat/completions";
-    }
-
-    public static List<String> fetchModels(String key, String baseUrl) throws IOException {
-        List<String> result = new ArrayList<>();
-        String url = baseUrl;
-        if (url.endsWith("/chat/completions")) {
-            url = url.substring(0, url.length() - "/chat/completions".length());
-        }
-        int idx = url.indexOf("/v1");
-        if (idx >= 0) {
-            url = url.substring(0, idx);
-        }
-        if (!url.endsWith("/")) url += "/";
-        url += "v1/models";
-
-        initForFetch(key, url);
-
-        Request req = new Request.Builder()
-                .url(url)
-                .header("Authorization", "Bearer " + key)
-                .get()
-                .build();
-
-        try (Response resp = client.newCall(req).execute()) {
-            if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
-            String s = resp.body().string();
-            JSONObject json = new JSONObject(s);
-            JSONArray data = json.getJSONArray("data");
-            for (int i = 0; i < data.length(); i++) {
-                result.add(data.getJSONObject(i).getString("id"));
-            }
-        } catch (JSONException e) {
-            throw new IOException("解析模型列表失败");
-        }
-        return result;
-    }
-
-    // ──────────────────────────────────────
-    // 聊天历史（改用 String chatId）
+    // 聊天历史
     // ──────────────────────────────────────
 
     private static File historyFile(String chatId) {
