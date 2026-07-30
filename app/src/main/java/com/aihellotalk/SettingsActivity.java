@@ -292,13 +292,78 @@ public class SettingsActivity extends Activity {
         throw new Exception("尝试了以下地址均失败:\n" + String.join("\n", lastErrors));
     }
 
+    // ★★★ 改造后的多选模型对话框 ★★★
     private void showModelPicker(List<String> models) {
         String[] items = models.toArray(new String[0]);
-        new AlertDialog.Builder(this)
-                .setTitle("选模型(" + items.length + "个)")
-                .setItems(items, (dialog, which) -> etModel.setText(items[which]))
-                .setNegativeButton("取消", null)
-                .show();
+        boolean[] checked = new boolean[items.length];
+
+        // 读取已保存的模型列表
+        String savedModels = prefs.getString("model_list", "");
+        if (!savedModels.isEmpty()) {
+            String[] savedArr = savedModels.split(",");
+            for (int i = 0; i < items.length; i++) {
+                for (String saved : savedArr) {
+                    if (items[i].equals(saved.trim())) {
+                        checked[i] = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("选择模型（最多4个）");
+
+        builder.setMultiChoiceItems(items, checked, (dialog, which, isChecked) -> {
+            checked[which] = isChecked;
+        });
+
+        builder.setPositiveButton("确定", (dialog, which) -> {
+            List<String> selected = new ArrayList<>();
+            for (int i = 0; i < items.length; i++) {
+                if (checked[i]) {
+                    selected.add(items[i]);
+                }
+            }
+
+            if (selected.isEmpty()) {
+                toast("请至少选择一个模型");
+                return;
+            }
+
+            if (selected.size() > 4) {
+                toast("最多只能选择4个模型");
+                return;
+            }
+
+            // 保存到 SharedPreferences
+            String selectedStr = String.join(",", selected);
+            prefs.edit().putString("model_list", selectedStr).apply();
+
+            // 如果之前没有设置当前模型，自动设置为第一个
+            String currentModel = prefs.getString("model", "");
+            if (currentModel.isEmpty() && !selected.isEmpty()) {
+                prefs.edit().putString("model", selected.get(0)).apply();
+                etModel.setText(selected.get(0));
+            }
+
+            // 显示提示
+            StringBuilder sb = new StringBuilder("已选择：");
+            for (String s : selected) {
+                sb.append("\n• ").append(s);
+            }
+            toast(sb.toString());
+
+            // 如果只选了一个，直接设为主模型
+            if (selected.size() == 1) {
+                etModel.setText(selected.get(0));
+            } else {
+                etModel.setText(selected.get(0) + " 等" + selected.size() + "个");
+            }
+        });
+
+        builder.setNegativeButton("取消", null);
+        builder.show();
     }
 
     private void saveAll() {
@@ -325,10 +390,13 @@ public class SettingsActivity extends Activity {
 
         new Thread(() -> {
             try {
+                // ★★★ 保存时同时写入 model_list ★★★
+                String modelList = prefs.getString("model_list", "");
                 String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
                         + "api_key=" + key + "\n"
                         + "api_url=" + url + "\n"
                         + "model=" + mdl + "\n"
+                        + "model_list=" + modelList + "\n"
                         + "EOF\n";
                 runRoot(cfg);
 
