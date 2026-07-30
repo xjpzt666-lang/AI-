@@ -41,12 +41,14 @@ public class ChatHook {
     private static volatile int latestNativeLang = 1;
     private static volatile String latestPartnerName = "";
 
-    // ★ 修复串台雷区：将重试记忆与不同的好友 ID 强行绑定
     private static final Map<String, String> chatRequestMap = new ConcurrentHashMap<>();
     private static final Map<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
 
+    // ★ 核心修复：消息去重防御罩，防止 UI 滚动/刷新引发的记忆无限重写（影分身）
+    private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
+
     public static void install(ClassLoader cl) {
-        log("=== Hook v9.8 (动态破冰识别 + 独立重试引擎) ===");
+        log("=== Hook v10.0 (去重防复读 + 协议隔离) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -132,7 +134,6 @@ public class ChatHook {
                     String text = null;
                     try { text = (String) XposedHelpers.callMethod(bean, "getText"); } catch (Exception ignored) {}
                     
-                    // ★ 破冰探测器：如果文字为空，试探是否是多媒体消息
                     if (text == null || text.isEmpty()) {
                         String className = bean.getClass().getSimpleName().toLowerCase();
                         if (className.contains("image") || className.contains("pic")) {
@@ -144,23 +145,29 @@ public class ChatHook {
                         } else if (className.contains("emoji") || className.contains("sticker")) {
                             text = "[对方发送了一个表情包]";
                         } else {
-                            return; // 完全无用信息，丢弃
+                            return; 
                         }
                     }
 
-                    if (isMine) {
-                        AITranslator.appendHistory(currentChatId, "assistant", text);
-                        return; 
-                    } else {
-                        AITranslator.appendHistory(currentChatId, "user", text);
-                    }
-
-                    if (text.startsWith("[")) return; // 自己生成的占位符不需要翻译
-                    if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
-
                     String mid = null;
                     try { mid = (String) XposedHelpers.callMethod(msg, "getMsgId"); } catch (Exception ignored) {}
-                    if (mid == null) mid = "n_" + text.hashCode();
+                    if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
+
+                    // ★ 严格去重：通过 chatId + msgId 确保单条消息有且仅被写入一次档案库
+                    boolean isNewMessage = recordedMsgIds.add(currentChatId + "_" + mid);
+                    if (isNewMessage) {
+                        if (isMine) {
+                            AITranslator.appendHistory(currentChatId, "assistant", text);
+                        } else {
+                            AITranslator.appendHistory(currentChatId, "user", text);
+                        }
+                    }
+
+                    // 自己发出去的消息不需要触发自动翻译拦截
+                    if (isMine) return; 
+
+                    if (text.startsWith("[")) return; 
+                    if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
                     String cached = AITranslator.getCached(mid);
                     if (cached != null) {
@@ -315,7 +322,6 @@ public class ChatHook {
                         AITranslator.registerFriend(currentChatId, currentPartnerName, targetLang);
                     }
 
-                    // ★ 修复串台：根据当前好友 ID 独立记录
                     String lastReq = chatRequestMap.get(currentChatId);
                     int retryCount = chatRetryCountMap.getOrDefault(currentChatId, 0);
                     
