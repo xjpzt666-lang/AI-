@@ -17,8 +17,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -28,7 +26,7 @@ public class ChatHook {
 
     private static final String TAG = "HT_AI";
     private static String currentChatId = "0";
-    private static int currentChatType = 1; // ★ 新增：记录聊天类型（1通常代表单聊）
+    private static int currentChatType = 1; 
     private static String currentPartnerName = "";
     private static int partnerLang = 1;
     private static final Set<String> translating = ConcurrentHashMap.newKeySet();
@@ -42,8 +40,12 @@ public class ChatHook {
     private static volatile int latestNativeLang = 1;
     private static volatile String latestPartnerName = "";
 
+    // ★ 新增：用于跟踪“重新生成”状态的变量
+    private static String lastTranslateRequest = "";
+    private static int retryTranslateCount = 0;
+
     public static void install(ClassLoader cl) {
-        log("=== Hook v9.6 (修复群聊污染与自己名字的Bug) ===");
+        log("=== Hook v9.7 (加入智能重试引擎) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -73,10 +75,10 @@ public class ChatHook {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         int chatId = (int) param.args[0];
-                        int chatType = (int) param.args[1]; // ★ 获取聊天类型
+                        int chatType = (int) param.args[1]; 
                         
                         currentChatId = String.valueOf(chatId);
-                        currentChatType = chatType; // ★ 保存全局聊天类型
+                        currentChatType = chatType; 
                         log("📂 打开聊天 chatId=" + chatId + " type=" + chatType);
 
                         final Object vm = param.thisObject;
@@ -92,7 +94,6 @@ public class ChatHook {
                                     }
                                     Thread.sleep(500);
                                 }
-                                log("⚠️ chatUser 读取超时（6次）");
                             } catch (Exception e) {
                                 log("⚠️ 读 chatUser 失败: " + e.getMessage());
                             }
@@ -100,7 +101,6 @@ public class ChatHook {
                     }
                 }
         );
-        log("✅ startChat + 轮询");
     }
 
     private static void updateFromChatUser(Object chatUser) {
@@ -119,10 +119,9 @@ public class ChatHook {
                 currentPartnerName = latestPartnerName;
             }
 
-            // ★ 修复：删除了这里的 AITranslator.registerFriend，不再主动污染列表
             String langCode = getDynamicLangCode(nativeLang);
             String langName = getDynamicLangName(nativeLang);
-            log("🌍 用户资料: ID=" + nativeLang + " → " + langCode + " (" + langName + ") 国籍=" + latestNationality);
+            log("🌍 用户资料更新: " + langCode + " (" + langName + ") 国籍=" + latestNationality);
         } catch (Exception e) {
             log("⚠️ 更新用户资料失败: " + e.getMessage());
         }
@@ -159,13 +158,10 @@ public class ChatHook {
                     } catch (Exception ignored) {}
                     
                     if (senderName != null && !senderName.isEmpty()) {
-                        // ★ 核心修复 1：绝不把“自己（例如nima）”的名字覆盖掉对方的名字！
                         if (!isMine) {
                             currentPartnerName = senderName;
                         }
                     }
-
-                    // ★ 修复：删除了这里的 AITranslator.registerFriend，不把陌生人写进列表
 
                     if (isMine) {
                         AITranslator.appendHistory(currentChatId, "assistant", text);
@@ -175,15 +171,12 @@ public class ChatHook {
                     }
 
                     if (AITranslator.containsJapanese(text)) {
-                        log("跳过翻译(日语): " + text.substring(0, Math.min(20, text.length())));
                         return;
                     }
 
                     if (AITranslator.isChineseOnly(text)) {
                         return;
                     }
-
-                    log("🌐 检测到外语消息，准备AI翻译");
 
                     String mid = null;
                     try {
@@ -224,7 +217,6 @@ public class ChatHook {
                 } catch (Throwable ignored) {}
             }
         });
-        log("✅ 接收修复完成");
     }
 
     private static void hookLang(ClassLoader cl) throws Exception {
@@ -246,14 +238,10 @@ public class ChatHook {
                             int l = (Integer) XposedHelpers.callMethod(u, "getNativeLang");
                             if (l != partnerLang) {
                                 partnerLang = l;
-                                String code = getDynamicLangCode(l);
-                                String name = getDynamicLangName(l);
-                                log("🌍 语言切换(消息): ID:" + l + " → " + code + " (" + name + ")");
                             }
                         } catch (Throwable ignored) {}
                     }
                 });
-        log("✅ 语言-消息补充");
     }
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
@@ -266,7 +254,6 @@ public class ChatHook {
                 v.postDelayed(() -> tryAddBtn_Old(v), 2000);
             }
         });
-        log("✅ 旧版按钮");
     }
 
     private static void hookBtnNew(ClassLoader cl) throws Exception {
@@ -279,15 +266,12 @@ public class ChatHook {
                 v.postDelayed(() -> tryAddBtn_New(v), 2500);
             }
         });
-        log("✅ 新版按钮");
     }
 
     private static void tryAddBtn_New(View box) {
         EditText edit = findEditTextInView(box);
         if (edit != null) {
             addTranslateBtn((ViewGroup) box, edit);
-        } else {
-            log("⚠️ 新版按钮：未找到EditText");
         }
     }
 
@@ -295,8 +279,6 @@ public class ChatHook {
         EditText edit = findEditTextInView(box);
         if (edit != null) {
             addTranslateBtn((ViewGroup) box, edit);
-        } else {
-            log("⚠️ 旧版按钮：未找到EditText");
         }
     }
 
@@ -380,16 +362,28 @@ public class ChatHook {
                 try {
                     String targetLang = determineSmartTargetLang();
                     
-                    // ★ 核心修复 2 & 3：仅在你主动点击翻译时，且是单聊（Type == 1）时，才将其正式纳入你的遥控列表
                     if (currentChatType == 1) {
                         AITranslator.registerFriend(currentChatId, currentPartnerName, targetLang);
                     }
 
-                    log("🔄 AI翻译请求: 朋友=" + AITranslator.getFriendName(currentChatId)
-                            + " 目标语言=" + targetLang + " 国籍=" + latestNationality);
+                    // ★ 核心逻辑：智能判定重试
+                    boolean isRetry = text.equals(lastTranslateRequest);
+                    if (isRetry) {
+                        retryTranslateCount++;
+                        log("🔄 触发重新生成: 第 " + retryTranslateCount + " 次");
+                    } else {
+                        lastTranslateRequest = text;
+                        retryTranslateCount = 0;
+                    }
+
+                    // 如果是重试，在发给底层的文本后面强行加上换思路的指令
+                    String finalPromptText = text;
+                    if (isRetry) {
+                        finalPromptText = text + "\n\n【系统强制指令】：用户对刚才的翻译结果不满意，要求重新生成（重试第" + retryTranslateCount + "次）。请彻底抛弃你脑海中默认的第一反应，使用完全不同的表达方式、词汇或句式，给出4个全新的版本！严禁与上次翻译重复！";
+                    }
 
                     String result = AITranslator.translateWithHistory(
-                            text, targetLang, currentChatId);
+                            finalPromptText, targetLang, currentChatId);
 
                     edit.post(() -> {
                         btn.setEnabled(true);
@@ -420,7 +414,6 @@ public class ChatHook {
         if (!nationality.isEmpty()) {
             String mappedLang = mapNationalityToLang(nationality);
             if (mappedLang != null) {
-                log("🎯 国籍判定: " + nationality + " → " + mappedLang);
                 return mappedLang;
             }
         }
@@ -429,11 +422,9 @@ public class ChatHook {
         String langCode = getDynamicLangCode(nativeLang);
         String langName = getDynamicLangName(nativeLang);
         if (langName != null && langName.contains("Chinese")) {
-            log("🎯 母语判定: 中文 → " + DEFAULT_REPLY_LANG);
             return DEFAULT_REPLY_LANG;
         }
         if (langCode != null && !langCode.isEmpty() && !"en".equals(langCode)) {
-            log("🎯 母语判定: " + langCode);
             return langCode;
         }
 
@@ -441,14 +432,11 @@ public class ChatHook {
         if (friendLang != null && !friendLang.isEmpty()) {
             if (friendLang.equalsIgnoreCase("zh") || friendLang.equalsIgnoreCase("cn")
                     || friendLang.startsWith("zh")) {
-                log("🎯 存储语言判定: 中文 → " + DEFAULT_REPLY_LANG);
                 return DEFAULT_REPLY_LANG;
             }
-            log("🎯 存储语言判定: " + friendLang);
             return friendLang;
         }
 
-        log("🎯 兜底: " + DEFAULT_REPLY_LANG);
         return DEFAULT_REPLY_LANG;
     }
 
