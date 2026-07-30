@@ -3,7 +3,6 @@ package com.aihellotalk;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ContentValues;
-import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.database.Cursor;
@@ -667,4 +666,196 @@ public class MainActivity extends Activity {
                 JSONObject imagePart = new JSONObject();
                 imagePart.put("type", "image_url");
                 JSONObject imageUrl = new JSONObject();
-                imageUrl.put("url", "data:image/jpeg
+                imageUrl.put("url", "data:image/jpeg;base64," + localImageBase64);
+                imagePart.put("image_url", imageUrl);
+                contentArray.put(imagePart);
+                userMessage.put("content", contentArray);
+            } else {
+                userMessage.put("content", text);
+            }
+            messages.put(userMessage);
+            requestBody.put("messages", messages);
+
+            Request request = new Request.Builder()
+                    .url(apiUrl)
+                    .addHeader("Authorization", "Bearer " + apiKey)
+                    .addHeader("Content-Type", "application/json")
+                    .post(RequestBody.create(requestBody.toString(), MediaType.parse("application/json")))
+                    .build();
+
+            httpClient.newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    mainHandler.post(() -> {
+                        removeLastSystemMessage();
+                        displayMessage("system", "❌ 请求失败: " + e.getMessage());
+                        saveMessageToDb(currentChatId, "system", "❌ 请求失败: " + e.getMessage());
+                    });
+                }
+                @Override
+                public void onResponse(Call call, Response response) throws IOException {
+                    String responseBody = response.body().string();
+                    mainHandler.post(() -> {
+                        removeLastSystemMessage();
+                        if (response.isSuccessful()) {
+                            try {
+                                JSONObject json = new JSONObject(responseBody);
+                                String reply = json.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
+                                displayMessage("ai", reply);
+                                saveMessageToDb(currentChatId, "ai", reply);
+                            } catch (Exception e) {
+                                displayMessage("system", "❌ 解析响应失败: " + e.getMessage());
+                                saveMessageToDb(currentChatId, "system", "❌ 解析响应失败: " + e.getMessage());
+                            }
+                        } else {
+                            displayMessage("system", "❌ 服务器错误 " + response.code() + ": " + responseBody);
+                            saveMessageToDb(currentChatId, "system", "❌ 服务器错误 " + response.code() + ": " + responseBody);
+                        }
+                    });
+                }
+            });
+        } catch (Exception e) {
+            removeLastSystemMessage();
+            displayMessage("system", "❌ 构建请求失败: " + e.getMessage());
+            saveMessageToDb(currentChatId, "system", "❌ 构建请求失败: " + e.getMessage());
+        }
+    }
+
+    private void regenerateAnswer() {
+        if (lastUserMessage.isEmpty()) { Toast.makeText(this, "没有可重新回答的消息", Toast.LENGTH_SHORT).show(); return; }
+        removeLastAiMessage();
+        inputBox.setText(lastUserMessage);
+        sendMessage();
+    }
+
+    private void removeLastAiMessage() {
+        for (int i = messageContainer.getChildCount() - 1; i >= 0; i--) {
+            View child = messageContainer.getChildAt(i);
+            if (child instanceof LinearLayout) {
+                LinearLayout row = (LinearLayout) child;
+                if (row.getChildCount() > 0 && row.getChildAt(0) instanceof TextView) {
+                    TextView bubble = (TextView) row.getChildAt(0);
+                    String text = bubble.getText().toString();
+                    if (!text.contains("正在思考") && !text.contains("⚠️") && !text.contains("❌")) {
+                        if (bubble.getCurrentTextColor() == Color.parseColor("#E8E8E8") || bubble.getBackground() != null) {
+                            messageContainer.removeViewAt(i);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void displayMessage(String role, String content) {
+        String filteredContent = content.replaceAll("[*\\-#：；—]", "");
+        LinearLayout msgRow = new LinearLayout(this);
+        msgRow.setOrientation(LinearLayout.HORIZONTAL);
+        msgRow.setPadding(0, 8, 0, 8);
+
+        if ("ai".equals(role)) {
+            LinearLayout bubbleWrapper = new LinearLayout(this);
+            bubbleWrapper.setOrientation(LinearLayout.VERTICAL);
+            bubbleWrapper.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView bubble = new TextView(this);
+            bubble.setText(filteredContent);
+            bubble.setTextSize(15f);
+            bubble.setPadding(16, 12, 16, 12);
+            bubble.setLineSpacing(4f, 1f);
+            bubble.setBackgroundColor(Color.parseColor("#E8E8E8"));
+            bubble.setTextIsSelectable(true);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.7);
+            bubble.setLayoutParams(lp);
+            bubbleWrapper.addView(bubble);
+            msgRow.addView(bubbleWrapper);
+            Button rotateBtn = new Button(this);
+            rotateBtn.setText("🔄");
+            rotateBtn.setTextSize(18f);
+            rotateBtn.setBackgroundColor(Color.TRANSPARENT);
+            rotateBtn.setOnClickListener(v -> regenerateAnswer());
+            msgRow.addView(rotateBtn);
+            msgRow.setGravity(Gravity.START);
+        } else if ("user".equals(role)) {
+            TextView bubble = new TextView(this);
+            bubble.setText(filteredContent);
+            bubble.setTextSize(15f);
+            bubble.setPadding(16, 12, 16, 12);
+            bubble.setLineSpacing(4f, 1f);
+            bubble.setBackgroundColor(Color.parseColor("#DCF8C6"));
+            bubble.setTextIsSelectable(true);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.7);
+            bubble.setLayoutParams(lp);
+            LinearLayout spacer = new LinearLayout(this);
+            spacer.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            msgRow.addView(spacer);
+            msgRow.addView(bubble);
+            msgRow.setGravity(Gravity.END);
+        } else {
+            TextView bubble = new TextView(this);
+            bubble.setText(filteredContent);
+            bubble.setTextSize(13f);
+            bubble.setPadding(16, 12, 16, 12);
+            bubble.setLineSpacing(4f, 1f);
+            bubble.setBackgroundColor(Color.parseColor("#FFF3CD"));
+            bubble.setTextIsSelectable(true);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.75);
+            bubble.setLayoutParams(lp);
+            msgRow.addView(bubble);
+            msgRow.setGravity(Gravity.CENTER);
+        }
+        messageContainer.addView(msgRow);
+        messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
+    }
+
+    private void removeLastSystemMessage() {
+        if (messageContainer.getChildCount() == 0) return;
+        View lastView = messageContainer.getChildAt(messageContainer.getChildCount() - 1);
+        if (lastView instanceof LinearLayout) {
+            LinearLayout lastRow = (LinearLayout) lastView;
+            if (lastRow.getChildCount() > 0 && lastRow.getChildAt(0) instanceof TextView) {
+                TextView lastBubble = (TextView) lastRow.getChildAt(0);
+                String text = lastBubble.getText().toString();
+                if (text.contains("正在思考") || text.contains("⚠️") || text.contains("❌"))
+                    messageContainer.removeViewAt(messageContainer.getChildCount() - 1);
+            }
+        }
+    }
+
+    private String readConfig(String key) {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "cat /data/local/tmp/htai_config.txt"});
+            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.startsWith(key + "=")) return line.substring(key.length() + 1).trim();
+            }
+            p.waitFor();
+        } catch (Exception e) { e.printStackTrace(); }
+        return "";
+    }
+
+    private int dpToPx(int dp) {
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
+    }
+
+    static class ChatSession { String id; String name; ChatSession(String id, String name) { this.id = id; this.name = name; } }
+    static class Message { String role; String content; Message(String role, String content) { this.role = role; this.content = content; } }
+
+    static class DatabaseHelper extends SQLiteOpenHelper {
+        private static final String DB_NAME = "chat_history.db";
+        private static final int DB_VERSION = 1;
+        DatabaseHelper(Context context) { super(context, DB_NAME, null, DB_VERSION); }
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE chats (id TEXT PRIMARY KEY, name TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+            db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, timestamp INTEGER NOT NULL, FOREIGN KEY (chat_id) REFERENCES chats(id))");
+        }
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            db.execSQL("DROP TABLE IF EXISTS messages"); db.execSQL("DROP TABLE IF EXISTS chats"); onCreate(db);
+        }
+    }
+}
