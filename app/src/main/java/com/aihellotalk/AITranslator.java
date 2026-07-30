@@ -83,7 +83,6 @@ public class AITranslator {
                 .build();
     }
 
-    // ★ 紧急刹车核心：瞬间掐断 OkHttp 的所有进行中请求
     public static void cancelOngoingTranslation() {
         if (client != null) {
             try {
@@ -244,7 +243,6 @@ public class AITranslator {
         return msgObj;
     }
 
-    // ★ 终极协议：XML 隔离舱 + 括号内联元指令
     public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
         try {
             JSONArray messages = new JSONArray();
@@ -297,7 +295,6 @@ public class AITranslator {
                 ));
             }
 
-            // 把你要翻译的文字关进 XML 隔离舱
             String dynamicTask = "<translate>\n" + text + "\n</translate>";
             messages.put(createMessageObj("user", dynamicTask));
 
@@ -462,12 +459,28 @@ public class AITranslator {
         }
     }
 
-    public static void appendHistory(String chatId, String role, String content) {
+    // ★ 终极防重墙：增加 msgId 参数，直接扫描硬盘 JSON 防重
+    public static void appendHistory(String chatId, String msgId, String role, String content) {
         if (content == null || content.isEmpty()) return;
         synchronized (fileLock) { 
             try {
                 JSONArray history = loadHistory(chatId);
+
+                // 🌟 硬盘级双重核查：哪怕内存清理了，查一下硬盘是不是已经存过这个 ID！
+                if (msgId != null && !msgId.isEmpty()) {
+                    for (int i = 0; i < history.length(); i++) {
+                        JSONObject obj = history.getJSONObject(i);
+                        if (msgId.equals(obj.optString("msgId"))) {
+                            // 发现硬盘里早就有这个消息了，绝对不存第二次！
+                            return; 
+                        }
+                    }
+                }
+
                 JSONObject entry = new JSONObject();
+                if (msgId != null) {
+                    entry.put("msgId", msgId); // 顺便把 ID 烙印在 JSON 里
+                }
                 entry.put("role", role);
                 
                 String display = content.length() > 1000 ? content.substring(0, 1000) : content;
