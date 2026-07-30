@@ -715,10 +715,12 @@ public class MainActivity extends Activity {
                     });
                 }
             });
-        } catch (Exception e) {
+                } catch (Exception e) {
             removeLastSystemMessage();
             displayMessage("system", "❌ 构建请求失败: " + e.getMessage());
             saveMessageToDb(currentChatId, "system", "❌ 构建请求失败: " + e.getMessage());
+        }
+    }
 
     }
 
