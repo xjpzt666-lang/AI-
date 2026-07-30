@@ -26,7 +26,10 @@ import androidx.drawerlayout.widget.DrawerLayout;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -57,6 +60,7 @@ public class MainActivity extends Activity {
 
     private String currentChatId = "";
     private String currentChatName = "";
+    private int currentChatType = ChatSession.TYPE_LOCAL; 
     private List<ChatSession> chatSessions = new ArrayList<>();
     private String lastUserMessage = "";
 
@@ -107,7 +111,6 @@ public class MainActivity extends Activity {
         title.setGravity(Gravity.CENTER);
         title.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        // ★ 新增：右上角模型名称显示
         TextView modelLabel = new TextView(this);
         modelLabel.setText(cachedModel.isEmpty() ? "未选择" : cachedModel);
         modelLabel.setTextSize(12f);
@@ -124,7 +127,7 @@ public class MainActivity extends Activity {
 
         topBar.addView(leftMenuBtn);
         topBar.addView(title);
-        topBar.addView(modelLabel);     // ★ 新增：模型名显示在右上角
+        topBar.addView(modelLabel);
         topBar.addView(rightMenuBtn);
         mainContent.addView(topBar);
 
@@ -179,13 +182,12 @@ public class MainActivity extends Activity {
         imagePreviewBar.addView(previewCloseBtn);
         mainContent.addView(imagePreviewBar);
 
-        // ★★ 底部输入栏（优化布局：权重分配，解决拥挤）★★
+        // 底部输入栏
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setPadding(8, 6, 8, 6);
         bottomBar.setBackgroundColor(Color.parseColor("#F0F0F0"));
 
-        // 1. 加号按钮（固定宽度）
         attachBtn = new Button(this);
         attachBtn.setText("+");
         attachBtn.setTextSize(24f);
@@ -195,7 +197,6 @@ public class MainActivity extends Activity {
         attachBtn.setOnClickListener(v -> showAttachMenu());
         bottomBar.addView(attachBtn);
 
-        // 2. 模型切换 Spinner（固定宽度，不抢输入框空间）
         modelList = loadModelList();
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, modelList);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
@@ -217,7 +218,6 @@ public class MainActivity extends Activity {
                 if (!selected.isEmpty()) {
                     cachedModel = selected;
                     prefs.edit().putString("model", selected).apply();
-                    // ★ 新增：更新右上角的模型名称显示
                     TextView ml = (TextView) drawerLayout.findViewWithTag("modelLabel");
                     if (ml != null) ml.setText(selected);
                 }
@@ -227,7 +227,6 @@ public class MainActivity extends Activity {
         });
         bottomBar.addView(modelSpinner);
 
-        // 3. 输入框（权重1，占据剩余大部分空间）
         inputBox = new EditText(this);
         inputBox.setHint("输入消息...");
         inputBox.setBackgroundColor(Color.WHITE);
@@ -236,7 +235,6 @@ public class MainActivity extends Activity {
         inputBox.setMinimumHeight(dpToPx(42));
         bottomBar.addView(inputBox);
 
-        // 4. 发送按钮（固定宽度）
         sendBtn = new Button(this);
         sendBtn.setText("发送");
         sendBtn.setTextSize(14f);
@@ -261,12 +259,86 @@ public class MainActivity extends Activity {
         drawerTitle.setText("对话列表");
         drawerTitle.setTextSize(18f);
         drawerTitle.setTextColor(Color.BLACK);
-        drawerTitle.setPadding(0, 0, 0, 28);
+        drawerTitle.setPadding(0, 0, 0, 20);
         drawerContent.addView(drawerTitle);
 
         refreshDrawerList();
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
+    }
+
+    // ──────────────────────────────────────
+    // 新增：Root 权限命令执行方法
+    // ──────────────────────────────────────
+    private String runRoot(String cmd) {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
+            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String l;
+            while ((l = r.readLine()) != null) {
+                sb.append(l).append("\n");
+            }
+            p.waitFor();
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // ──────────────────────────────────────
+    // 新增：读取 HelloTalk 好友列表
+    // ──────────────────────────────────────
+    private List<ChatSession> loadHTFriendsRoot() {
+        List<ChatSession> list = new ArrayList<>();
+        try {
+            String jsonStr = runRoot("cat /data/data/com.hellotalk/files/htai_friends.json");
+            if (jsonStr != null && !jsonStr.trim().isEmpty()) {
+                JSONObject friends = new JSONObject(jsonStr);
+                JSONArray names = friends.names();
+                if (names != null) {
+                    for (int i = 0; i < names.length(); i++) {
+                        String id = names.getString(i);
+                        JSONObject info = friends.getJSONObject(id);
+                        String name = info.optString("name", id);
+                        list.add(new ChatSession(id, name, ChatSession.TYPE_HT));
+                    }
+                }
+            }
+        } catch (Exception e) {}
+        return list;
+    }
+
+    // ──────────────────────────────────────
+    // 新增：向 HelloTalk 底层追加调教指令
+    // ──────────────────────────────────────
+    private void appendHTHistoryRoot(String chatId, String role, String content) {
+        try {
+            String path = "/data/data/com.hellotalk/files/htai_hist_" + chatId + ".json";
+            String jsonStr = runRoot("cat " + path);
+            JSONArray history;
+            if (jsonStr != null && !jsonStr.trim().isEmpty() && jsonStr.startsWith("[")) {
+                history = new JSONArray(jsonStr);
+            } else {
+                history = new JSONArray();
+            }
+
+            JSONObject entry = new JSONObject();
+            entry.put("role", role);
+            entry.put("content", content);
+            history.put(entry);
+
+            // 利用临时文件规避 JSON 中的特殊符号在 Shell 转义时的报错
+            File tempFile = new File(getCacheDir(), "htai_temp.json");
+            BufferedWriter w = new BufferedWriter(new java.io.FileWriter(tempFile));
+            w.write(history.toString());
+            w.close();
+
+            runRoot("cp " + tempFile.getAbsolutePath() + " " + path);
+            runRoot("chmod 666 " + path);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 
     private List<String> loadModelList() {
@@ -325,12 +397,23 @@ public class MainActivity extends Activity {
         if (cachedApiUrl.isEmpty()) cachedApiUrl = "https://www.wintoken.dev";
     }
 
+    private String readConfig(String key) {
+        String content = runRoot("cat /data/local/tmp/htai_config.txt");
+        if (content == null) return "";
+        for (String l : content.split("\n")) {
+            if (l.trim().startsWith(key + "=")) {
+                return l.trim().substring(key.length() + 1).trim();
+            }
+        }
+        return "";
+    }
+
     private void loadChatSessions() {
         chatSessions.clear();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
         Cursor c = db.rawQuery("SELECT id, name FROM chats ORDER BY updated_at DESC", null);
         while (c.moveToNext()) {
-            chatSessions.add(new ChatSession(c.getString(0), c.getString(1)));
+            chatSessions.add(new ChatSession(c.getString(0), c.getString(1), ChatSession.TYPE_LOCAL));
         }
         c.close();
         db.close();
@@ -345,6 +428,31 @@ public class MainActivity extends Activity {
         }
         c.close();
         db.close();
+    }
+
+    private void loadHTMessagesRoot(String chatId) {
+        messageContainer.removeAllViews();
+        try {
+            String jsonStr = runRoot("cat /data/data/com.hellotalk/files/htai_hist_" + chatId + ".json");
+            if (jsonStr != null && !jsonStr.trim().isEmpty()) {
+                JSONArray history = new JSONArray(jsonStr);
+                for (int i = 0; i < history.length(); i++) {
+                    JSONObject obj = history.getJSONObject(i);
+                    String role = obj.optString("role", "");
+                    String content = obj.optString("content", "");
+                    
+                    if ("user".equals(role)) {
+                        displayMessage("user", content);
+                    } else if ("assistant".equals(role)) {
+                        displayMessage("ai", content);
+                    } else {
+                        displayMessage("system", content);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            displayMessage("system", "⚠️ 读取该好友记录失败");
+        }
     }
 
     private void saveMessageToDb(String chatId, String role, String content) {
@@ -374,6 +482,10 @@ public class MainActivity extends Activity {
     }
 
     private void showAttachMenu() {
+        if (currentChatType == ChatSession.TYPE_HT) {
+            Toast.makeText(this, "⚠️ 翻译遥控模式仅支持发送文本指令", Toast.LENGTH_SHORT).show();
+            return;
+        }
         new AlertDialog.Builder(this)
                 .setTitle("选择附件")
                 .setItems(new String[]{"🖼️ 相册", "📎 文件"}, (d, w) -> {
@@ -454,37 +566,83 @@ public class MainActivity extends Activity {
         sendMessage();
     }
 
+    // ──────────────────────────────────────
+    // 修改：双轨制侧滑菜单界面
+    // ──────────────────────────────────────
     private void refreshDrawerList() {
         while (drawerContent.getChildCount() > 1) drawerContent.removeViewAt(1);
+
+        // --- 1. HelloTalk 翻译遥控区 ---
+        TextView htLabel = new TextView(this);
+        htLabel.setText("【 🌐 HelloTalk 翻译遥控 】");
+        htLabel.setTextSize(14f);
+        htLabel.setTextColor(Color.parseColor("#0056b3"));
+        htLabel.setPadding(0, 30, 0, 10);
+        drawerContent.addView(htLabel);
+
+        List<ChatSession> htFriends = loadHTFriendsRoot();
+        if (htFriends.isEmpty()) {
+            TextView hint = new TextView(this);
+            hint.setText("暂无检测到的好友，请先在 HelloTalk 打开聊天页");
+            hint.setTextSize(13f);
+            hint.setTextColor(Color.GRAY);
+            hint.setPadding(20, 10, 0, 20);
+            drawerContent.addView(hint);
+        } else {
+            for (ChatSession s : htFriends) {
+                drawerContent.addView(createDrawerItem(s, "🌐 "));
+            }
+        }
+
+        // --- 2. 本地闲聊区 ---
+        TextView locLabel = new TextView(this);
+        locLabel.setText("【 💬 本地 AI 闲聊 】");
+        locLabel.setTextSize(14f);
+        locLabel.setTextColor(Color.parseColor("#28a745"));
+        locLabel.setPadding(0, 30, 0, 10);
+        drawerContent.addView(locLabel);
+
         if (chatSessions.isEmpty()) {
             TextView hint = new TextView(this);
             hint.setText("发送第一条消息后自动创建");
-            hint.setTextSize(14f);
+            hint.setTextSize(13f);
             hint.setTextColor(Color.GRAY);
-            hint.setPadding(0, 40, 0, 20);
+            hint.setPadding(20, 10, 0, 20);
             drawerContent.addView(hint);
         } else {
             for (ChatSession s : chatSessions) {
-                TextView tv = new TextView(this);
-                tv.setText("💬 " + s.name);
-                tv.setTextSize(16f);
-                tv.setPadding(20, 22, 20, 22);
-                tv.setTextColor(Color.BLACK);
-                if (s.id.equals(currentChatId)) tv.setBackgroundColor(Color.parseColor("#E3F2FD"));
-                tv.setOnClickListener(v -> { switchToChat(s); drawerLayout.closeDrawers(); });
-                tv.setOnLongClickListener(v -> {
-                    new AlertDialog.Builder(this)
-                            .setTitle("操作: " + s.name)
-                            .setItems(new String[]{"重命名", "删除"}, (d, w) -> {
-                                if (w == 0) showRenameDialog(s);
-                                else if (w == 1) deleteChat(s);
-                            })
-                            .show();
-                    return true;
-                });
-                drawerContent.addView(tv);
+                drawerContent.addView(createDrawerItem(s, "💬 "));
             }
         }
+    }
+
+    private TextView createDrawerItem(ChatSession s, String prefix) {
+        TextView tv = new TextView(this);
+        tv.setText(prefix + s.name);
+        tv.setTextSize(16f);
+        tv.setPadding(20, 22, 20, 22);
+        tv.setTextColor(Color.BLACK);
+        if (s.id.equals(currentChatId)) tv.setBackgroundColor(Color.parseColor("#E3F2FD"));
+        tv.setOnClickListener(v -> { switchToChat(s); drawerLayout.closeDrawers(); });
+
+        if (s.type == ChatSession.TYPE_LOCAL) {
+            tv.setOnLongClickListener(v -> {
+                new AlertDialog.Builder(this)
+                        .setTitle("操作: " + s.name)
+                        .setItems(new String[]{"重命名", "删除"}, (d, w) -> {
+                            if (w == 0) showRenameDialog(s);
+                            else if (w == 1) deleteChat(s);
+                        })
+                        .show();
+                return true;
+            });
+        } else {
+            tv.setOnLongClickListener(v -> {
+                Toast.makeText(this, "⚠️ HelloTalk 内部记忆不支持在此删除", Toast.LENGTH_SHORT).show();
+                return true;
+            });
+        }
+        return tv;
     }
 
     private void deleteChat(ChatSession s) {
@@ -521,8 +679,9 @@ public class MainActivity extends Activity {
                         s.name = nn;
                         refreshDrawerList();
                         if (currentChatId.equals(s.id)) {
+                            String prefix = (currentChatType == ChatSession.TYPE_HT) ? "🌐 " : "💬 ";
                             currentChatName = nn;
-                            ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: " + nn);
+                            ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: " + prefix + nn);
                         }
                         Toast.makeText(this, "已重命名", Toast.LENGTH_SHORT).show();
                     }
@@ -533,15 +692,17 @@ public class MainActivity extends Activity {
 
     private void showPopupMenu(View v) {
         PopupMenu popup = new PopupMenu(this, v);
-        popup.getMenu().add(0, 1, 0, "💬 开启新对话");
+        popup.getMenu().add(0, 1, 0, "💬 开启新闲聊对话");
         popup.getMenu().add(0, 2, 0, "⚙️ 设置/API配置");
         popup.setOnMenuItemClickListener(item -> {
             if (item.getItemId() == 1) {
                 currentChatId = "";
                 currentChatName = "";
+                currentChatType = ChatSession.TYPE_LOCAL;
                 ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: 暂无对话");
                 messageContainer.removeAllViews();
-                Toast.makeText(this, "已开启新对话", Toast.LENGTH_SHORT).show();
+                inputBox.setHint("输入消息...");
+                Toast.makeText(this, "已开启本地新对话", Toast.LENGTH_SHORT).show();
                 return true;
             } else if (item.getItemId() == 2) {
                 startActivity(new Intent(this, SettingsActivity.class));
@@ -552,14 +713,29 @@ public class MainActivity extends Activity {
         popup.show();
     }
 
+    // ──────────────────────────────────────
+    // 修改：点击不同频道的加载逻辑
+    // ──────────────────────────────────────
     private void switchToChat(ChatSession session) {
         currentChatId = session.id;
         currentChatName = session.name;
-        ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: " + currentChatName);
-        loadMessagesFromDb(currentChatId);
+        currentChatType = session.type;
+        String prefix = (session.type == ChatSession.TYPE_HT) ? "🌐 " : "💬 ";
+        ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: " + prefix + currentChatName);
+        
+        if (session.type == ChatSession.TYPE_HT) {
+            loadHTMessagesRoot(currentChatId);
+            inputBox.setHint("输入对 AI 的翻译调教指令...");
+        } else {
+            loadMessagesFromDb(currentChatId);
+            inputBox.setHint("输入消息...");
+        }
         refreshDrawerList();
     }
 
+    // ──────────────────────────────────────
+    // 修改：分发发送逻辑
+    // ──────────────────────────────────────
     private void sendMessage() {
         String text = inputBox.getText().toString().trim();
         if (text.isEmpty() && pendingImageBase64.isEmpty()) return;
@@ -570,6 +746,20 @@ public class MainActivity extends Activity {
         boolean hasImage = !localImageBase64.isEmpty();
         if (hasImage) clearImagePreview();
 
+        // 1. 如果当前是 HelloTalk 频道
+        if (currentChatType == ChatSession.TYPE_HT) {
+            if (hasImage) {
+                Toast.makeText(this, "⚠️ 遥控模式只接收文本指令", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            displayMessage("user", text);
+            appendHTHistoryRoot(currentChatId, "user", text);
+            displayMessage("system", "✅ 已将该指令静默写入底层记忆！\n切回 HelloTalk 聊天并点击“译”即可按照此指令执行。");
+            inputBox.setText("");
+            return;
+        }
+
+        // 2. 以下全是原本的本地闲聊频道代码
         if (currentChatId.isEmpty()) {
             String chatName = text.length() > 10 ? text.substring(0, 10) + "..." : text;
             String chatId = "chat_" + System.currentTimeMillis();
@@ -580,11 +770,11 @@ public class MainActivity extends Activity {
             cv.put("updated_at", System.currentTimeMillis());
             db.insert("chats", null, cv);
             db.close();
-            ChatSession ns = new ChatSession(chatId, chatName);
+            ChatSession ns = new ChatSession(chatId, chatName, ChatSession.TYPE_LOCAL);
             chatSessions.add(ns);
             currentChatId = chatId;
             currentChatName = chatName;
-            ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: " + currentChatName);
+            ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: 💬 " + currentChatName);
             refreshDrawerList();
         }
 
@@ -699,6 +889,10 @@ public class MainActivity extends Activity {
     }
 
     private void regenerateAnswer() {
+        if (currentChatType == ChatSession.TYPE_HT) {
+            Toast.makeText(this, "⚠️ 遥控模式不支持重新生成，请在 HelloTalk 中点重新翻译", Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (lastUserMessage.isEmpty()) {
             Toast.makeText(this, "没有可重新回答的消息", Toast.LENGTH_SHORT).show();
             return;
@@ -716,7 +910,7 @@ public class MainActivity extends Activity {
                 if (row.getChildCount() > 0 && row.getChildAt(0) instanceof TextView) {
                     TextView b = (TextView) row.getChildAt(0);
                     String t = b.getText().toString();
-                    if (!t.contains("正在思考") && !t.contains("⚠️") && !t.contains("❌")) {
+                    if (!t.contains("正在思考") && !t.contains("⚠️") && !t.contains("❌") && !t.contains("✅")) {
                         if (b.getCurrentTextColor() == Color.parseColor("#E8E8E8") || b.getBackground() != null) {
                             messageContainer.removeViewAt(i);
                             return;
@@ -754,6 +948,7 @@ public class MainActivity extends Activity {
             rb.setTextSize(18f);
             rb.setBackgroundColor(Color.TRANSPARENT);
             rb.setOnClickListener(v -> regenerateAnswer());
+            if (currentChatType == ChatSession.TYPE_HT) rb.setVisibility(View.GONE);
             row.addView(rb);
             row.setGravity(Gravity.START);
         } else if ("user".equals(role)) {
@@ -804,31 +999,22 @@ public class MainActivity extends Activity {
         }
     }
 
-    private String readConfig(String key) {
-        try {
-            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "cat /data/local/tmp/htai_config.txt"});
-            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
-            String l;
-            while ((l = r.readLine()) != null) {
-                if (l.startsWith(key + "=")) return l.substring(key.length() + 1).trim();
-            }
-            p.waitFor();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return "";
-    }
-
     private int dpToPx(int dp) {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
     }
 
     static class ChatSession {
+        public static final int TYPE_LOCAL = 0;
+        public static final int TYPE_HT = 1;
+        
         String id;
         String name;
-        ChatSession(String id, String name) {
+        int type;
+        
+        ChatSession(String id, String name, int type) {
             this.id = id;
             this.name = name;
+            this.type = type;
         }
     }
 
