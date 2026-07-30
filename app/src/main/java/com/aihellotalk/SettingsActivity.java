@@ -1,6 +1,7 @@
 package com.aihellotalk;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -8,6 +9,7 @@ import android.text.InputType;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.widget.*;
+import java.io.*;
 import java.util.List;
 
 public class SettingsActivity extends Activity {
@@ -68,6 +70,7 @@ public class SettingsActivity extends Activity {
         root.addView(editRu);
         editUk = createMultiEdit("🇺🇦 乌克兰语 Prompt（发送）", prefs.getString("prompt_uk", ""));
         root.addView(editUk);
+        // ★ 新增：韩语和西班牙语
         editKo = createMultiEdit("🇰🇷 韩语 Prompt（发送）", prefs.getString("prompt_ko", ""));
         root.addView(editKo);
         editEs = createMultiEdit("🇪🇸 西班牙语 Prompt（发送）", prefs.getString("prompt_es", ""));
@@ -80,6 +83,14 @@ public class SettingsActivity extends Activity {
         saveBtn.setPadding(0, 16, 0, 16);
         saveBtn.setOnClickListener(v -> saveAll());
         root.addView(saveBtn);
+
+        // ★ 保留你原来的测试翻译按钮
+        Button testBtn = new Button(this);
+        testBtn.setText("🧪 测试翻译");
+        testBtn.setTextSize(16f);
+        testBtn.setPadding(0, 16, 0, 16);
+        testBtn.setOnClickListener(v -> testTranslation());
+        root.addView(testBtn);
 
         scroll.addView(root);
         setContentView(scroll);
@@ -152,7 +163,6 @@ public class SettingsActivity extends Activity {
         String apiUrl = editApiUrl.getText().toString().trim();
         String model = editModel.getText().toString().trim();
 
-        // 如果 Spinner 有选择且手动输入为空，则使用 Spinner 的选择
         if (model.isEmpty() && modelSpinner.getSelectedItem() != null) {
             model = modelSpinner.getSelectedItem().toString();
         }
@@ -164,7 +174,6 @@ public class SettingsActivity extends Activity {
         String ko = editKo.getText().toString().trim();
         String es = editEs.getText().toString().trim();
 
-        // 保存到 SharedPreferences
         prefs.edit()
                 .putString("api_key", apiKey)
                 .putString("api_url", apiUrl)
@@ -177,10 +186,9 @@ public class SettingsActivity extends Activity {
                 .putString("prompt_es", es)
                 .apply();
 
-        // 保存到 AITranslator（6个参数）
+        // ★ 改为6个参数
         AITranslator.savePrompts(zh, en, ru, uk, ko, es);
 
-        // 同时写入 /data/local/tmp/htai_prompts.txt
         writePromptsToFile(zh, en, ru, uk, ko, es);
 
         Toast.makeText(this, "✅ 配置已保存", Toast.LENGTH_SHORT).show();
@@ -188,9 +196,9 @@ public class SettingsActivity extends Activity {
 
     private void writePromptsToFile(String zh, String en, String ru, String uk, String ko, String es) {
         try {
-            java.io.File file = new java.io.File("/data/local/tmp/htai_prompts.txt");
+            File file = new File("/data/local/tmp/htai_prompts.txt");
             file.getParentFile().mkdirs();
-            java.io.BufferedWriter w = new java.io.BufferedWriter(new java.io.FileWriter(file));
+            BufferedWriter w = new BufferedWriter(new FileWriter(file));
             w.write("###ZH###\n" + zh + "\n");
             w.write("###EN###\n" + en + "\n");
             w.write("###RU###\n" + ru + "\n");
@@ -201,5 +209,60 @@ public class SettingsActivity extends Activity {
         } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+
+    // ★ 保留你原来的测试翻译功能
+    private void testTranslation() {
+        String apiKey = editApiKey.getText().toString().trim();
+        String apiUrl = editApiUrl.getText().toString().trim();
+        String model = editModel.getText().toString().trim();
+
+        if (apiKey.isEmpty()) {
+            Toast.makeText(this, "请先填写 API Key", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        new AlertDialog.Builder(this)
+                .setTitle("测试翻译")
+                .setMessage("请输入要翻译的中文")
+                .setView(new EditText(this))
+                .setPositiveButton("翻译成英文", (d, w) -> {
+                    EditText input = (EditText) ((AlertDialog) d).findViewById(android.R.id.custom);
+                    if (input != null) {
+                        String text = input.getText().toString().trim();
+                        if (!text.isEmpty()) {
+                            doTranslation(text, "en", apiKey, apiUrl, model);
+                        }
+                    }
+                })
+                .setNegativeButton("翻译成俄文", (d, w) -> {
+                    EditText input = (EditText) ((AlertDialog) d).findViewById(android.R.id.custom);
+                    if (input != null) {
+                        String text = input.getText().toString().trim();
+                        if (!text.isEmpty()) {
+                            doTranslation(text, "ru", apiKey, apiUrl, model);
+                        }
+                    }
+                })
+                .setNeutralButton("取消", null)
+                .show();
+    }
+
+    private void doTranslation(String text, String lang, String key, String url, String model) {
+        new Thread(() -> {
+            try {
+                AITranslator.init(key, url, model);
+                String result = AITranslator.fromChinese(text, lang);
+                runOnUiThread(() -> {
+                    new AlertDialog.Builder(this)
+                            .setTitle("翻译结果 (" + lang + ")")
+                            .setMessage(result)
+                            .setPositiveButton("确定", null)
+                            .show();
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> Toast.makeText(this, "翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        }).start();
     }
 }
