@@ -15,6 +15,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.util.Base64;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -24,6 +25,7 @@ import androidx.drawerlayout.widget.DrawerLayout;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -61,13 +63,16 @@ public class MainActivity extends Activity {
     private String cachedModel = "";
     private boolean configLoaded = false;
 
+    // 临时存储待发送的图片 Base64 数据
+    private String pendingImageBase64 = "";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
         httpClient = new OkHttpClient.Builder()
                 .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-                .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
                 .build();
         mainHandler = new Handler(Looper.getMainLooper());
         dbHelper = new DatabaseHelper(this);
@@ -257,7 +262,7 @@ public class MainActivity extends Activity {
         return history;
     }
 
-    // ── 附件菜单（移除拍照，实现相册和文件） ──
+    // ── 附件菜单 ──
     private void showAttachMenu() {
         String[] options = {"🖼️ 相册", "📎 文件"};
         new AlertDialog.Builder(this)
@@ -291,13 +296,18 @@ public class MainActivity extends Activity {
         if (uri == null) return;
 
         if (requestCode == REQUEST_CODE_PICK_IMAGE) {
-            // 获取图片文件名
-            String fileName = getFileName(uri);
-            String imageInfo = "用户选择了一张图片：" + (fileName != null ? fileName : "未知图片");
-            // 将图片信息作为用户消息发送
-            sendAttachmentAsMessage(imageInfo);
+            // 将图片转换为 Base64 编码
+            String base64 = imageUriToBase64(uri);
+            if (base64 != null) {
+                pendingImageBase64 = base64;
+                String fileName = getFileName(uri);
+                // 在输入框显示提示，等待用户输入文字后一起发送
+                inputBox.setHint("已选择图片: " + fileName + "，输入描述后发送");
+                Toast.makeText(this, "已选择图片，输入文字后发送", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "图片读取失败", Toast.LENGTH_SHORT).show();
+            }
         } else if (requestCode == REQUEST_CODE_PICK_FILE) {
-            // 读取文本文件内容
             String fileContent = readTextFile(uri);
             if (fileContent != null) {
                 String fileName = getFileName(uri);
@@ -306,6 +316,26 @@ public class MainActivity extends Activity {
             } else {
                 Toast.makeText(this, "无法读取文件内容", Toast.LENGTH_SHORT).show();
             }
+        }
+    }
+
+    // 将图片 URI 转换为 Base64 字符串
+    private String imageUriToBase64(Uri uri) {
+        try {
+            InputStream inputStream = getContentResolver().openInputStream(uri);
+            if (inputStream == null) return null;
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = inputStream.read(buffer)) != -1) {
+                baos.write(buffer, 0, bytesRead);
+            }
+            inputStream.close();
+            byte[] imageBytes = baos.toByteArray();
+            return Base64.encodeToString(imageBytes, Base64.NO_WRAP);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
         }
     }
 
@@ -344,7 +374,6 @@ public class MainActivity extends Activity {
     }
 
     private void sendAttachmentAsMessage(String content) {
-        // 把内容填入输入框并自动发送
         inputBox.setText(content);
         sendMessage();
     }
@@ -470,7 +499,12 @@ public class MainActivity extends Activity {
 
     private void sendMessage() {
         String text = inputBox.getText().toString().trim();
-        if (text.isEmpty()) return;
+        if (text.isEmpty() && pendingImageBase64.isEmpty()) return;
+
+        // 如果选择了图片但没有输入文字，使用默认提示
+        if (text.isEmpty() && !pendingImageBase64.isEmpty()) {
+            text = "请描述这张图片";
+        }
 
         lastUserMessage = text;
 
@@ -496,9 +530,16 @@ public class MainActivity extends Activity {
             refreshDrawerList();
         }
 
-        displayMessage("user", text);
-        saveMessageToDb(currentChatId, "user", text);
+        // 显示用户消息（如果是图片，显示提示）
+        if (!pendingImageBase64.isEmpty()) {
+            displayMessage("user", "[图片] " + text);
+            saveMessageToDb(currentChatId, "user", "[图片] " + text);
+        } else {
+            displayMessage("user", text);
+            saveMessageToDb(currentChatId, "user", text);
+        }
         inputBox.setText("");
+        inputBox.setHint("输入消息...");
 
         String apiKey = cachedApiKey;
         String apiUrl = cachedApiUrl;
@@ -537,6 +578,8 @@ public class MainActivity extends Activity {
             requestBody.put("model", model);
 
             JSONArray messages = new JSONArray();
+
+            // 添加历史消息
             for (Message msg : history) {
                 JSONObject histMsg = new JSONObject();
                 String apiRole = msg.role.equals("ai") ? "assistant" : msg.role;
@@ -544,9 +587,35 @@ public class MainActivity extends Activity {
                 histMsg.put("content", msg.content);
                 messages.put(histMsg);
             }
+
+            // 构造当前用户消息（支持多模态）
             JSONObject userMessage = new JSONObject();
             userMessage.put("role", "user");
-            userMessage.put("content", text);
+
+            if (!pendingImageBase64.isEmpty()) {
+                // 多模态消息：包含文字和图片
+                JSONArray contentArray = new JSONArray();
+
+                // 文字部分
+                JSONObject textPart = new JSONObject();
+                textPart.put("type", "text");
+                textPart.put("text", text);
+                contentArray.put(textPart);
+
+                // 图片部分
+                JSONObject imagePart = new JSONObject();
+                imagePart.put("type", "image_url");
+                JSONObject imageUrl = new JSONObject();
+                imageUrl.put("url", "data:image/jpeg;base64," + pendingImageBase64);
+                imagePart.put("image_url", imageUrl);
+                contentArray.put(imagePart);
+
+                userMessage.put("content", contentArray);
+                pendingImageBase64 = ""; // 发送后清除
+            } else {
+                userMessage.put("content", text);
+            }
+
             messages.put(userMessage);
             requestBody.put("messages", messages);
 
@@ -631,7 +700,6 @@ public class MainActivity extends Activity {
     }
 
     private void displayMessage(String role, String content) {
-        // ★ 过滤星号、破折号、井号、全角冒号、全角分号、全角破折号 ★
         String filteredContent = content.replaceAll("[*\\-#：；—]", "");
 
         LinearLayout msgRow = new LinearLayout(this);
