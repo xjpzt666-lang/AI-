@@ -31,7 +31,7 @@ import java.util.concurrent.TimeUnit;
 public class SettingsActivity extends Activity {
 
     private EditText etKey, etUrl, etModel;
-    private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK;
+    private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
     private Button btnFetch, btnSave, btnTest;
 
     private SharedPreferences prefs;
@@ -69,21 +69,35 @@ public class SettingsActivity extends Activity {
 
         ll.addView(div());
 
+        // ★ 接收翻译 Prompt（外语→中文）
         ll.addView(lab("🇨🇳 接收翻译 Prompt (外语→中文):"));
         etPromptZH = bigEdit(prefs.getString("prompt_zh", ""));
         ll.addView(etPromptZH);
 
+        // ★ 英语 Prompt
         ll.addView(lab("🇬🇧 英语 Prompt (发送):"));
         etPromptEN = bigEdit(prefs.getString("prompt_en", ""));
         ll.addView(etPromptEN);
 
+        // ★ 俄语 Prompt
         ll.addView(lab("🇷🇺 俄语 Prompt (发送):"));
         etPromptRU = bigEdit(prefs.getString("prompt_ru", ""));
         ll.addView(etPromptRU);
 
+        // ★ 乌克兰语 Prompt
         ll.addView(lab("🇺🇦 乌克兰语 Prompt (发送):"));
         etPromptUK = bigEdit(prefs.getString("prompt_uk", ""));
         ll.addView(etPromptUK);
+
+        // ★★★ 新增：韩语 Prompt ★★★
+        ll.addView(lab("🇰🇷 韩语 Prompt (发送):"));
+        etPromptKO = bigEdit(prefs.getString("prompt_ko", ""));
+        ll.addView(etPromptKO);
+
+        // ★★★ 新增：西班牙语 Prompt ★★★
+        ll.addView(lab("🇪🇸 西班牙语 Prompt (发送):"));
+        etPromptES = bigEdit(prefs.getString("prompt_es", ""));
+        ll.addView(etPromptES);
 
         btnSave = btn("💾 保存全部配置");
         btnSave.setOnClickListener(v -> saveAll());
@@ -173,6 +187,9 @@ public class SettingsActivity extends Activity {
         return def;
     }
 
+    /**
+     * ★ 支持 KO### 和 ES### 分段读取
+     */
     private String readPrompt(String section) {
         String all = runRoot("cat /data/local/tmp/htai_prompts.txt 2>/dev/null");
         if (all == null || all.isEmpty()) return "";
@@ -186,7 +203,8 @@ public class SettingsActivity extends Activity {
             }
             if (inSection) {
                 if (part.startsWith("EN###") || part.startsWith("RU###")
-                        || part.startsWith("UK###") || part.startsWith("ZH###")) {
+                        || part.startsWith("UK###") || part.startsWith("ZH###")
+                        || part.startsWith("KO###") || part.startsWith("ES###")) {
                     break;
                 }
                 sb.append(part);
@@ -292,12 +310,10 @@ public class SettingsActivity extends Activity {
         throw new Exception("尝试了以下地址均失败:\n" + String.join("\n", lastErrors));
     }
 
-    // ★★★ 修复后的多选模型对话框 ★★★
     private void showModelPicker(List<String> models) {
         String[] items = models.toArray(new String[0]);
         boolean[] checked = new boolean[items.length];
 
-        // 读取已保存的模型列表
         String savedModels = prefs.getString("model_list", "");
         if (!savedModels.isEmpty()) {
             String[] savedArr = savedModels.split(",");
@@ -336,17 +352,14 @@ public class SettingsActivity extends Activity {
                 return;
             }
 
-            // ★ 关键修复：保存 model_list 并自动设置当前模型为第一个
             String selectedStr = String.join(",", selected);
             SharedPreferences.Editor editor = prefs.edit();
             editor.putString("model_list", selectedStr);
-            editor.putString("model", selected.get(0)); // 自动设置当前模型为第一个
+            editor.putString("model", selected.get(0));
             editor.apply();
 
-            // 更新 UI 显示
-            etModel.setText(selected.get(0)); // 直接显示第一个模型名，不再显示“等N个”
+            etModel.setText(selected.get(0));
 
-            // 显示提示
             StringBuilder sb = new StringBuilder("已选择：");
             for (String s : selected) {
                 sb.append("\n• ").append(s);
@@ -369,6 +382,9 @@ public class SettingsActivity extends Activity {
         String en = etPromptEN.getText().toString().trim();
         String ru = etPromptRU.getText().toString().trim();
         String uk = etPromptUK.getText().toString().trim();
+        // ★ 新增：读取韩语和西班牙语 Prompt
+        String ko = etPromptKO.getText().toString().trim();
+        String es = etPromptES.getText().toString().trim();
 
         SharedPreferences.Editor editor = prefs.edit();
         editor.putString("api_key", key);
@@ -378,11 +394,13 @@ public class SettingsActivity extends Activity {
         editor.putString("prompt_en", en);
         editor.putString("prompt_ru", ru);
         editor.putString("prompt_uk", uk);
+        // ★ 新增：保存韩语和西班牙语到 SharedPreferences
+        editor.putString("prompt_ko", ko);
+        editor.putString("prompt_es", es);
         editor.apply();
 
         new Thread(() -> {
             try {
-                // 保存时同时写入 model_list
                 String modelList = prefs.getString("model_list", "");
                 String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
                         + "api_key=" + key + "\n"
@@ -392,16 +410,28 @@ public class SettingsActivity extends Activity {
                         + "EOF\n";
                 runRoot(cfg);
 
+                // ★ 新增 KO### 和 ES### 分段
                 String prompts = "cat > /data/local/tmp/htai_prompts.txt << 'EOF'\n"
                         + "###ZH###\n" + zh + "\n"
                         + "###EN###\n" + en + "\n"
                         + "###RU###\n" + ru + "\n"
                         + "###UK###\n" + uk + "\n"
+                        + "###KO###\n" + ko + "\n"
+                        + "###ES###\n" + es + "\n"
                         + "EOF\n";
                 runRoot(prompts);
 
                 runRoot("chmod 644 /data/local/tmp/htai_config.txt /data/local/tmp/htai_prompts.txt");
-                AITranslator.savePrompts(zh, en, ru, uk);
+
+                // ★ 兼容处理：如果 AITranslator.savePrompts 只接受4个参数，用反射或直接调用6参版本
+                try {
+                    // 尝试调用6参数版本（如果 AITranslator 已更新）
+                    java.lang.reflect.Method m = AITranslator.class.getMethod("savePrompts", String.class, String.class, String.class, String.class, String.class, String.class);
+                    m.invoke(null, zh, en, ru, uk, ko, es);
+                } catch (NoSuchMethodException e) {
+                    //  fallback：只传原来的4个参数
+                    AITranslator.savePrompts(zh, en, ru, uk);
+                }
 
                 runOnUiThread(() -> {
                     btnSave.setEnabled(true);
