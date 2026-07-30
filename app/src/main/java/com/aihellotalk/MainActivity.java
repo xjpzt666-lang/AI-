@@ -1,10 +1,19 @@
 package com.aihellotalk;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.Intent;
+import android.content.SharedPreferences;
+import android.database.Cursor;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.OpenableColumns;
+import android.util.Base64;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -15,28 +24,50 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MainActivity extends Activity {
 
+    private static final int REQUEST_CODE_PICK_IMAGE = 101;
+    private static final int REQUEST_CODE_PICK_FILE = 102;
+
     private DrawerLayout drawerLayout;
     private LinearLayout messageContainer;
     private ScrollView messageScrollView;
     private EditText inputBox;
     private Button sendBtn;
+    private Button attachBtn;
     private LinearLayout drawerContent;
+
+    private LinearLayout imagePreviewBar;
+    private ImageView previewImage;
+    private ImageButton previewCloseBtn;
+    private String pendingImageBase64 = "";
+
+    private Spinner modelSpinner;
+    private List<String> modelList = new ArrayList<>();
 
     private String currentChatId = "";
     private String currentChatName = "";
     private Handler mainHandler;
 
+    private String cachedApiKey = "";
+    private String cachedApiUrl = "";
+    private String cachedModel = "";
+    private SharedPreferences prefs;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        prefs = getSharedPreferences("htai_settings", MODE_PRIVATE);
         mainHandler = new Handler(Looper.getMainLooper());
+        
+        loadConfigOnce();
 
         drawerLayout = new DrawerLayout(this);
         LinearLayout mainContent = new LinearLayout(this);
@@ -64,13 +95,17 @@ public class MainActivity extends Activity {
         title.setGravity(Gravity.CENTER);
         title.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
+        TextView modelLabel = new TextView(this);
+        modelLabel.setText(cachedModel.isEmpty() ? "未选择" : cachedModel);
+        modelLabel.setTextSize(12f);
+        modelLabel.setTextColor(Color.parseColor("#666666"));
+        modelLabel.setPadding(0, 0, 8, 0);
+        modelLabel.setGravity(Gravity.CENTER_VERTICAL);
+        modelLabel.setTag("modelLabel");
+
         topBar.addView(leftMenuBtn);
         topBar.addView(title);
-        // 为了对称占位
-        Button placeholderBtn = new Button(this);
-        placeholderBtn.setText("  ");
-        placeholderBtn.setBackgroundColor(Color.TRANSPARENT);
-        topBar.addView(placeholderBtn);
+        topBar.addView(modelLabel);
         mainContent.addView(topBar);
 
         // 当前对话标题
@@ -95,31 +130,105 @@ public class MainActivity extends Activity {
         mainContent.addView(messageScrollView);
 
         // ──────────────────────────────────────
-        // 极简底部输入栏
+        // 图片预览条 (为你加回来的功能！)
+        // ──────────────────────────────────────
+        imagePreviewBar = new LinearLayout(this);
+        imagePreviewBar.setOrientation(LinearLayout.HORIZONTAL);
+        imagePreviewBar.setPadding(8, 4, 8, 4);
+        imagePreviewBar.setBackgroundColor(Color.parseColor("#EEEEEE"));
+        imagePreviewBar.setVisibility(View.GONE);
+
+        previewImage = new ImageView(this);
+        previewImage.setLayoutParams(new LinearLayout.LayoutParams(dpToPx(56), dpToPx(56)));
+        previewImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        previewImage.setPadding(4, 4, 4, 4);
+
+        TextView previewName = new TextView(this);
+        previewName.setText("已选择图片");
+        previewName.setTextSize(13f);
+        previewName.setTextColor(Color.DKGRAY);
+        previewName.setGravity(Gravity.CENTER_VERTICAL);
+        previewName.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        previewName.setPadding(12, 0, 0, 0);
+        previewName.setTag("previewName");
+
+        previewCloseBtn = new ImageButton(this);
+        previewCloseBtn.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
+        previewCloseBtn.setBackgroundColor(Color.TRANSPARENT);
+        previewCloseBtn.setLayoutParams(new LinearLayout.LayoutParams(dpToPx(44), dpToPx(44)));
+        previewCloseBtn.setOnClickListener(v -> clearImagePreview());
+
+        imagePreviewBar.addView(previewImage);
+        imagePreviewBar.addView(previewName);
+        imagePreviewBar.addView(previewCloseBtn);
+        mainContent.addView(imagePreviewBar);
+
+        // ──────────────────────────────────────
+        // 底部输入栏 (为你加回来的功能！)
         // ──────────────────────────────────────
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
-        bottomBar.setPadding(16, 12, 16, 12);
+        bottomBar.setPadding(8, 6, 8, 6);
         bottomBar.setBackgroundColor(Color.parseColor("#F0F0F0"));
 
+        attachBtn = new Button(this);
+        attachBtn.setText("+");
+        attachBtn.setTextSize(24f);
+        attachBtn.setBackgroundColor(Color.TRANSPARENT);
+        attachBtn.setMinWidth(dpToPx(42));
+        attachBtn.setMinimumHeight(dpToPx(42));
+        attachBtn.setOnClickListener(v -> showAttachMenu());
+        bottomBar.addView(attachBtn);
+
+        modelList = loadModelList();
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, modelList);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        modelSpinner = new Spinner(this);
+        modelSpinner.setAdapter(adapter);
+        LinearLayout.LayoutParams spinnerParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.3f);
+        spinnerParams.setMarginEnd(dpToPx(4));
+        modelSpinner.setLayoutParams(spinnerParams);
+        modelSpinner.setMinimumHeight(dpToPx(42));
+
+        if (!cachedModel.isEmpty() && modelList.contains(cachedModel)) {
+            modelSpinner.setSelection(modelList.indexOf(cachedModel));
+        }
+        
+        // 核心增强：实时同步到底层 config，切回 HelloTalk 瞬间生效
+        modelSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                String selected = modelList.get(position);
+                if (!selected.isEmpty() && !selected.equals(cachedModel)) {
+                    cachedModel = selected;
+                    prefs.edit().putString("model", selected).apply();
+                    TextView ml = (TextView) drawerLayout.findViewWithTag("modelLabel");
+                    if (ml != null) ml.setText(selected);
+                    
+                    updateModelInConfig(selected);
+                    Toast.makeText(MainActivity.this, "底层翻译模型已实时切换为: " + selected, Toast.LENGTH_SHORT).show();
+                }
+            }
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {}
+        });
+        bottomBar.addView(modelSpinner);
+
         inputBox = new EditText(this);
-        inputBox.setHint("输入对 AI 的翻译调教指令...");
+        inputBox.setHint("输入对 AI 的调教指令...");
         inputBox.setBackgroundColor(Color.WHITE);
-        inputBox.setPadding(24, 16, 24, 16);
-        inputBox.setTextSize(15f);
+        inputBox.setPadding(12, 8, 12, 8);
         inputBox.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        inputBox.setMinimumHeight(dpToPx(48));
+        inputBox.setMinimumHeight(dpToPx(42));
         bottomBar.addView(inputBox);
 
         sendBtn = new Button(this);
         sendBtn.setText("注入指令");
         sendBtn.setTextSize(14f);
+        sendBtn.setMinWidth(dpToPx(56));
+        sendBtn.setMinimumHeight(dpToPx(42));
         sendBtn.setTextColor(Color.WHITE);
         sendBtn.setBackgroundColor(Color.parseColor("#007BFF"));
-        LinearLayout.LayoutParams btnParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        btnParams.setMargins(16, 0, 0, 0);
-        sendBtn.setLayoutParams(btnParams);
-        sendBtn.setMinimumHeight(dpToPx(48));
         sendBtn.setOnClickListener(v -> sendMessage());
         bottomBar.addView(sendBtn);
 
@@ -148,6 +257,166 @@ public class MainActivity extends Activity {
         refreshDrawerList();
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
+    }
+
+    // ──────────────────────────────────────
+    // 基础配置读取与实时同步
+    // ──────────────────────────────────────
+    private void loadConfigOnce() {
+        cachedApiKey = prefs.getString("api_key", "");
+        cachedApiUrl = prefs.getString("api_url", "");
+        cachedModel = prefs.getString("model", "");
+        if (cachedApiKey.isEmpty()) cachedApiKey = readConfig("api_key");
+        if (cachedApiUrl.isEmpty()) cachedApiUrl = readConfig("api_url");
+        if (cachedModel.isEmpty()) cachedModel = readConfig("model");
+    }
+
+    private String readConfig(String key) {
+        String content = runRoot("cat /data/local/tmp/htai_config.txt");
+        if (content == null) return "";
+        for (String l : content.split("\n")) {
+            if (l.trim().startsWith(key + "=")) {
+                return l.trim().substring(key.length() + 1).trim();
+            }
+        }
+        return "";
+    }
+
+    // 更新底层配置文件以保证模型下拉框的切换对 HelloTalk 有效
+    private void updateModelInConfig(String newModel) {
+        new Thread(() -> {
+            String key = prefs.getString("api_key", "");
+            String url = prefs.getString("api_url", "https://api.openai.com/v1/chat/completions");
+            String mList = prefs.getString("model_list", "");
+            String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
+                    + "api_key=" + key + "\n"
+                    + "api_url=" + url + "\n"
+                    + "model=" + newModel + "\n"
+                    + "model_list=" + mList + "\n"
+                    + "EOF\n";
+            runRoot(cfg);
+            runRoot("chmod 644 /data/local/tmp/htai_config.txt");
+        }).start();
+    }
+
+    private List<String> loadModelList() {
+        List<String> list = new ArrayList<>();
+        String saved = prefs.getString("model_list", "");
+        if (!saved.isEmpty()) {
+            for (String s : saved.split(",")) {
+                String t = s.trim();
+                if (!t.isEmpty()) list.add(t);
+            }
+        }
+        return list;
+    }
+
+    // ──────────────────────────────────────
+    // 附件处理逻辑 (为你加回来的功能！)
+    // ──────────────────────────────────────
+    private void showAttachMenu() {
+        new AlertDialog.Builder(this)
+                .setTitle("选择要注入底层记忆的附件")
+                .setItems(new String[]{"🖼️ 相册图片", "📎 文本文档"}, (d, w) -> {
+                    if (w == 0) pickImage();
+                    else if (w == 1) pickFile();
+                })
+                .show();
+    }
+
+    private void pickImage() {
+        Intent intent = new Intent(Intent.ACTION_PICK);
+        intent.setType("image/*");
+        startActivityForResult(intent, REQUEST_CODE_PICK_IMAGE);
+    }
+
+    private void pickFile() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("text/plain");
+        startActivityForResult(intent, REQUEST_CODE_PICK_FILE);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null) return;
+        Uri uri = data.getData();
+        if (uri == null) return;
+        if (requestCode == REQUEST_CODE_PICK_IMAGE) {
+            String b64 = imageUriToBase64(uri);
+            if (b64 != null) {
+                pendingImageBase64 = b64;
+                inputBox.setHint("已选图片: " + getFileName(uri) + "，输入调教描述后发送");
+                Toast.makeText(this, "图片已就绪", Toast.LENGTH_SHORT).show();
+            }
+        } else if (requestCode == REQUEST_CODE_PICK_FILE) {
+            String fc = readTextFile(uri);
+            if (fc != null) {
+                sendAttachmentAsMessage("用户上传了前置文档参考：" + getFileName(uri) + "\n内容如下：\n" + fc);
+            }
+        }
+    }
+
+    private void clearImagePreview() {
+        pendingImageBase64 = "";
+        previewImage.setImageBitmap(null);
+        imagePreviewBar.setVisibility(View.GONE);
+        inputBox.setHint("输入对 AI 的调教指令...");
+    }
+
+    private void showImagePreview(Bitmap thumb, String fileName) {
+        previewImage.setImageBitmap(thumb);
+        TextView nv = (TextView) imagePreviewBar.findViewWithTag("previewName");
+        if (nv != null) nv.setText("已选: " + fileName);
+        imagePreviewBar.setVisibility(View.VISIBLE);
+    }
+
+    private String imageUriToBase64(Uri uri) {
+        try {
+            InputStream is = getContentResolver().openInputStream(uri);
+            if (is == null) return null;
+            Bitmap orig = BitmapFactory.decodeStream(is);
+            is.close();
+            if (orig == null) return null;
+            Bitmap thumb = Bitmap.createScaledBitmap(orig, dpToPx(112), dpToPx(112), true);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            orig.compress(Bitmap.CompressFormat.JPEG, 80, baos);
+            byte[] bytes = baos.toByteArray();
+            orig.recycle();
+            showImagePreview(thumb, getFileName(uri));
+            return Base64.encodeToString(bytes, Base64.NO_WRAP);
+        } catch (Exception e) { return null; }
+    }
+
+    private String readTextFile(Uri uri) {
+        try {
+            InputStream is = getContentResolver().openInputStream(uri);
+            if (is == null) return null;
+            BufferedReader r = new BufferedReader(new InputStreamReader(is));
+            StringBuilder sb = new StringBuilder();
+            String l;
+            while ((l = r.readLine()) != null) sb.append(l).append("\n");
+            r.close();
+            return sb.toString().trim();
+        } catch (Exception e) { return null; }
+    }
+
+    private String getFileName(Uri uri) {
+        String name = null;
+        Cursor c = getContentResolver().query(uri, null, null, null, null);
+        if (c != null && c.moveToFirst()) {
+            int idx = c.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+            if (idx >= 0) name = c.getString(idx);
+            c.close();
+        }
+        if (name == null) name = uri.getLastPathSegment();
+        return name;
+    }
+
+    private void sendAttachmentAsMessage(String content) {
+        inputBox.setText(content);
+        sendMessage();
     }
 
     // ──────────────────────────────────────
@@ -214,7 +483,7 @@ public class MainActivity extends Activity {
                     ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前遥控: " + currentChatName);
                     loadHTMessagesRoot(currentChatId);
                     drawerLayout.closeDrawers();
-                    refreshDrawerList(); // 更新高亮状态
+                    refreshDrawerList(); 
                 });
                 drawerContent.addView(tv);
             }
@@ -243,8 +512,6 @@ public class MainActivity extends Activity {
                         displayMessage("system", content);
                     }
                 }
-                
-                // 滚动到底部
                 messageScrollView.postDelayed(() -> messageScrollView.fullScroll(View.FOCUS_DOWN), 100);
             } else {
                 displayMessage("system", "暂无与该好友的翻译记录");
@@ -255,7 +522,7 @@ public class MainActivity extends Activity {
     }
 
     // ──────────────────────────────────────
-    // 将调教指令直接暴力写入底层 JSON
+    // 将调教指令与附件暴力写入底层 JSON
     // ──────────────────────────────────────
     private void sendMessage() {
         if (currentChatId.isEmpty()) {
@@ -265,10 +532,16 @@ public class MainActivity extends Activity {
         }
 
         String text = inputBox.getText().toString().trim();
-        if (text.isEmpty()) return;
+        if (text.isEmpty() && pendingImageBase64.isEmpty()) return;
+        if (text.isEmpty() && !pendingImageBase64.isEmpty()) text = "请描述这张图片";
 
-        // 立即在界面上显示该指令
-        displayMessage("user", "[调教指令] " + text);
+        boolean hasImage = !pendingImageBase64.isEmpty();
+        if (hasImage) clearImagePreview();
+
+        // 统一格式化内容注入底层（包含附件提示文字）
+        String contentToInject = hasImage ? "[图片附件] " + text : text;
+
+        displayMessage("user", "[调教指令] " + contentToInject);
         inputBox.setText("");
 
         new Thread(() -> {
@@ -283,11 +556,10 @@ public class MainActivity extends Activity {
                 }
 
                 JSONObject entry = new JSONObject();
-                entry.put("role", "user"); // 作为 user 提示词强行插入
-                entry.put("content", text);
+                entry.put("role", "user"); 
+                entry.put("content", contentToInject); 
                 history.put(entry);
 
-                // 利用缓存目录中转，防止转义字符直接通过 Shell 写入报错
                 File tempFile = new File(getCacheDir(), "htai_temp.json");
                 BufferedWriter w = new BufferedWriter(new java.io.FileWriter(tempFile));
                 w.write(history.toString());
@@ -297,7 +569,7 @@ public class MainActivity extends Activity {
                 runRoot("chmod 666 " + path);
                 
                 mainHandler.post(() -> {
-                    displayMessage("system", "✅ 指令已静默注入！\n切回 HelloTalk 再次点击“译”按钮生效。");
+                    displayMessage("system", "✅ 指令及附件说明已静默注入！\n切回 HelloTalk 再次点击“译”按钮生效。");
                     messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
                 });
             } catch (Exception e) {
@@ -341,7 +613,6 @@ public class MainActivity extends Activity {
             row.addView(bubble);
             row.setGravity(Gravity.END);
         } else {
-            // System 提示消息
             bubble.setBackgroundColor(Color.parseColor("#FFF3CD"));
             bubble.setTextColor(Color.parseColor("#856404"));
             bubble.setTextSize(13f);
