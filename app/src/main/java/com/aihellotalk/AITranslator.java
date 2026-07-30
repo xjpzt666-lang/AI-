@@ -51,6 +51,7 @@ public class AITranslator {
     private static JSONObject friendsData = new JSONObject();
 
     // 只匹配平假名、片假名、半角片假名、长音符号
+    // 不再包含 CJK 统一汉字，避免中文被误判为日语
     private static final Pattern JAPANESE_PATTERN = Pattern.compile(
             "[\\u3040-\\u30FF\\uFF65-\\uFF9F\\u30FC]+"
     );
@@ -178,17 +179,26 @@ public class AITranslator {
     }
 
     // ──────────────────────────────────────
-    // 语言/文字检测
+    // 语言/文字检测（修复版）
     // ──────────────────────────────────────
 
+    /**
+     * 是否包含日语（仅平假名/片假名/半角片假名/长音符号）
+     * 不会把中文误判为日语
+     */
     public static boolean containsJapanese(String s) {
         if (s == null || s.isEmpty()) return false;
         return JAPANESE_PATTERN.matcher(s).find();
     }
 
+    /**
+     * 是否纯中文（包含CJK汉字，但不包含日语假名）
+     */
     public static boolean isChineseOnly(String s) {
         if (s == null || s.isEmpty()) return false;
+        // 如果包含日语假名，不算纯中文
         if (containsJapanese(s)) return false;
+        // 检查是否包含中日韩统一汉字
         for (char c : s.toCharArray()) {
             Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
             if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
@@ -474,11 +484,12 @@ public class AITranslator {
                         if (cur.equals("RU")) promptRU = sb.toString().trim();
                         cur = "UK";
                         sb.setLength(0);
-                    // ★ 新增：韩语和西班牙语分段
+                    // ★ 新增：韩语分段
                     } else if (line.startsWith("###KO###")) {
                         if (cur.equals("UK")) promptUK = sb.toString().trim();
                         cur = "KO";
                         sb.setLength(0);
+                    // ★ 新增：西班牙语分段
                     } else if (line.startsWith("###ES###")) {
                         if (cur.equals("KO")) promptKO = sb.toString().trim();
                         cur = "ES";
@@ -487,11 +498,13 @@ public class AITranslator {
                         sb.append(line).append("\n");
                     }
                 }
+                // 文件末尾的段落
                 if (cur.equals("ES")) promptES = sb.toString().trim();
                 r.close();
             }
         } catch (Exception ignored) {}
 
+        // 默认值（如果 prompt 文件缺失或段落为空）
         if (receivePrompt.isEmpty())
             receivePrompt = "你是一个社交情报传译员。代入对方身份，将外语翻译成地道有呼吸感的中文。";
         if (promptEN.isEmpty())
@@ -507,7 +520,7 @@ public class AITranslator {
             promptES = "你是社交嘴替。把中文转成地道西班牙语口语。4版本。格式：外文|中文大意|标签。";
     }
 
-    // ★ 修改：增加 ko 和 es 参数
+    // ★ 修改：参数从4个改为6个，增加 ko 和 es
     public static void savePrompts(String zh, String en, String ru, String uk, String ko, String es) {
         receivePrompt = zh;
         promptEN = en;
