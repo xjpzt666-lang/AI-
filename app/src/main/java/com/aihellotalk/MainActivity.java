@@ -282,11 +282,8 @@ public class MainActivity extends Activity {
                 }
             }
         }
-        // ★ 如果列表为空，不添加任何默认值，让 Spinner 显示空
         return list;
     }
-
-    // ---------- 以下方法保持不变，直接从原文件复制即可 ----------
 
     private void clearImagePreview() {
         pendingImageBase64 = "";
@@ -717,4 +714,78 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             removeLastSystemMessage();
             displayMessage("system", "❌ 构建请求失败: " + e.getMessage());
-            saveMessageToDb(current
+            saveMessageToDb(currentChatId, "system", "❌ 构建请求失败: " + e.getMessage());
+        }
+    }
+
+    // ---------------- 以下为被截断的必要辅助方法和内部类 ----------------
+
+    private void displayMessage(String role, String content) {
+        TextView tv = new TextView(this);
+        tv.setText(content);
+        tv.setTextSize(15f);
+        tv.setPadding(30, 20, 30, 20);
+        tv.setTextColor(Color.BLACK);
+        tv.setTextIsSelectable(true);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(16, 16, 16, 16);
+
+        if ("user".equals(role)) {
+            tv.setBackgroundColor(Color.parseColor("#C8E6C9"));
+            lp.gravity = Gravity.END;
+        } else if ("ai".equals(role)) {
+            tv.setBackgroundColor(Color.parseColor("#E0E0E0"));
+            lp.gravity = Gravity.START;
+        } else {
+            tv.setBackgroundColor(Color.parseColor("#FFCDD2"));
+            lp.gravity = Gravity.CENTER;
+            tv.setTag("system_loading");
+        }
+        tv.setLayoutParams(lp);
+        messageContainer.addView(tv);
+
+        // 自动滚动到底部
+        mainHandler.postDelayed(() -> {
+            messageScrollView.fullScroll(ScrollView.FOCUS_DOWN);
+        }, 100);
+    }
+
+    private void removeLastSystemMessage() {
+        int count = messageContainer.getChildCount();
+        if (count > 0) {
+            View lastView = messageContainer.getChildAt(count - 1);
+            if ("system_loading".equals(lastView.getTag())) {
+                messageContainer.removeViewAt(count - 1);
+            }
+        }
+    }
+
+    private int dpToPx(int dp) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
+    }
+
+    private String readConfig(String key) {
+        return prefs.getString(key, "");
+    }
+
+    class ChatSession {
+        String id;
+        String name;
+        ChatSession(String id, String name) {
+            this.id = id;
+            this.name = name;
+        }
+    }
+
+    class Message {
+        String role;
+        String content;
+        Message(String role, String content) {
+            this.role = role;
+            this.content = content;
+        }
+    }
+}
