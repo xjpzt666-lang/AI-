@@ -525,6 +525,12 @@ public class MainActivity extends Activity {
         if (text.isEmpty() && !pendingImageBase64.isEmpty()) text = "请描述这张图片";
         lastUserMessage = text;
 
+        // ★★★ 修复点：在发送前先记录是否有图片，然后立即隐藏预览条 ★★★
+        boolean hasImage = !pendingImageBase64.isEmpty();
+        if (hasImage) {
+            clearImagePreview(); // 立即隐藏预览条，防止用户重复点击
+        }
+
         if (currentChatId.isEmpty()) {
             String chatName = text.length() > 10 ? text.substring(0, 10) + "..." : text;
             String chatId = "chat_" + System.currentTimeMillis();
@@ -543,7 +549,7 @@ public class MainActivity extends Activity {
             refreshDrawerList();
         }
 
-        if (!pendingImageBase64.isEmpty()) {
+        if (hasImage) {
             displayMessage("user", "[图片] " + text);
             saveMessageToDb(currentChatId, "user", "[图片] " + text);
         } else {
@@ -588,7 +594,8 @@ public class MainActivity extends Activity {
             }
             JSONObject userMessage = new JSONObject();
             userMessage.put("role", "user");
-            if (!pendingImageBase64.isEmpty()) {
+            // ★★★ 修复点：使用 hasImage 判断，而不是 pendingImageBase64（已被清空）★★★
+            if (hasImage) {
                 JSONArray contentArray = new JSONArray();
                 JSONObject textPart = new JSONObject();
                 textPart.put("type", "text");
@@ -601,7 +608,6 @@ public class MainActivity extends Activity {
                 imagePart.put("image_url", imageUrl);
                 contentArray.put(imagePart);
                 userMessage.put("content", contentArray);
-                pendingImageBase64 = "";
             } else {
                 userMessage.put("content", text);
             }
