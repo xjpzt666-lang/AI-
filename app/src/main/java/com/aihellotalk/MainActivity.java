@@ -103,7 +103,6 @@ public class MainActivity extends Activity {
         modelLabel.setGravity(Gravity.CENTER_VERTICAL);
         modelLabel.setTag("modelLabel");
 
-        // ★ 重新加回来的设置菜单按钮
         Button rightMenuBtn = new Button(this);
         rightMenuBtn.setText("⋮");
         rightMenuBtn.setTextSize(24f);
@@ -113,7 +112,7 @@ public class MainActivity extends Activity {
         topBar.addView(leftMenuBtn);
         topBar.addView(title);
         topBar.addView(modelLabel);
-        topBar.addView(rightMenuBtn); // ★ 挂载到顶部栏
+        topBar.addView(rightMenuBtn);
         mainContent.addView(topBar);
 
         // 当前对话标题
@@ -266,9 +265,6 @@ public class MainActivity extends Activity {
         setContentView(drawerLayout);
     }
 
-    // ──────────────────────────────────────
-    // 弹出设置菜单 (★ 恢复的功能)
-    // ──────────────────────────────────────
     private void showPopupMenu(View v) {
         PopupMenu popup = new PopupMenu(this, v);
         popup.getMenu().add(0, 1, 0, "⚙️ 设置/API配置");
@@ -282,9 +278,6 @@ public class MainActivity extends Activity {
         popup.show();
     }
 
-    // ──────────────────────────────────────
-    // 基础配置读取与实时同步
-    // ──────────────────────────────────────
     private void loadConfigOnce() {
         cachedApiKey = prefs.getString("api_key", "");
         cachedApiUrl = prefs.getString("api_url", "");
@@ -333,9 +326,6 @@ public class MainActivity extends Activity {
         return list;
     }
 
-    // ──────────────────────────────────────
-    // 附件处理逻辑
-    // ──────────────────────────────────────
     private void showAttachMenu() {
         new AlertDialog.Builder(this)
                 .setTitle("选择要注入底层记忆的附件")
@@ -441,9 +431,6 @@ public class MainActivity extends Activity {
         sendMessage();
     }
 
-    // ──────────────────────────────────────
-    // Root 权限 Shell 执行
-    // ──────────────────────────────────────
     private String runRoot(String cmd) {
         try {
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
@@ -460,17 +447,12 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ──────────────────────────────────────
-    // Root 删除底层好友记忆逻辑
-    // ──────────────────────────────────────
     private void deleteHTChatRoot(ChatSession s) {
         new Thread(() -> {
             try {
-                // 1. 删除专属历史文件
                 String histPath = "/data/data/com.hellotalk/files/htai_hist_" + s.id + ".json";
                 runRoot("rm " + histPath);
 
-                // 2. 从好友列表中剔除
                 String friendsPath = "/data/data/com.hellotalk/files/htai_friends.json";
                 String jsonStr = runRoot("cat " + friendsPath);
                 if (jsonStr != null && !jsonStr.trim().isEmpty()) {
@@ -504,9 +486,6 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    // ──────────────────────────────────────
-    // 从底层读取 HelloTalk 好友
-    // ──────────────────────────────────────
     private void refreshDrawerList() {
         while (drawerContent.getChildCount() > 1) drawerContent.removeViewAt(1);
 
@@ -543,7 +522,6 @@ public class MainActivity extends Activity {
                 tv.setTextColor(Color.parseColor("#333333"));
                 if (s.id.equals(currentChatId)) tv.setBackgroundColor(Color.parseColor("#E3F2FD"));
                 
-                // 单击查看
                 tv.setOnClickListener(v -> {
                     currentChatId = s.id;
                     currentChatName = s.name;
@@ -553,7 +531,6 @@ public class MainActivity extends Activity {
                     refreshDrawerList(); 
                 });
 
-                // ★ 长按删除
                 tv.setOnLongClickListener(v -> {
                     new AlertDialog.Builder(MainActivity.this)
                             .setTitle("高能预警")
@@ -569,9 +546,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ──────────────────────────────────────
-    // 从底层读取该好友的翻译上下文
-    // ──────────────────────────────────────
     private void loadHTMessagesRoot(String chatId) {
         messageContainer.removeAllViews();
         try {
@@ -583,11 +557,15 @@ public class MainActivity extends Activity {
                     String role = obj.optString("role", "");
                     String content = obj.optString("content", "");
                     
+                    // ★ 核心修复区域 3：适配严格清洗后的身份
                     if ("user".equals(role)) {
-                        displayMessage("user", content);
+                        // 这是对方发来的，显示在左侧，带上“对方:”前缀方便你区分
+                        displayMessage("ai", "对方: " + content);
                     } else if ("assistant".equals(role)) {
-                        displayMessage("ai", content);
+                        // 这是你发出去的，显示在右侧绿色气泡
+                        displayMessage("user", content);
                     } else {
+                        // 这是系统或指令，居中显示
                         displayMessage("system", content);
                     }
                 }
@@ -600,9 +578,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ──────────────────────────────────────
-    // 将调教指令与附件暴力写入底层 JSON
-    // ──────────────────────────────────────
     private void sendMessage() {
         if (currentChatId.isEmpty()) {
             Toast.makeText(this, "请先在左侧选择要调教的好友", Toast.LENGTH_SHORT).show();
@@ -617,10 +592,9 @@ public class MainActivity extends Activity {
         boolean hasImage = !pendingImageBase64.isEmpty();
         if (hasImage) clearImagePreview();
 
-        // 统一格式化内容注入底层（包含附件提示文字）
         String contentToInject = hasImage ? "[图片附件] " + text : text;
 
-        displayMessage("user", "[调教指令] " + contentToInject);
+        displayMessage("system", "【翻译调教指令】 " + contentToInject);
         inputBox.setText("");
 
         new Thread(() -> {
@@ -635,8 +609,9 @@ public class MainActivity extends Activity {
                 }
 
                 JSONObject entry = new JSONObject();
-                entry.put("role", "user"); 
-                entry.put("content", contentToInject); 
+                // ★ 核心修复区域 4：调教指令升级为 system 最高权限
+                entry.put("role", "system"); 
+                entry.put("content", "【翻译调教指令】 " + contentToInject); 
                 history.put(entry);
 
                 File tempFile = new File(getCacheDir(), "htai_temp.json");
@@ -657,9 +632,6 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    // ──────────────────────────────────────
-    // 渲染聊天气泡
-    // ──────────────────────────────────────
     private void displayMessage(String role, String content) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
