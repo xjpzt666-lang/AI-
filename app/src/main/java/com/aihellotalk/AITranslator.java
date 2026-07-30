@@ -570,10 +570,13 @@ public class AITranslator {
                 JSONObject obj = history.getJSONObject(i);
                 String role = obj.optString("role", "");
                 String content = obj.optString("content", "");
+                // ★ 适配全新的身份标签
                 if ("user".equals(role)) {
+                    list.add(new String[]{"对方", content});
+                } else if ("assistant".equals(role)) {
                     list.add(new String[]{"我", content});
                 } else {
-                    list.add(new String[]{"AI", content});
+                    list.add(new String[]{"指令", content});
                 }
             } catch (Exception ignored) {}
         }
