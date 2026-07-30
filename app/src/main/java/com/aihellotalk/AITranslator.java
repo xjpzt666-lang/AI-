@@ -43,6 +43,8 @@ public class AITranslator {
     public static String promptEN = "";
     public static String promptRU = "";
     public static String promptUK = "";
+    public static String promptKO = "";
+    public static String promptES = "";
 
     private static File friendsFile = new File("/data/data/com.hellotalk/files/htai_friends.json");
     private static JSONObject friendsData = new JSONObject();
@@ -249,6 +251,12 @@ public class AITranslator {
                     break;
                 case "uk":
                     sysPrompt = promptUK;
+                    break;
+                case "ko":
+                    sysPrompt = promptKO;
+                    break;
+                case "es":
+                    sysPrompt = promptES;
                     break;
                 default:
                     sysPrompt = promptEN;
@@ -464,11 +472,23 @@ public class AITranslator {
                         if (cur.equals("RU")) promptRU = sb.toString().trim();
                         cur = "UK";
                         sb.setLength(0);
+                    } else if (line.startsWith("###KO###")) {
+                        if (cur.equals("UK")) promptUK = sb.toString().trim();
+                        cur = "KO";
+                        sb.setLength(0);
+                    } else if (line.startsWith("###ES###")) {
+                        if (cur.equals("KO")) promptKO = sb.toString().trim();
+                        cur = "ES";
+                        sb.setLength(0);
                     } else {
                         sb.append(line).append("\n");
                     }
                 }
+                
                 if (cur.equals("UK")) promptUK = sb.toString().trim();
+                else if (cur.equals("KO")) promptKO = sb.toString().trim();
+                else if (cur.equals("ES")) promptES = sb.toString().trim();
+                
                 r.close();
             }
         } catch (Exception ignored) {}
@@ -481,6 +501,10 @@ public class AITranslator {
             promptRU = "你是社交嘴替。把中文转成地道俄语口语。4版本。格式：外文|中文大意|标签。";
         if (promptUK.isEmpty())
             promptUK = "你是社交嘴替。把中文转成地道乌克兰语口语。4版本。格式：外文|中文大意|标签。";
+        if (promptKO.isEmpty())
+            promptKO = "你是社交嘴替。把中文转成地道韩语口语。4版本。格式：外文|中文大意|标签。";
+        if (promptES.isEmpty())
+            promptES = "你是社交嘴替。把中文转成地道西班牙语口语。4版本。格式：外文|中文大意|标签。";
     }
 
     public static void savePrompts(String zh, String en, String ru, String uk) {
@@ -488,6 +512,15 @@ public class AITranslator {
         promptEN = en;
         promptRU = ru;
         promptUK = uk;
+    }
+
+    public static void savePrompts(String zh, String en, String ru, String uk, String ko, String es) {
+        receivePrompt = zh;
+        promptEN = en;
+        promptRU = ru;
+        promptUK = uk;
+        promptKO = ko;
+        promptES = es;
     }
 
     // ──────────────────────────────────────
