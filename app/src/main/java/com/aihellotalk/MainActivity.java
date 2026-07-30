@@ -9,6 +9,8 @@ import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
@@ -46,25 +48,26 @@ public class MainActivity extends Activity {
     private Button attachBtn;
     private LinearLayout drawerContent;
 
+    // 图片预览相关
+    private LinearLayout imagePreviewBar;
+    private ImageView previewImage;
+    private ImageButton previewCloseBtn;
+    private String pendingImageBase64 = "";
+
     private String currentChatId = "";
     private String currentChatName = "";
     private List<ChatSession> chatSessions = new ArrayList<>();
-
     private String lastUserMessage = "";
 
     private OkHttpClient httpClient;
     private Handler mainHandler;
     private DatabaseHelper dbHelper;
-
     private static final int MAX_HISTORY_ROUNDS = 100;
 
     private String cachedApiKey = "";
     private String cachedApiUrl = "";
     private String cachedModel = "";
     private boolean configLoaded = false;
-
-    // 临时存储待发送的图片 Base64 数据
-    private String pendingImageBase64 = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -81,11 +84,11 @@ public class MainActivity extends Activity {
         loadChatSessions();
 
         drawerLayout = new DrawerLayout(this);
-
         LinearLayout mainContent = new LinearLayout(this);
         mainContent.setOrientation(LinearLayout.VERTICAL);
         mainContent.setBackgroundColor(Color.WHITE);
 
+        // 顶部栏
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setPadding(16, 16, 16, 16);
@@ -115,6 +118,7 @@ public class MainActivity extends Activity {
         topBar.addView(rightMenuBtn);
         mainContent.addView(topBar);
 
+        // 当前对话标题
         TextView chatTitle = new TextView(this);
         chatTitle.setText("当前: 暂无对话");
         chatTitle.setTag("chatTitle");
@@ -124,6 +128,7 @@ public class MainActivity extends Activity {
         chatTitle.setBackgroundColor(Color.parseColor("#F9F9F9"));
         mainContent.addView(chatTitle);
 
+        // 消息滚动区
         messageScrollView = new ScrollView(this);
         messageScrollView.setLayoutParams(new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
@@ -134,6 +139,39 @@ public class MainActivity extends Activity {
         messageScrollView.addView(messageContainer);
         mainContent.addView(messageScrollView);
 
+        // 图片预览条（默认隐藏）
+        imagePreviewBar = new LinearLayout(this);
+        imagePreviewBar.setOrientation(LinearLayout.HORIZONTAL);
+        imagePreviewBar.setPadding(8, 4, 8, 4);
+        imagePreviewBar.setBackgroundColor(Color.parseColor("#EEEEEE"));
+        imagePreviewBar.setVisibility(View.GONE);
+
+        previewImage = new ImageView(this);
+        previewImage.setLayoutParams(new LinearLayout.LayoutParams(dpToPx(56), dpToPx(56)));
+        previewImage.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        previewImage.setPadding(4, 4, 4, 4);
+
+        TextView previewName = new TextView(this);
+        previewName.setText("已选择图片");
+        previewName.setTextSize(13f);
+        previewName.setTextColor(Color.DKGRAY);
+        previewName.setGravity(Gravity.CENTER_VERTICAL);
+        previewName.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        previewName.setPadding(12, 0, 0, 0);
+        previewName.setTag("previewName");
+
+        previewCloseBtn = new ImageButton(this);
+        previewCloseBtn.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
+        previewCloseBtn.setBackgroundColor(Color.TRANSPARENT);
+        previewCloseBtn.setLayoutParams(new LinearLayout.LayoutParams(dpToPx(44), dpToPx(44)));
+        previewCloseBtn.setOnClickListener(v -> clearImagePreview());
+
+        imagePreviewBar.addView(previewImage);
+        imagePreviewBar.addView(previewName);
+        imagePreviewBar.addView(previewCloseBtn);
+        mainContent.addView(imagePreviewBar);
+
+        // 底部输入栏
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setPadding(8, 8, 8, 8);
@@ -141,7 +179,7 @@ public class MainActivity extends Activity {
 
         attachBtn = new Button(this);
         attachBtn.setText("+");
-        attachBtn.setTextSize(24f);
+        attachBtn.setTextSize(26f);
         attachBtn.setBackgroundColor(Color.TRANSPARENT);
         attachBtn.setOnClickListener(v -> showAttachMenu());
 
@@ -149,8 +187,7 @@ public class MainActivity extends Activity {
         inputBox.setHint("输入消息...");
         inputBox.setBackgroundColor(Color.WHITE);
         inputBox.setPadding(16, 12, 16, 12);
-        inputBox.setLayoutParams(new LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        inputBox.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         sendBtn = new Button(this);
         sendBtn.setText("发送");
@@ -163,20 +200,21 @@ public class MainActivity extends Activity {
 
         drawerLayout.addView(mainContent);
 
+        // 侧滑菜单
         drawerContent = new LinearLayout(this);
         drawerContent.setOrientation(LinearLayout.VERTICAL);
-        drawerContent.setPadding(20, 50, 20, 20);
+        drawerContent.setPadding(20, 70, 20, 20);
         drawerContent.setBackgroundColor(Color.parseColor("#FAFAFA"));
 
-        DrawerLayout.LayoutParams lp = new DrawerLayout.LayoutParams(dpToPx(280), ViewGroup.LayoutParams.MATCH_PARENT);
+        DrawerLayout.LayoutParams lp = new DrawerLayout.LayoutParams(dpToPx(300), ViewGroup.LayoutParams.MATCH_PARENT);
         lp.gravity = Gravity.LEFT;
         drawerContent.setLayoutParams(lp);
 
         TextView drawerTitle = new TextView(this);
         drawerTitle.setText("对话列表");
-        drawerTitle.setTextSize(16f);
+        drawerTitle.setTextSize(18f);
         drawerTitle.setTextColor(Color.BLACK);
-        drawerTitle.setPadding(0, 0, 0, 20);
+        drawerTitle.setPadding(0, 0, 0, 28);
         drawerContent.addView(drawerTitle);
 
         refreshDrawerList();
@@ -185,16 +223,51 @@ public class MainActivity extends Activity {
         setContentView(drawerLayout);
     }
 
+    private void clearImagePreview() {
+        pendingImageBase64 = "";
+        previewImage.setImageBitmap(null);
+        imagePreviewBar.setVisibility(View.GONE);
+        inputBox.setHint("输入消息...");
+    }
+
+    private void showImagePreview(Bitmap thumb, String fileName) {
+        previewImage.setImageBitmap(thumb);
+        TextView nameView = (TextView) imagePreviewBar.findViewWithTag("previewName");
+        if (nameView != null) nameView.setText("已选择: " + fileName);
+        imagePreviewBar.setVisibility(View.VISIBLE);
+    }
+
+    private String imageUriToBase64(Uri uri) {
+        try {
+            InputStream inputStream = getContentResolver().openInputStream(uri);
+            if (inputStream == null) return null;
+            Bitmap original = BitmapFactory.decodeStream(inputStream);
+            inputStream.close();
+            if (original == null) return null;
+
+            Bitmap thumb = Bitmap.createScaledBitmap(original, dpToPx(112), dpToPx(112), true);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            original.compress(Bitmap.CompressFormat.JPEG, 80, baos);
+            byte[] imageBytes = baos.toByteArray();
+            original.recycle();
+
+            String fileName = getFileName(uri);
+            showImagePreview(thumb, fileName);
+            return Base64.encodeToString(imageBytes, Base64.NO_WRAP);
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
     private void loadConfigOnce() {
         SharedPreferences prefs = getSharedPreferences("htai_settings", MODE_PRIVATE);
         cachedApiKey = prefs.getString("api_key", "");
         cachedApiUrl = prefs.getString("api_url", "");
         cachedModel = prefs.getString("model", "");
-
         if (cachedApiKey.isEmpty()) cachedApiKey = readConfig("api_key");
         if (cachedApiUrl.isEmpty()) cachedApiUrl = readConfig("api_url");
         if (cachedModel.isEmpty()) cachedModel = readConfig("model");
-
         if (cachedApiUrl.isEmpty()) cachedApiUrl = "https://www.wintoken.dev";
         configLoaded = true;
     }
@@ -215,9 +288,7 @@ public class MainActivity extends Activity {
     private void loadMessagesFromDb(String chatId) {
         messageContainer.removeAllViews();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        Cursor cursor = db.rawQuery(
-                "SELECT role, content FROM messages WHERE chat_id=? ORDER BY timestamp ASC",
-                new String[]{chatId});
+        Cursor cursor = db.rawQuery("SELECT role, content FROM messages WHERE chat_id=? ORDER BY timestamp ASC", new String[]{chatId});
         while (cursor.moveToNext()) {
             String role = cursor.getString(0);
             String content = cursor.getString(1);
@@ -241,10 +312,7 @@ public class MainActivity extends Activity {
     private List<Message> getRecentHistory(String chatId, int maxRounds) {
         List<Message> history = new ArrayList<>();
         SQLiteDatabase db = dbHelper.getReadableDatabase();
-        Cursor cursor = db.rawQuery(
-                "SELECT role, content FROM messages WHERE chat_id=? ORDER BY timestamp ASC",
-                new String[]{chatId});
-
+        Cursor cursor = db.rawQuery("SELECT role, content FROM messages WHERE chat_id=? ORDER BY timestamp ASC", new String[]{chatId});
         List<Message> allMessages = new ArrayList<>();
         while (cursor.moveToNext()) {
             String role = cursor.getString(0);
@@ -253,16 +321,12 @@ public class MainActivity extends Activity {
         }
         cursor.close();
         db.close();
-
         int total = allMessages.size();
         int start = Math.max(0, total - maxRounds * 2);
-        for (int i = start; i < total; i++) {
-            history.add(allMessages.get(i));
-        }
+        for (int i = start; i < total; i++) history.add(allMessages.get(i));
         return history;
     }
 
-    // ── 附件菜单 ──
     private void showAttachMenu() {
         String[] options = {"🖼️ 相册", "📎 文件"};
         new AlertDialog.Builder(this)
@@ -291,17 +355,14 @@ public class MainActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK || data == null) return;
-
         Uri uri = data.getData();
         if (uri == null) return;
 
         if (requestCode == REQUEST_CODE_PICK_IMAGE) {
-            // 将图片转换为 Base64 编码
             String base64 = imageUriToBase64(uri);
             if (base64 != null) {
                 pendingImageBase64 = base64;
                 String fileName = getFileName(uri);
-                // 在输入框显示提示，等待用户输入文字后一起发送
                 inputBox.setHint("已选择图片: " + fileName + "，输入描述后发送");
                 Toast.makeText(this, "已选择图片，输入文字后发送", Toast.LENGTH_SHORT).show();
             } else {
@@ -319,39 +380,15 @@ public class MainActivity extends Activity {
         }
     }
 
-    // 将图片 URI 转换为 Base64 字符串
-    private String imageUriToBase64(Uri uri) {
-        try {
-            InputStream inputStream = getContentResolver().openInputStream(uri);
-            if (inputStream == null) return null;
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            byte[] buffer = new byte[4096];
-            int bytesRead;
-            while ((bytesRead = inputStream.read(buffer)) != -1) {
-                baos.write(buffer, 0, bytesRead);
-            }
-            inputStream.close();
-            byte[] imageBytes = baos.toByteArray();
-            return Base64.encodeToString(imageBytes, Base64.NO_WRAP);
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
-    }
-
     private String getFileName(Uri uri) {
         String fileName = null;
         Cursor cursor = getContentResolver().query(uri, null, null, null, null);
         if (cursor != null && cursor.moveToFirst()) {
             int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
-            if (nameIndex >= 0) {
-                fileName = cursor.getString(nameIndex);
-            }
+            if (nameIndex >= 0) fileName = cursor.getString(nameIndex);
             cursor.close();
         }
-        if (fileName == null) {
-            fileName = uri.getLastPathSegment();
-        }
+        if (fileName == null) fileName = uri.getLastPathSegment();
         return fileName;
     }
 
@@ -362,9 +399,7 @@ public class MainActivity extends Activity {
             BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
             StringBuilder sb = new StringBuilder();
             String line;
-            while ((line = reader.readLine()) != null) {
-                sb.append(line).append("\n");
-            }
+            while ((line = reader.readLine()) != null) sb.append(line).append("\n");
             reader.close();
             return sb.toString().trim();
         } catch (Exception e) {
@@ -379,10 +414,7 @@ public class MainActivity extends Activity {
     }
 
     private void refreshDrawerList() {
-        while (drawerContent.getChildCount() > 1) {
-            drawerContent.removeViewAt(1);
-        }
-
+        while (drawerContent.getChildCount() > 1) drawerContent.removeViewAt(1);
         if (chatSessions.isEmpty()) {
             TextView emptyHint = new TextView(this);
             emptyHint.setText("发送第一条消息后自动创建");
@@ -395,17 +427,10 @@ public class MainActivity extends Activity {
                 TextView itemView = new TextView(this);
                 itemView.setText("💬 " + session.name);
                 itemView.setTextSize(16f);
-                itemView.setPadding(20, 25, 20, 25);
+                itemView.setPadding(20, 22, 20, 22);
                 itemView.setTextColor(Color.BLACK);
-
-                if (session.id.equals(currentChatId)) {
-                    itemView.setBackgroundColor(Color.parseColor("#E3F2FD"));
-                }
-
-                itemView.setOnClickListener(v -> {
-                    switchToChat(session);
-                    drawerLayout.closeDrawers();
-                });
+                if (session.id.equals(currentChatId)) itemView.setBackgroundColor(Color.parseColor("#E3F2FD"));
+                itemView.setOnClickListener(v -> { switchToChat(session); drawerLayout.closeDrawers(); });
                 itemView.setOnLongClickListener(v -> {
                     String[] options = {"重命名", "删除"};
                     new AlertDialog.Builder(MainActivity.this)
@@ -413,8 +438,7 @@ public class MainActivity extends Activity {
                             .setItems(options, (dialog, which) -> {
                                 if (which == 0) showRenameDialog(session);
                                 else if (which == 1) deleteChat(session);
-                            })
-                            .show();
+                            }).show();
                     return true;
                 });
                 drawerContent.addView(itemView);
@@ -427,7 +451,6 @@ public class MainActivity extends Activity {
         db.delete("messages", "chat_id=?", new String[]{session.id});
         db.delete("chats", "id=?", new String[]{session.id});
         db.close();
-
         chatSessions.remove(session);
         if (currentChatId.equals(session.id)) {
             currentChatId = "";
@@ -491,8 +514,7 @@ public class MainActivity extends Activity {
     private void switchToChat(ChatSession session) {
         currentChatId = session.id;
         currentChatName = session.name;
-        TextView chatTitle = (TextView) drawerLayout.findViewWithTag("chatTitle");
-        if (chatTitle != null) chatTitle.setText("当前: " + currentChatName);
+        ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: " + currentChatName);
         loadMessagesFromDb(currentChatId);
         refreshDrawerList();
     }
@@ -500,18 +522,12 @@ public class MainActivity extends Activity {
     private void sendMessage() {
         String text = inputBox.getText().toString().trim();
         if (text.isEmpty() && pendingImageBase64.isEmpty()) return;
-
-        // 如果选择了图片但没有输入文字，使用默认提示
-        if (text.isEmpty() && !pendingImageBase64.isEmpty()) {
-            text = "请描述这张图片";
-        }
-
+        if (text.isEmpty() && !pendingImageBase64.isEmpty()) text = "请描述这张图片";
         lastUserMessage = text;
 
         if (currentChatId.isEmpty()) {
             String chatName = text.length() > 10 ? text.substring(0, 10) + "..." : text;
             String chatId = "chat_" + System.currentTimeMillis();
-
             SQLiteDatabase db = dbHelper.getWritableDatabase();
             ContentValues cv = new ContentValues();
             cv.put("id", chatId);
@@ -519,18 +535,14 @@ public class MainActivity extends Activity {
             cv.put("updated_at", System.currentTimeMillis());
             db.insert("chats", null, cv);
             db.close();
-
             ChatSession newSession = new ChatSession(chatId, chatName);
             chatSessions.add(newSession);
             currentChatId = chatId;
             currentChatName = chatName;
-
-            TextView chatTitle = (TextView) drawerLayout.findViewWithTag("chatTitle");
-            if (chatTitle != null) chatTitle.setText("当前: " + currentChatName);
+            ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前: " + currentChatName);
             refreshDrawerList();
         }
 
-        // 显示用户消息（如果是图片，显示提示）
         if (!pendingImageBase64.isEmpty()) {
             displayMessage("user", "[图片] " + text);
             saveMessageToDb(currentChatId, "user", "[图片] " + text);
@@ -544,78 +556,55 @@ public class MainActivity extends Activity {
         String apiKey = cachedApiKey;
         String apiUrl = cachedApiUrl;
         String model = cachedModel;
-
         if (apiKey.isEmpty()) {
             displayMessage("system", "⚠️ 请先在设置中填写 API Key");
             saveMessageToDb(currentChatId, "system", "⚠️ 请先在设置中填写 API Key");
             return;
         }
-        if (apiUrl.isEmpty()) {
-            apiUrl = "https://www.wintoken.dev";
-        }
+        if (apiUrl.isEmpty()) apiUrl = "https://www.wintoken.dev";
         if (model.isEmpty()) {
             displayMessage("system", "⚠️ 请先在设置中选择模型");
             saveMessageToDb(currentChatId, "system", "⚠️ 请先在设置中选择模型");
             return;
         }
-
         if (!apiUrl.endsWith("/chat/completions")) {
-            if (apiUrl.endsWith("/v1")) {
-                apiUrl = apiUrl + "/chat/completions";
-            } else if (!apiUrl.endsWith("/")) {
-                apiUrl = apiUrl + "/v1/chat/completions";
-            } else {
-                apiUrl = apiUrl + "v1/chat/completions";
-            }
+            if (apiUrl.endsWith("/v1")) apiUrl += "/chat/completions";
+            else if (!apiUrl.endsWith("/")) apiUrl += "/v1/chat/completions";
+            else apiUrl += "v1/chat/completions";
         }
 
         displayMessage("system", "🤔 正在思考...");
-
         List<Message> history = getRecentHistory(currentChatId, MAX_HISTORY_ROUNDS);
 
         try {
             JSONObject requestBody = new JSONObject();
             requestBody.put("model", model);
-
             JSONArray messages = new JSONArray();
-
-            // 添加历史消息
             for (Message msg : history) {
                 JSONObject histMsg = new JSONObject();
-                String apiRole = msg.role.equals("ai") ? "assistant" : msg.role;
-                histMsg.put("role", apiRole);
+                histMsg.put("role", msg.role.equals("ai") ? "assistant" : msg.role);
                 histMsg.put("content", msg.content);
                 messages.put(histMsg);
             }
-
-            // 构造当前用户消息（支持多模态）
             JSONObject userMessage = new JSONObject();
             userMessage.put("role", "user");
-
             if (!pendingImageBase64.isEmpty()) {
-                // 多模态消息：包含文字和图片
                 JSONArray contentArray = new JSONArray();
-
-                // 文字部分
                 JSONObject textPart = new JSONObject();
                 textPart.put("type", "text");
                 textPart.put("text", text);
                 contentArray.put(textPart);
-
-                // 图片部分
                 JSONObject imagePart = new JSONObject();
                 imagePart.put("type", "image_url");
                 JSONObject imageUrl = new JSONObject();
                 imageUrl.put("url", "data:image/jpeg;base64," + pendingImageBase64);
                 imagePart.put("image_url", imageUrl);
                 contentArray.put(imagePart);
-
                 userMessage.put("content", contentArray);
-                pendingImageBase64 = ""; // 发送后清除
+                pendingImageBase64 = "";
             } else {
                 userMessage.put("content", text);
             }
-
             messages.put(userMessage);
             requestBody.put("messages", messages);
 
@@ -635,7 +624,6 @@ public class MainActivity extends Activity {
                         saveMessageToDb(currentChatId, "system", "❌ 请求失败: " + e.getMessage());
                     });
                 }
-
                 @Override
                 public void onResponse(Call call, Response response) throws IOException {
                     String responseBody = response.body().string();
@@ -644,10 +632,7 @@ public class MainActivity extends Activity {
                         if (response.isSuccessful()) {
                             try {
                                 JSONObject json = new JSONObject(responseBody);
-                                String reply = json.getJSONArray("choices")
-                                        .getJSONObject(0)
-                                        .getJSONObject("message")
-                                        .getString("content");
+                                String reply = json.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
                                 displayMessage("ai", reply);
                                 saveMessageToDb(currentChatId, "ai", reply);
                             } catch (Exception e) {
@@ -661,7 +646,6 @@ public class MainActivity extends Activity {
                     });
                 }
             });
-
         } catch (Exception e) {
             removeLastSystemMessage();
             displayMessage("system", "❌ 构建请求失败: " + e.getMessage());
@@ -670,10 +654,7 @@ public class MainActivity extends Activity {
     }
 
     private void regenerateAnswer() {
-        if (lastUserMessage.isEmpty()) {
-            Toast.makeText(this, "没有可重新回答的消息", Toast.LENGTH_SHORT).show();
-            return;
-        }
+        if (lastUserMessage.isEmpty()) { Toast.makeText(this, "没有可重新回答的消息", Toast.LENGTH_SHORT).show(); return; }
         removeLastAiMessage();
         inputBox.setText(lastUserMessage);
         sendMessage();
@@ -688,8 +669,7 @@ public class MainActivity extends Activity {
                     TextView bubble = (TextView) row.getChildAt(0);
                     String text = bubble.getText().toString();
                     if (!text.contains("正在思考") && !text.contains("⚠️") && !text.contains("❌")) {
-                        if (bubble.getCurrentTextColor() == Color.parseColor("#E8E8E8") ||
-                                bubble.getBackground() != null) {
+                        if (bubble.getCurrentTextColor() == Color.parseColor("#E8E8E8") || bubble.getBackground() != null) {
                             messageContainer.removeViewAt(i);
                             return;
                         }
@@ -701,7 +681,6 @@ public class MainActivity extends Activity {
 
     private void displayMessage(String role, String content) {
         String filteredContent = content.replaceAll("[*\\-#：；—]", "");
-
         LinearLayout msgRow = new LinearLayout(this);
         msgRow.setOrientation(LinearLayout.HORIZONTAL);
         msgRow.setPadding(0, 8, 0, 8);
@@ -709,9 +688,7 @@ public class MainActivity extends Activity {
         if ("ai".equals(role)) {
             LinearLayout bubbleWrapper = new LinearLayout(this);
             bubbleWrapper.setOrientation(LinearLayout.VERTICAL);
-            bubbleWrapper.setLayoutParams(new LinearLayout.LayoutParams(
-                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
+            bubbleWrapper.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             TextView bubble = new TextView(this);
             bubble.setText(filteredContent);
             bubble.setTextSize(15f);
@@ -719,23 +696,17 @@ public class MainActivity extends Activity {
             bubble.setLineSpacing(4f, 1f);
             bubble.setBackgroundColor(Color.parseColor("#E8E8E8"));
             bubble.setTextIsSelectable(true);
-
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.65);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.7);
             bubble.setLayoutParams(lp);
-
             bubbleWrapper.addView(bubble);
             msgRow.addView(bubbleWrapper);
-
             Button rotateBtn = new Button(this);
             rotateBtn.setText("🔄");
             rotateBtn.setTextSize(18f);
             rotateBtn.setBackgroundColor(Color.TRANSPARENT);
             rotateBtn.setOnClickListener(v -> regenerateAnswer());
             msgRow.addView(rotateBtn);
-
             msgRow.setGravity(Gravity.START);
         } else if ("user".equals(role)) {
             TextView bubble = new TextView(this);
@@ -745,13 +716,9 @@ public class MainActivity extends Activity {
             bubble.setLineSpacing(4f, 1f);
             bubble.setBackgroundColor(Color.parseColor("#DCF8C6"));
             bubble.setTextIsSelectable(true);
-
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.65);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.7);
             bubble.setLayoutParams(lp);
-
             LinearLayout spacer = new LinearLayout(this);
             spacer.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             msgRow.addView(spacer);
@@ -765,17 +732,12 @@ public class MainActivity extends Activity {
             bubble.setLineSpacing(4f, 1f);
             bubble.setBackgroundColor(Color.parseColor("#FFF3CD"));
             bubble.setTextIsSelectable(true);
-
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.width = (int) (getResources().getDisplayMetrics().widthPixels * 0.65);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.75);
             bubble.setLayoutParams(lp);
-
             msgRow.addView(bubble);
             msgRow.setGravity(Gravity.CENTER);
         }
-
         messageContainer.addView(msgRow);
         messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
     }
@@ -788,9 +750,8 @@ public class MainActivity extends Activity {
             if (lastRow.getChildCount() > 0 && lastRow.getChildAt(0) instanceof TextView) {
                 TextView lastBubble = (TextView) lastRow.getChildAt(0);
                 String text = lastBubble.getText().toString();
-                if (text.contains("正在思考") || text.contains("⚠️") || text.contains("❌")) {
+                if (text.contains("正在思考") || text.contains("⚠️") || text.contains("❌"))
                     messageContainer.removeViewAt(messageContainer.getChildCount() - 1);
-                }
             }
         }
     }
@@ -801,14 +762,10 @@ public class MainActivity extends Activity {
             BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
             String line;
             while ((line = r.readLine()) != null) {
-                if (line.startsWith(key + "=")) {
-                    return line.substring(key.length() + 1).trim();
-                }
+                if (line.startsWith(key + "=")) return line.substring(key.length() + 1).trim();
             }
             p.waitFor();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        } catch (Exception e) { e.printStackTrace(); }
         return "";
     }
 
@@ -816,52 +773,21 @@ public class MainActivity extends Activity {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
     }
 
-    static class ChatSession {
-        String id;
-        String name;
-        ChatSession(String id, String name) {
-            this.id = id;
-            this.name = name;
-        }
-    }
-
-    static class Message {
-        String role;
-        String content;
-        Message(String role, String content) {
-            this.role = role;
-            this.content = content;
-        }
-    }
+    static class ChatSession { String id; String name; ChatSession(String id, String name) { this.id = id; this.name = name; } }
+    static class Message { String role; String content; Message(String role, String content) { this.role = role; this.content = content; } }
 
     static class DatabaseHelper extends SQLiteOpenHelper {
         private static final String DB_NAME = "chat_history.db";
         private static final int DB_VERSION = 1;
-
-        DatabaseHelper(Context context) {
-            super(context, DB_NAME, null, DB_VERSION);
-        }
-
+        DatabaseHelper(Context context) { super(context, DB_NAME, null, DB_VERSION); }
         @Override
         public void onCreate(SQLiteDatabase db) {
-            db.execSQL("CREATE TABLE chats (" +
-                    "id TEXT PRIMARY KEY, " +
-                    "name TEXT NOT NULL, " +
-                    "updated_at INTEGER NOT NULL)");
-            db.execSQL("CREATE TABLE messages (" +
-                    "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
-                    "chat_id TEXT NOT NULL, " +
-                    "role TEXT NOT NULL, " +
-                    "content TEXT NOT NULL, " +
-                    "timestamp INTEGER NOT NULL, " +
-                    "FOREIGN KEY (chat_id) REFERENCES chats(id))");
+            db.execSQL("CREATE TABLE chats (id TEXT PRIMARY KEY, name TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+            db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, timestamp INTEGER NOT NULL, FOREIGN KEY (chat_id) REFERENCES chats(id))");
         }
-
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-            db.execSQL("DROP TABLE IF EXISTS messages");
-            db.execSQL("DROP TABLE IF EXISTS chats");
-            onCreate(db);
+            db.execSQL("DROP TABLE IF EXISTS messages"); db.execSQL("DROP TABLE IF EXISTS chats"); onCreate(db);
         }
     }
 }
