@@ -557,15 +557,11 @@ public class MainActivity extends Activity {
                     String role = obj.optString("role", "");
                     String content = obj.optString("content", "");
                     
-                    // ★ 核心修复区域 3：适配严格清洗后的身份
                     if ("user".equals(role)) {
-                        // 这是对方发来的，显示在左侧，带上“对方:”前缀方便你区分
                         displayMessage("ai", "对方: " + content);
                     } else if ("assistant".equals(role)) {
-                        // 这是你发出去的，显示在右侧绿色气泡
                         displayMessage("user", content);
                     } else {
-                        // 这是系统或指令，居中显示
                         displayMessage("system", content);
                     }
                 }
@@ -590,11 +586,16 @@ public class MainActivity extends Activity {
         if (text.isEmpty() && !pendingImageBase64.isEmpty()) text = "请描述这张图片";
 
         boolean hasImage = !pendingImageBase64.isEmpty();
+
+        // ★ 核心修复：把真实 Base64 塞进底层的特制标签里，让 AITranslator 去解析！
+        String contentToInject = hasImage ? "[IMAGE_BASE64:" + pendingImageBase64 + "]" + text : text;
+
         if (hasImage) clearImagePreview();
 
-        String contentToInject = hasImage ? "[图片附件] " + text : text;
-
-        displayMessage("system", "【翻译调教指令】 " + contentToInject);
+        // 界面显示的时候把超长 Base64 去掉，否则 UI 会卡死
+        String uiDisplay = hasImage ? "【附图调教】 " + text : "【调教指令】 " + text;
+        displayMessage("system", uiDisplay);
+        
         inputBox.setText("");
 
         new Thread(() -> {
@@ -609,9 +610,8 @@ public class MainActivity extends Activity {
                 }
 
                 JSONObject entry = new JSONObject();
-                // ★ 核心修复区域 4：调教指令升级为 system 最高权限
                 entry.put("role", "system"); 
-                entry.put("content", "【翻译调教指令】 " + contentToInject); 
+                entry.put("content", contentToInject); 
                 history.put(entry);
 
                 File tempFile = new File(getCacheDir(), "htai_temp.json");
@@ -623,7 +623,7 @@ public class MainActivity extends Activity {
                 runRoot("chmod 666 " + path);
                 
                 mainHandler.post(() -> {
-                    displayMessage("system", "✅ 指令及附件说明已静默注入！\n切回 HelloTalk 再次点击“译”按钮生效。");
+                    displayMessage("system", "✅ 指令及附件已静默注入底层！\n切回 HelloTalk 再次点击“译”按钮即可生效。");
                     messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
                 });
             } catch (Exception e) {
@@ -633,6 +633,15 @@ public class MainActivity extends Activity {
     }
 
     private void displayMessage(String role, String content) {
+        // ★ 剔除大段乱码 Base64，防止撑爆 UI
+        if (content.contains("[IMAGE_BASE64:")) {
+            int start = content.indexOf("[IMAGE_BASE64:");
+            int end = content.indexOf("]", start);
+            if (end != -1) {
+                content = content.substring(0, start) + "[图片附件] " + content.substring(end + 1);
+            }
+        }
+
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setPadding(0, 12, 0, 12);
