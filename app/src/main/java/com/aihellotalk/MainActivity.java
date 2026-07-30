@@ -282,8 +282,11 @@ public class MainActivity extends Activity {
                 }
             }
         }
+        // ★ 如果列表为空，不添加任何默认值，让 Spinner 显示空
         return list;
     }
+
+    // ---------- 以下方法保持不变，直接从原文件复制即可 ----------
 
     private void clearImagePreview() {
         pendingImageBase64 = "";
@@ -718,74 +721,144 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ---------------- 以下为被截断的必要辅助方法和内部类 ----------------
-
-    private void displayMessage(String role, String content) {
-        TextView tv = new TextView(this);
-        tv.setText(content);
-        tv.setTextSize(15f);
-        tv.setPadding(30, 20, 30, 20);
-        tv.setTextColor(Color.BLACK);
-        tv.setTextIsSelectable(true);
-
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.setMargins(16, 16, 16, 16);
-
-        if ("user".equals(role)) {
-            tv.setBackgroundColor(Color.parseColor("#C8E6C9"));
-            lp.gravity = Gravity.END;
-        } else if ("ai".equals(role)) {
-            tv.setBackgroundColor(Color.parseColor("#E0E0E0"));
-            lp.gravity = Gravity.START;
-        } else {
-            tv.setBackgroundColor(Color.parseColor("#FFCDD2"));
-            lp.gravity = Gravity.CENTER;
-            tv.setTag("system_loading");
-        }
-        tv.setLayoutParams(lp);
-        messageContainer.addView(tv);
-
-        // 自动滚动到底部
-        mainHandler.postDelayed(() -> {
-            messageScrollView.fullScroll(ScrollView.FOCUS_DOWN);
-        }, 100);
+    private void regenerateAnswer() {
+        if (lastUserMessage.isEmpty()) { Toast.makeText(this, "没有可重新回答的消息", Toast.LENGTH_SHORT).show(); return; }
+        removeLastAiMessage();
+        inputBox.setText(lastUserMessage);
+        sendMessage();
     }
 
-    private void removeLastSystemMessage() {
-        int count = messageContainer.getChildCount();
-        if (count > 0) {
-            View lastView = messageContainer.getChildAt(count - 1);
-            if ("system_loading".equals(lastView.getTag())) {
-                messageContainer.removeViewAt(count - 1);
+    private void removeLastAiMessage() {
+        for (int i = messageContainer.getChildCount() - 1; i >= 0; i--) {
+            View child = messageContainer.getChildAt(i);
+            if (child instanceof LinearLayout) {
+                LinearLayout row = (LinearLayout) child;
+                if (row.getChildCount() > 0 && row.getChildAt(0) instanceof TextView) {
+                    TextView bubble = (TextView) row.getChildAt(0);
+                    String text = bubble.getText().toString();
+                    if (!text.contains("正在思考") && !text.contains("⚠️") && !text.contains("❌")) {
+                        if (bubble.getCurrentTextColor() == Color.parseColor("#E8E8E8") || bubble.getBackground() != null) {
+                            messageContainer.removeViewAt(i);
+                            return;
+                        }
+                    }
+                }
             }
         }
     }
 
-    private int dpToPx(int dp) {
-        return (int) TypedValue.applyDimension(
-                TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
+    private void displayMessage(String role, String content) {
+        String filteredContent = content.replaceAll("[*\\-#：；—]", "");
+        LinearLayout msgRow = new LinearLayout(this);
+        msgRow.setOrientation(LinearLayout.HORIZONTAL);
+        msgRow.setPadding(0, 8, 0, 8);
+
+        if ("ai".equals(role)) {
+            LinearLayout bubbleWrapper = new LinearLayout(this);
+            bubbleWrapper.setOrientation(LinearLayout.VERTICAL);
+            bubbleWrapper.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            TextView bubble = new TextView(this);
+            bubble.setText(filteredContent);
+            bubble.setTextSize(15f);
+            bubble.setPadding(16, 12, 16, 12);
+            bubble.setLineSpacing(4f, 1f);
+            bubble.setBackgroundColor(Color.parseColor("#E8E8E8"));
+            bubble.setTextIsSelectable(true);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.7);
+            bubble.setLayoutParams(lp);
+            bubbleWrapper.addView(bubble);
+            msgRow.addView(bubbleWrapper);
+            Button rotateBtn = new Button(this);
+            rotateBtn.setText("🔄");
+            rotateBtn.setTextSize(18f);
+            rotateBtn.setBackgroundColor(Color.TRANSPARENT);
+            rotateBtn.setOnClickListener(v -> regenerateAnswer());
+            msgRow.addView(rotateBtn);
+            msgRow.setGravity(Gravity.START);
+        } else if ("user".equals(role)) {
+            TextView bubble = new TextView(this);
+            bubble.setText(filteredContent);
+            bubble.setTextSize(15f);
+            bubble.setPadding(16, 12, 16, 12);
+            bubble.setLineSpacing(4f, 1f);
+            bubble.setBackgroundColor(Color.parseColor("#DCF8C6"));
+            bubble.setTextIsSelectable(true);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.7);
+            bubble.setLayoutParams(lp);
+            LinearLayout spacer = new LinearLayout(this);
+            spacer.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            msgRow.addView(spacer);
+            msgRow.addView(bubble);
+            msgRow.setGravity(Gravity.END);
+        } else {
+            TextView bubble = new TextView(this);
+            bubble.setText(filteredContent);
+            bubble.setTextSize(13f);
+            bubble.setPadding(16, 12, 16, 12);
+            bubble.setLineSpacing(4f, 1f);
+            bubble.setBackgroundColor(Color.parseColor("#FFF3CD"));
+            bubble.setTextIsSelectable(true);
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.75);
+            bubble.setLayoutParams(lp);
+            msgRow.addView(bubble);
+            msgRow.setGravity(Gravity.CENTER);
+        }
+        messageContainer.addView(msgRow);
+        messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
     }
 
-    private String readConfig(String key) {
-        return prefs.getString(key, "");
-    }
-
-    class ChatSession {
-        String id;
-        String name;
-        ChatSession(String id, String name) {
-            this.id = id;
-            this.name = name;
+    private void removeLastSystemMessage() {
+        if (messageContainer.getChildCount() == 0) return;
+        View lastView = messageContainer.getChildAt(messageContainer.getChildCount() - 1);
+        if (lastView instanceof LinearLayout) {
+            LinearLayout lastRow = (LinearLayout) lastView;
+            if (lastRow.getChildCount() > 0 && lastRow.getChildAt(0) instanceof TextView) {
+                TextView lastBubble = (TextView) lastRow.getChildAt(0);
+                String text = lastBubble.getText().toString();
+                if (text.contains("正在思考") || text.contains("⚠️") || text.contains("❌"))
+                    messageContainer.removeViewAt(messageContainer.getChildCount() - 1);
+            }
         }
     }
 
-    class Message {
-        String role;
-        String content;
-        Message(String role, String content) {
-            this.role = role;
-            this.content = content;
+    private String readConfig(String key) {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "cat /data/local/tmp/htai_config.txt"});
+            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.startsWith(key + "=")) return line.substring(key.length() + 1).trim();
+            }
+            p.waitFor();
+        } catch (Exception e) { e.printStackTrace(); }
+        return "";
+    }
+
+    private int dpToPx(int dp) {
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
+    }
+
+    static class ChatSession { String id; String name; ChatSession(String id, String name) { this.id = id; this.name = name; } }
+    static class Message { String role; String content; Message(String role, String content) { this.role = role; this.content = content; } }
+
+    // ★★ 修复：使用全限定名 android.content.Context 避免编译错误 ★★
+    static class DatabaseHelper extends SQLiteOpenHelper {
+        private static final String DB_NAME = "chat_history.db";
+        private static final int DB_VERSION = 1;
+        DatabaseHelper(android.content.Context context) {
+            super(context, DB_NAME, null, DB_VERSION);
+        }
+        @Override
+        public void onCreate(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE chats (id TEXT PRIMARY KEY, name TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+            db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, timestamp INTEGER NOT NULL, FOREIGN KEY (chat_id) REFERENCES chats(id))");
+        }
+        @Override
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            db.execSQL("DROP TABLE IF EXISTS messages"); db.execSQL("DROP TABLE IF EXISTS chats"); onCreate(db);
         }
     }
 }
