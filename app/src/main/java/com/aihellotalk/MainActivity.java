@@ -130,7 +130,7 @@ public class MainActivity extends Activity {
         mainContent.addView(messageScrollView);
 
         // ──────────────────────────────────────
-        // 图片预览条 (为你加回来的功能！)
+        // 图片预览条
         // ──────────────────────────────────────
         imagePreviewBar = new LinearLayout(this);
         imagePreviewBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -164,7 +164,7 @@ public class MainActivity extends Activity {
         mainContent.addView(imagePreviewBar);
 
         // ──────────────────────────────────────
-        // 底部输入栏 (为你加回来的功能！)
+        // 底部输入栏
         // ──────────────────────────────────────
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
@@ -194,7 +194,6 @@ public class MainActivity extends Activity {
             modelSpinner.setSelection(modelList.indexOf(cachedModel));
         }
         
-        // 核心增强：实时同步到底层 config，切回 HelloTalk 瞬间生效
         modelSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
@@ -236,7 +235,7 @@ public class MainActivity extends Activity {
         drawerLayout.addView(mainContent);
 
         // ──────────────────────────────────────
-        // 侧滑菜单 (仅展示 HelloTalk 好友)
+        // 侧滑菜单
         // ──────────────────────────────────────
         drawerContent = new LinearLayout(this);
         drawerContent.setOrientation(LinearLayout.VERTICAL);
@@ -282,7 +281,6 @@ public class MainActivity extends Activity {
         return "";
     }
 
-    // 更新底层配置文件以保证模型下拉框的切换对 HelloTalk 有效
     private void updateModelInConfig(String newModel) {
         new Thread(() -> {
             String key = prefs.getString("api_key", "");
@@ -312,7 +310,7 @@ public class MainActivity extends Activity {
     }
 
     // ──────────────────────────────────────
-    // 附件处理逻辑 (为你加回来的功能！)
+    // 附件处理逻辑
     // ──────────────────────────────────────
     private void showAttachMenu() {
         new AlertDialog.Builder(this)
@@ -439,6 +437,50 @@ public class MainActivity extends Activity {
     }
 
     // ──────────────────────────────────────
+    // Root 删除底层好友记忆逻辑
+    // ──────────────────────────────────────
+    private void deleteHTChatRoot(ChatSession s) {
+        new Thread(() -> {
+            try {
+                // 1. 删除专属历史文件
+                String histPath = "/data/data/com.hellotalk/files/htai_hist_" + s.id + ".json";
+                runRoot("rm " + histPath);
+
+                // 2. 从好友列表中剔除
+                String friendsPath = "/data/data/com.hellotalk/files/htai_friends.json";
+                String jsonStr = runRoot("cat " + friendsPath);
+                if (jsonStr != null && !jsonStr.trim().isEmpty()) {
+                    JSONObject friends = new JSONObject(jsonStr);
+                    if (friends.has(s.id)) {
+                        friends.remove(s.id);
+
+                        File tempFile = new File(getCacheDir(), "htai_temp_friends.json");
+                        BufferedWriter w = new BufferedWriter(new java.io.FileWriter(tempFile));
+                        w.write(friends.toString());
+                        w.close();
+
+                        runRoot("cp " + tempFile.getAbsolutePath() + " " + friendsPath);
+                        runRoot("chmod 666 " + friendsPath);
+                    }
+                }
+
+                mainHandler.post(() -> {
+                    if (currentChatId.equals(s.id)) {
+                        currentChatId = "";
+                        currentChatName = "";
+                        ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前遥控: 未选择好友");
+                        messageContainer.removeAllViews();
+                    }
+                    refreshDrawerList();
+                    Toast.makeText(MainActivity.this, "已彻底抹除与 [" + s.name + "] 的底层记忆", Toast.LENGTH_SHORT).show();
+                });
+            } catch (Exception e) {
+                mainHandler.post(() -> Toast.makeText(MainActivity.this, "删除失败: " + e.getMessage(), Toast.LENGTH_SHORT).show());
+            }
+        }).start();
+    }
+
+    // ──────────────────────────────────────
     // 从底层读取 HelloTalk 好友
     // ──────────────────────────────────────
     private void refreshDrawerList() {
@@ -477,6 +519,7 @@ public class MainActivity extends Activity {
                 tv.setTextColor(Color.parseColor("#333333"));
                 if (s.id.equals(currentChatId)) tv.setBackgroundColor(Color.parseColor("#E3F2FD"));
                 
+                // 单击查看
                 tv.setOnClickListener(v -> {
                     currentChatId = s.id;
                     currentChatName = s.name;
@@ -485,6 +528,18 @@ public class MainActivity extends Activity {
                     drawerLayout.closeDrawers();
                     refreshDrawerList(); 
                 });
+
+                // ★ 长按删除
+                tv.setOnLongClickListener(v -> {
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("高能预警")
+                            .setMessage("确定要彻底抹除与 [" + s.name + "] 的底层记忆文件吗？")
+                            .setPositiveButton("销毁记忆", (dialog, which) -> deleteHTChatRoot(s))
+                            .setNegativeButton("取消", null)
+                            .show();
+                    return true;
+                });
+                
                 drawerContent.addView(tv);
             }
         }
