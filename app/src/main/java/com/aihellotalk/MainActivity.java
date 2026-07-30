@@ -10,9 +10,11 @@ import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.OpenableColumns;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -23,12 +25,16 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.List;
 import okhttp3.*;
 
 public class MainActivity extends Activity {
+
+    private static final int REQUEST_CODE_PICK_IMAGE = 101;
+    private static final int REQUEST_CODE_PICK_FILE = 102;
 
     private DrawerLayout drawerLayout;
     private LinearLayout messageContainer;
@@ -251,16 +257,96 @@ public class MainActivity extends Activity {
         return history;
     }
 
+    // ── 附件菜单（移除拍照，实现相册和文件） ──
     private void showAttachMenu() {
-        String[] options = {"📷 拍照", "🖼️ 相册", "📎 文件"};
+        String[] options = {"🖼️ 相册", "📎 文件"};
         new AlertDialog.Builder(this)
                 .setTitle("选择附件")
                 .setItems(options, (dialog, which) -> {
-                    if (which == 0) Toast.makeText(this, "拍照功能待实现", Toast.LENGTH_SHORT).show();
-                    else if (which == 1) Toast.makeText(this, "相册功能待实现", Toast.LENGTH_SHORT).show();
-                    else if (which == 2) Toast.makeText(this, "文件功能待实现", Toast.LENGTH_SHORT).show();
+                    if (which == 0) pickImage();
+                    else if (which == 1) pickFile();
                 })
                 .show();
+    }
+
+    private void pickImage() {
+        Intent intent = new Intent(Intent.ACTION_PICK);
+        intent.setType("image/*");
+        startActivityForResult(intent, REQUEST_CODE_PICK_IMAGE);
+    }
+
+    private void pickFile() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("text/plain");
+        startActivityForResult(intent, REQUEST_CODE_PICK_FILE);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null) return;
+
+        Uri uri = data.getData();
+        if (uri == null) return;
+
+        if (requestCode == REQUEST_CODE_PICK_IMAGE) {
+            // 获取图片文件名
+            String fileName = getFileName(uri);
+            String imageInfo = "用户选择了一张图片：" + (fileName != null ? fileName : "未知图片");
+            // 将图片信息作为用户消息发送
+            sendAttachmentAsMessage(imageInfo);
+        } else if (requestCode == REQUEST_CODE_PICK_FILE) {
+            // 读取文本文件内容
+            String fileContent = readTextFile(uri);
+            if (fileContent != null) {
+                String fileName = getFileName(uri);
+                String fileInfo = "用户上传了文件：" + (fileName != null ? fileName : "未知文件") + "\n文件内容如下：\n" + fileContent;
+                sendAttachmentAsMessage(fileInfo);
+            } else {
+                Toast.makeText(this, "无法读取文件内容", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private String getFileName(Uri uri) {
+        String fileName = null;
+        Cursor cursor = getContentResolver().query(uri, null, null, null, null);
+        if (cursor != null && cursor.moveToFirst()) {
+            int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+            if (nameIndex >= 0) {
+                fileName = cursor.getString(nameIndex);
+            }
+            cursor.close();
+        }
+        if (fileName == null) {
+            fileName = uri.getLastPathSegment();
+        }
+        return fileName;
+    }
+
+    private String readTextFile(Uri uri) {
+        try {
+            InputStream inputStream = getContentResolver().openInputStream(uri);
+            if (inputStream == null) return null;
+            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                sb.append(line).append("\n");
+            }
+            reader.close();
+            return sb.toString().trim();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return null;
+        }
+    }
+
+    private void sendAttachmentAsMessage(String content) {
+        // 把内容填入输入框并自动发送
+        inputBox.setText(content);
+        sendMessage();
     }
 
     private void refreshDrawerList() {
