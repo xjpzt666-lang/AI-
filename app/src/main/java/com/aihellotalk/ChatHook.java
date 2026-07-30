@@ -44,11 +44,13 @@ public class ChatHook {
     private static final Map<String, String> chatRequestMap = new ConcurrentHashMap<>();
     private static final Map<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
 
-    // ★ 核心修复：消息去重防御罩，防止 UI 滚动/刷新引发的记忆无限重写（影分身）
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
 
+    // ★ 新增：用于跟踪当前是否正在等待 API 返回，防止正常聊天输入 @ 被误杀
+    private static volatile boolean isTranslatingAPI = false;
+
     public static void install(ClassLoader cl) {
-        log("=== Hook v10.0 (去重防复读 + 协议隔离) ===");
+        log("=== Hook v10.1 (急停防悔版 + XML隔离舱) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -153,7 +155,6 @@ public class ChatHook {
                     try { mid = (String) XposedHelpers.callMethod(msg, "getMsgId"); } catch (Exception ignored) {}
                     if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
 
-                    // ★ 严格去重：通过 chatId + msgId 确保单条消息有且仅被写入一次档案库
                     boolean isNewMessage = recordedMsgIds.add(currentChatId + "_" + mid);
                     if (isNewMessage) {
                         if (isMine) {
@@ -163,7 +164,6 @@ public class ChatHook {
                         }
                     }
 
-                    // 自己发出去的消息不需要触发自动翻译拦截
                     if (isMine) return; 
 
                     if (text.startsWith("[")) return; 
@@ -295,13 +295,36 @@ public class ChatHook {
             @Override public void afterTextChanged(Editable s) {}
             @Override
             public void onTextChanged(CharSequence s, int st, int b, int c) {
-                if (s != null && !s.toString().trim().isEmpty() && AITranslator.isChineseOnly(s.toString())) {
-                    btn.setVisibility(View.VISIBLE);
-                    btn.setEnabled(true);
-                    btn.setText("译");
-                    btn.setAlpha(0.93f);
+                if (s == null) return;
+                String currentText = s.toString();
+
+                // ★ 急停机制：如果正在转圈，且用户输入了 @ 符号
+                if (isTranslatingAPI && currentText.contains("@")) {
+                    AITranslator.cancelOngoingTranslation(); // 瞬间切断网络
+                    
+                    // 自动擦除 @ 符号，免得留着碍眼
+                    String cleanText = currentText.replace("@", "");
+                    edit.removeTextChangedListener(this); // 暂时屏蔽监听，防止死循环
+                    edit.setText(cleanText);
+                    edit.setSelection(cleanText.length()); // 保持光标在末尾
+                    edit.addTextChangedListener(this);
+                    
+                    return; // 结束逻辑，按钮恢复的动作交给 catch 块处理
+                }
+
+                // 常密的按钮显隐逻辑，只在“非转圈状态”下生效
+                String textWithoutAt = currentText.replace("@", "");
+                if (!currentText.trim().isEmpty() && AITranslator.isChineseOnly(textWithoutAt)) {
+                    if (!isTranslatingAPI) {
+                        btn.setVisibility(View.VISIBLE);
+                        btn.setEnabled(true);
+                        btn.setText("译");
+                        btn.setAlpha(0.93f);
+                    }
                 } else {
-                    btn.setVisibility(View.GONE);
+                    if (!isTranslatingAPI) {
+                        btn.setVisibility(View.GONE);
+                    }
                 }
             }
         });
@@ -310,6 +333,8 @@ public class ChatHook {
             String text = edit.getText().toString().trim();
             if (text.isEmpty() || !AITranslator.isChineseOnly(text)) return;
 
+            // ★ 进入锁定转圈状态
+            isTranslatingAPI = true;
             btn.setEnabled(false);
             btn.setText("...");
             btn.setAlpha(1.0f);
@@ -342,6 +367,8 @@ public class ChatHook {
 
                     String result = AITranslator.translateWithHistory(finalPromptText, targetLang, currentChatId);
 
+                    // 正常返回
+                    isTranslatingAPI = false;
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("译");
@@ -349,11 +376,19 @@ public class ChatHook {
                         showPicker(edit, result);
                     });
                 } catch (Exception e) {
+                    // 异常或急停返回
+                    isTranslatingAPI = false;
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.88f);
-                        Toast.makeText(edit.getContext(), "翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        
+                        String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+                        if (msg.contains("canceled") || msg.contains("socket closed")) {
+                            Toast.makeText(edit.getContext(), "🛑 翻译已急停，可重新编辑", Toast.LENGTH_SHORT).show();
+                        } else {
+                            Toast.makeText(edit.getContext(), "翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        }
                     });
                 }
             }).start();
