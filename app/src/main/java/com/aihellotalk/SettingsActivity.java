@@ -292,7 +292,7 @@ public class SettingsActivity extends Activity {
         throw new Exception("尝试了以下地址均失败:\n" + String.join("\n", lastErrors));
     }
 
-    // ★★★ 改造后的多选模型对话框 ★★★
+    // ★★★ 修复后的多选模型对话框 ★★★
     private void showModelPicker(List<String> models) {
         String[] items = models.toArray(new String[0]);
         boolean[] checked = new boolean[items.length];
@@ -336,16 +336,15 @@ public class SettingsActivity extends Activity {
                 return;
             }
 
-            // 保存到 SharedPreferences
+            // ★ 关键修复：保存 model_list 并自动设置当前模型为第一个
             String selectedStr = String.join(",", selected);
-            prefs.edit().putString("model_list", selectedStr).apply();
+            SharedPreferences.Editor editor = prefs.edit();
+            editor.putString("model_list", selectedStr);
+            editor.putString("model", selected.get(0)); // 自动设置当前模型为第一个
+            editor.apply();
 
-            // 如果之前没有设置当前模型，自动设置为第一个
-            String currentModel = prefs.getString("model", "");
-            if (currentModel.isEmpty() && !selected.isEmpty()) {
-                prefs.edit().putString("model", selected.get(0)).apply();
-                etModel.setText(selected.get(0));
-            }
+            // 更新 UI 显示
+            etModel.setText(selected.get(0)); // 直接显示第一个模型名，不再显示“等N个”
 
             // 显示提示
             StringBuilder sb = new StringBuilder("已选择：");
@@ -353,13 +352,6 @@ public class SettingsActivity extends Activity {
                 sb.append("\n• ").append(s);
             }
             toast(sb.toString());
-
-            // 如果只选了一个，直接设为主模型
-            if (selected.size() == 1) {
-                etModel.setText(selected.get(0));
-            } else {
-                etModel.setText(selected.get(0) + " 等" + selected.size() + "个");
-            }
         });
 
         builder.setNegativeButton("取消", null);
@@ -390,7 +382,7 @@ public class SettingsActivity extends Activity {
 
         new Thread(() -> {
             try {
-                // ★★★ 保存时同时写入 model_list ★★★
+                // 保存时同时写入 model_list
                 String modelList = prefs.getString("model_list", "");
                 String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
                         + "api_key=" + key + "\n"
