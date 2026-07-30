@@ -28,6 +28,7 @@ public class ChatHook {
 
     private static final String TAG = "HT_AI";
     private static String currentChatId = "0";
+    private static int currentChatType = 1; // ★ 新增：记录聊天类型（1通常代表单聊）
     private static String currentPartnerName = "";
     private static int partnerLang = 1;
     private static final Set<String> translating = ConcurrentHashMap.newKeySet();
@@ -42,7 +43,7 @@ public class ChatHook {
     private static volatile String latestPartnerName = "";
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v9.5 (修复精神分裂记忆) ===");
+        log("=== Hook v9.6 (修复群聊污染与自己名字的Bug) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,8 +73,11 @@ public class ChatHook {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         int chatId = (int) param.args[0];
+                        int chatType = (int) param.args[1]; // ★ 获取聊天类型
+                        
                         currentChatId = String.valueOf(chatId);
-                        log("📂 打开聊天 chatId=" + chatId);
+                        currentChatType = chatType; // ★ 保存全局聊天类型
+                        log("📂 打开聊天 chatId=" + chatId + " type=" + chatType);
 
                         final Object vm = param.thisObject;
                         new Thread(() -> {
@@ -115,10 +119,8 @@ public class ChatHook {
                 currentPartnerName = latestPartnerName;
             }
 
+            // ★ 修复：删除了这里的 AITranslator.registerFriend，不再主动污染列表
             String langCode = getDynamicLangCode(nativeLang);
-            AITranslator.registerFriend(currentChatId, currentPartnerName, langCode);
-            log("👤 注册朋友: " + currentPartnerName + " (" + langCode + ") 国籍=" + latestNationality);
-
             String langName = getDynamicLangName(nativeLang);
             log("🌍 用户资料: ID=" + nativeLang + " → " + langCode + " (" + langName + ") 国籍=" + latestNationality);
         } catch (Exception e) {
@@ -126,7 +128,6 @@ public class ChatHook {
         }
     }
 
-    // 核心修复区域 1：身份标签重塑
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
         XposedBridge.hookAllMethods(hm, "getMessageContent", new XC_MethodHook() {
@@ -156,17 +157,19 @@ public class ChatHook {
                     try {
                         senderName = (String) XposedHelpers.callMethod(msg, "getSenderName");
                     } catch (Exception ignored) {}
+                    
                     if (senderName != null && !senderName.isEmpty()) {
-                        currentPartnerName = senderName;
+                        // ★ 核心修复 1：绝不把“自己（例如nima）”的名字覆盖掉对方的名字！
+                        if (!isMine) {
+                            currentPartnerName = senderName;
+                        }
                     }
 
-                    String langCode = getDynamicLangCode(partnerLang);
-                    AITranslator.registerFriend(currentChatId, currentPartnerName, langCode);
+                    // ★ 修复：删除了这里的 AITranslator.registerFriend，不把陌生人写进列表
 
-                    // ★ 修复：如果是你发出去的消息，身份是 assistant；如果是对方发来的，身份是 user
                     if (isMine) {
                         AITranslator.appendHistory(currentChatId, "assistant", text);
-                        return; // 你发出的消息不需要再执行接收翻译的逻辑
+                        return; 
                     } else {
                         AITranslator.appendHistory(currentChatId, "user", text);
                     }
@@ -376,15 +379,17 @@ public class ChatHook {
             new Thread(() -> {
                 try {
                     String targetLang = determineSmartTargetLang();
+                    
+                    // ★ 核心修复 2 & 3：仅在你主动点击翻译时，且是单聊（Type == 1）时，才将其正式纳入你的遥控列表
+                    if (currentChatType == 1) {
+                        AITranslator.registerFriend(currentChatId, currentPartnerName, targetLang);
+                    }
+
                     log("🔄 AI翻译请求: 朋友=" + AITranslator.getFriendName(currentChatId)
                             + " 目标语言=" + targetLang + " 国籍=" + latestNationality);
 
                     String result = AITranslator.translateWithHistory(
                             text, targetLang, currentChatId);
-
-                    // ★ 核心修复区域 2：废弃草稿记忆
-                    // 彻底删除 AITranslator.appendHistory(currentChatId, "assistant", result);
-                    // 现在的草稿纯粹阅后即焚！
 
                     edit.post(() -> {
                         btn.setEnabled(true);
