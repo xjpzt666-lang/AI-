@@ -5,263 +5,483 @@ import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
-import android.text.InputType;
-import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
-import android.widget.*;
-import java.io.*;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.LinearLayout;
+import android.widget.ScrollView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.util.ArrayList;
 import java.util.List;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.concurrent.TimeUnit;
 
 public class SettingsActivity extends Activity {
 
-    private EditText editApiKey, editApiUrl, editModel;
-    private EditText editReceive, editEn, editRu, editUk, editKo, editEs;
-    private Spinner modelSpinner;
+    private EditText etKey, etUrl, etModel;
+    private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
+    private Button btnFetch, btnSave, btnTest;
+
     private SharedPreferences prefs;
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+    protected void onCreate(Bundle b) {
+        super.onCreate(b);
+
         prefs = getSharedPreferences("htai_settings", MODE_PRIVATE);
 
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(24, 48, 24, 24);
+        ScrollView sv = new ScrollView(this);
+        LinearLayout ll = new LinearLayout(this);
+        ll.setOrientation(LinearLayout.VERTICAL);
+        ll.setPadding(40, 40, 40, 40);
 
-        // 标题
-        TextView title = new TextView(this);
-        title.setText("⚙️ HT AI 设置");
-        title.setTextSize(22f);
-        title.setTextColor(Color.BLACK);
-        title.setGravity(Gravity.CENTER);
-        title.setPadding(0, 0, 0, 24);
-        root.addView(title);
+        ll.addView(tip("HT AI翻译 v5.0\n接收自动翻译 + 点[文A]按钮选版本"));
 
-        // API 配置
-        root.addView(createSectionLabel("🔑 API 配置"));
-        editApiKey = createEdit("API Key", prefs.getString("api_key", ""));
-        root.addView(editApiKey);
-        editApiUrl = createEdit("API URL", prefs.getString("api_url", "https://www.wintoken.dev"));
-        root.addView(editApiUrl);
-        editModel = createEdit("模型名称", prefs.getString("model", ""));
-        root.addView(editModel);
+        ll.addView(lab("API Key:"));
+        etKey = edit(prefs.getString("api_key", ""));
+        etKey.setHint("输入你的 API Key");
+        ll.addView(etKey);
 
-        // 模型列表下拉
-        modelSpinner = new Spinner(this);
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, new String[]{"加载中..."});
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        modelSpinner.setAdapter(adapter);
-        root.addView(modelSpinner);
+        ll.addView(lab("API URL:"));
+        etUrl = edit(prefs.getString("api_url", "https://www.wintoken.dev"));
+        ll.addView(etUrl);
 
-        Button fetchBtn = new Button(this);
-        fetchBtn.setText("📥 获取模型列表");
-        fetchBtn.setOnClickListener(v -> fetchModels());
-        root.addView(fetchBtn);
+        btnFetch = btn("📡 获取模型列表");
+        btnFetch.setOnClickListener(v -> fetchModels());
+        ll.addView(btnFetch);
 
-        // Prompt 配置
-        root.addView(createSectionLabel("📝 翻译指令配置"));
+        ll.addView(lab("模型:"));
+        etModel = edit(prefs.getString("model", ""));
+        etModel.setHint("先获取后选择，或手动输入");
+        ll.addView(etModel);
 
-        editReceive = createMultiEdit("🇨🇳 中文接收 Prompt（收到外语时使用）", prefs.getString("prompt_receive", ""));
-        root.addView(editReceive);
-        editEn = createMultiEdit("🇺🇸 英语 Prompt（发送）", prefs.getString("prompt_en", ""));
-        root.addView(editEn);
-        editRu = createMultiEdit("🇷🇺 俄语 Prompt（发送）", prefs.getString("prompt_ru", ""));
-        root.addView(editRu);
-        editUk = createMultiEdit("🇺🇦 乌克兰语 Prompt（发送）", prefs.getString("prompt_uk", ""));
-        root.addView(editUk);
-        // ★ 新增：韩语和西班牙语
-        editKo = createMultiEdit("🇰🇷 韩语 Prompt（发送）", prefs.getString("prompt_ko", ""));
-        root.addView(editKo);
-        editEs = createMultiEdit("🇪🇸 西班牙语 Prompt（发送）", prefs.getString("prompt_es", ""));
-        root.addView(editEs);
+        ll.addView(div());
 
-        // 保存按钮
-        Button saveBtn = new Button(this);
-        saveBtn.setText("💾 保存全部配置");
-        saveBtn.setTextSize(16f);
-        saveBtn.setPadding(0, 16, 0, 16);
-        saveBtn.setOnClickListener(v -> saveAll());
-        root.addView(saveBtn);
+        // ★ 接收翻译 Prompt（外语→中文）
+        ll.addView(lab("🇨🇳 接收翻译 Prompt (外语→中文):"));
+        etPromptZH = bigEdit(prefs.getString("prompt_zh", ""));
+        ll.addView(etPromptZH);
 
-        // ★ 保留你原来的测试翻译按钮
-        Button testBtn = new Button(this);
-        testBtn.setText("🧪 测试翻译");
-        testBtn.setTextSize(16f);
-        testBtn.setPadding(0, 16, 0, 16);
-        testBtn.setOnClickListener(v -> testTranslation());
-        root.addView(testBtn);
+        // ★ 英语 Prompt
+        ll.addView(lab("🇬🇧 英语 Prompt (发送):"));
+        etPromptEN = bigEdit(prefs.getString("prompt_en", ""));
+        ll.addView(etPromptEN);
 
-        scroll.addView(root);
-        setContentView(scroll);
+        // ★ 俄语 Prompt
+        ll.addView(lab("🇷🇺 俄语 Prompt (发送):"));
+        etPromptRU = bigEdit(prefs.getString("prompt_ru", ""));
+        ll.addView(etPromptRU);
+
+        // ★ 乌克兰语 Prompt
+        ll.addView(lab("🇺🇦 乌克兰语 Prompt (发送):"));
+        etPromptUK = bigEdit(prefs.getString("prompt_uk", ""));
+        ll.addView(etPromptUK);
+
+        // ★★★ 新增：韩语 Prompt ★★★
+        ll.addView(lab("🇰🇷 韩语 Prompt (发送):"));
+        etPromptKO = bigEdit(prefs.getString("prompt_ko", ""));
+        ll.addView(etPromptKO);
+
+        // ★★★ 新增：西班牙语 Prompt ★★★
+        ll.addView(lab("🇪🇸 西班牙语 Prompt (发送):"));
+        etPromptES = bigEdit(prefs.getString("prompt_es", ""));
+        ll.addView(etPromptES);
+
+        btnSave = btn("💾 保存全部配置");
+        btnSave.setOnClickListener(v -> saveAll());
+        ll.addView(btnSave);
+
+        btnTest = btn("🧪 测试翻译");
+        btnTest.setOnClickListener(v -> testTranslate());
+        ll.addView(btnTest);
+
+        sv.addView(ll);
+        setContentView(sv);
     }
 
-    private TextView createSectionLabel(String text) {
-        TextView label = new TextView(this);
-        label.setText(text);
-        label.setTextSize(16f);
-        label.setTextColor(Color.parseColor("#333333"));
-        label.setPadding(0, 20, 0, 8);
-        return label;
+    private TextView lab(String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setPadding(0, 20, 0, 5);
+        return tv;
     }
 
-    private EditText createEdit(String hint, String defaultValue) {
+    private TextView tip(String text) {
+        TextView tv = new TextView(this);
+        tv.setText(text);
+        tv.setTextSize(13f);
+        tv.setPadding(0, 0, 0, 20);
+        return tv;
+    }
+
+    private EditText edit(String text) {
         EditText et = new EditText(this);
-        et.setHint(hint);
-        et.setText(defaultValue);
-        et.setSingleLine(true);
-        et.setPadding(12, 8, 12, 8);
-        et.setBackgroundColor(Color.parseColor("#F5F5F5"));
-        et.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        et.setText(text);
         return et;
     }
 
-    private EditText createMultiEdit(String hint, String defaultValue) {
+    private EditText bigEdit(String text) {
         EditText et = new EditText(this);
-        et.setHint(hint);
-        et.setText(defaultValue);
-        et.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        et.setText(text);
         et.setMinLines(3);
-        et.setGravity(Gravity.TOP);
-        et.setPadding(12, 8, 12, 8);
-        et.setBackgroundColor(Color.parseColor("#F5F5F5"));
-        et.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        et.setMaxLines(8);
+        et.setVerticalScrollBarEnabled(true);
         return et;
+    }
+
+    private Button btn(String text) {
+        Button b = new Button(this);
+        b.setText(text);
+        return b;
+    }
+
+    private View div() {
+        View v = new View(this);
+        v.setLayoutParams(new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 2));
+        v.setBackgroundColor(Color.parseColor("#33000000"));
+        v.setPadding(0, 20, 0, 20);
+        return v;
+    }
+
+    private void toast(String msg) {
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
+    }
+
+    private String runRoot(String cmd) {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
+            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String l;
+            while ((l = r.readLine()) != null) {
+                sb.append(l).append("\n");
+            }
+            p.waitFor();
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String readCfg(String key, String def) {
+        String all = runRoot("cat /data/local/tmp/htai_config.txt 2>/dev/null");
+        if (all == null || all.isEmpty()) return def;
+        for (String line : all.split("\n")) {
+            if (line.startsWith(key + "=")) {
+                return line.substring(key.length() + 1).trim();
+            }
+        }
+        return def;
+    }
+
+    /**
+     * ★ 支持 KO### 和 ES### 分段读取
+     */
+    private String readPrompt(String section) {
+        String all = runRoot("cat /data/local/tmp/htai_prompts.txt 2>/dev/null");
+        if (all == null || all.isEmpty()) return "";
+        String[] parts = all.split("###");
+        StringBuilder sb = new StringBuilder();
+        boolean inSection = false;
+        for (String part : parts) {
+            if (part.startsWith(section + "###")) {
+                inSection = true;
+                continue;
+            }
+            if (inSection) {
+                if (part.startsWith("EN###") || part.startsWith("RU###")
+                        || part.startsWith("UK###") || part.startsWith("ZH###")
+                        || part.startsWith("KO###") || part.startsWith("ES###")) {
+                    break;
+                }
+                sb.append(part);
+            }
+        }
+        return sb.toString().trim();
     }
 
     private void fetchModels() {
-        String key = editApiKey.getText().toString().trim();
-        String url = editApiUrl.getText().toString().trim();
+        String key = etKey.getText().toString().trim();
         if (key.isEmpty()) {
-            Toast.makeText(this, "请先填写 API Key", Toast.LENGTH_SHORT).show();
+            toast("先填 Key");
             return;
         }
+        btnFetch.setEnabled(false);
+        btnFetch.setText("获取中...");
+        String baseUrl = etUrl.getText().toString().trim();
+
         new Thread(() -> {
             try {
-                List<String> models = AITranslator.fetchModels(key, url);
+                List<String> models = autoFetchModels(key, baseUrl);
                 runOnUiThread(() -> {
-                    ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                            android.R.layout.simple_spinner_item, models);
-                    adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-                    modelSpinner.setAdapter(adapter);
-                    String savedModel = prefs.getString("model", "");
-                    if (!savedModel.isEmpty() && models.contains(savedModel)) {
-                        modelSpinner.setSelection(models.indexOf(savedModel));
+                    btnFetch.setEnabled(true);
+                    btnFetch.setText("📡 获取模型列表");
+                    if (models.isEmpty()) {
+                        new AlertDialog.Builder(SettingsActivity.this)
+                                .setTitle("获取失败")
+                                .setMessage("自动尝试了多种地址均无法获取模型列表。\n请检查 API Key 和 URL 是否正确，或手动输入模型名。")
+                                .setPositiveButton("知道了", null)
+                                .show();
+                    } else {
+                        showModelPicker(models);
                     }
-                    Toast.makeText(this, "获取到 " + models.size() + " 个模型", Toast.LENGTH_SHORT).show();
                 });
             } catch (Exception e) {
-                runOnUiThread(() -> Toast.makeText(this, "获取失败: " + e.getMessage(), Toast.LENGTH_LONG).show());
+                runOnUiThread(() -> {
+                    btnFetch.setEnabled(true);
+                    btnFetch.setText("📡 获取模型列表");
+                    new AlertDialog.Builder(SettingsActivity.this)
+                            .setTitle("获取失败")
+                            .setMessage("错误: " + e.getMessage() + "\n\n你可以手动输入模型名。")
+                            .setPositiveButton("手动输入", (dialog, which) -> {
+                                etModel.requestFocus();
+                            })
+                            .setNegativeButton("取消", null)
+                            .show();
+                });
             }
         }).start();
     }
 
+    private List<String> autoFetchModels(String key, String baseUrl) throws Exception {
+        String base = baseUrl;
+        if (base.endsWith("/chat/completions")) {
+            base = base.substring(0, base.length() - "/chat/completions".length());
+        }
+        if (base.endsWith("/v1")) {
+            base = base.substring(0, base.length() - 3);
+        } else if (base.endsWith("/v1/")) {
+            base = base.substring(0, base.length() - 4);
+        }
+        if (!base.endsWith("/")) base += "/";
+
+        String[] urlsToTry = {
+                base + "v1/models",
+                base + "models",
+                base + "api/models"
+        };
+
+        List<String> lastErrors = new ArrayList<>();
+        OkHttpClient client = new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .build();
+
+        for (String url : urlsToTry) {
+            try {
+                Request req = new Request.Builder()
+                        .url(url)
+                        .header("Authorization", "Bearer " + key)
+                        .get()
+                        .build();
+
+                try (Response resp = client.newCall(req).execute()) {
+                    if (resp.isSuccessful()) {
+                        String s = resp.body().string();
+                        JSONObject json = new JSONObject(s);
+                        JSONArray data = json.getJSONArray("data");
+                        List<String> models = new ArrayList<>();
+                        for (int i = 0; i < data.length(); i++) {
+                            models.add(data.getJSONObject(i).getString("id"));
+                        }
+                        return models;
+                    } else {
+                        lastErrors.add(url + " -> HTTP " + resp.code());
+                    }
+                }
+            } catch (Exception e) {
+                lastErrors.add(url + " -> " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        }
+
+        throw new Exception("尝试了以下地址均失败:\n" + String.join("\n", lastErrors));
+    }
+
+    private void showModelPicker(List<String> models) {
+        String[] items = models.toArray(new String[0]);
+        boolean[] checked = new boolean[items.length];
+
+        String savedModels = prefs.getString("model_list", "");
+        if (!savedModels.isEmpty()) {
+            String[] savedArr = savedModels.split(",");
+            for (int i = 0; i < items.length; i++) {
+                for (String saved : savedArr) {
+                    if (items[i].equals(saved.trim())) {
+                        checked[i] = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("选择模型（最多4个）");
+
+        builder.setMultiChoiceItems(items, checked, (dialog, which, isChecked) -> {
+            checked[which] = isChecked;
+        });
+
+        builder.setPositiveButton("确定", (dialog, which) -> {
+            List<String> selected = new ArrayList<>();
+            for (int i = 0; i < items.length; i++) {
+                if (checked[i]) {
+                    selected.add(items[i]);
+                }
+            }
+
+            if (selected.isEmpty()) {
+                toast("请至少选择一个模型");
+                return;
+            }
+
+            if (selected.size() > 4) {
+                toast("最多只能选择4个模型");
+                return;
+            }
+
+            String selectedStr = String.join(",", selected);
+            SharedPreferences.Editor editor = prefs.edit();
+            editor.putString("model_list", selectedStr);
+            editor.putString("model", selected.get(0));
+            editor.apply();
+
+            etModel.setText(selected.get(0));
+
+            StringBuilder sb = new StringBuilder("已选择：");
+            for (String s : selected) {
+                sb.append("\n• ").append(s);
+            }
+            toast(sb.toString());
+        });
+
+        builder.setNegativeButton("取消", null);
+        builder.show();
+    }
+
     private void saveAll() {
-        String apiKey = editApiKey.getText().toString().trim();
-        String apiUrl = editApiUrl.getText().toString().trim();
-        String model = editModel.getText().toString().trim();
+        btnSave.setEnabled(false);
+        btnSave.setText("保存中...");
 
-        if (model.isEmpty() && modelSpinner.getSelectedItem() != null) {
-            model = modelSpinner.getSelectedItem().toString();
-        }
+        String key = etKey.getText().toString().trim();
+        String url = etUrl.getText().toString().trim();
+        String mdl = etModel.getText().toString().trim();
+        String zh = etPromptZH.getText().toString().trim();
+        String en = etPromptEN.getText().toString().trim();
+        String ru = etPromptRU.getText().toString().trim();
+        String uk = etPromptUK.getText().toString().trim();
+        // ★ 新增：读取韩语和西班牙语 Prompt
+        String ko = etPromptKO.getText().toString().trim();
+        String es = etPromptES.getText().toString().trim();
 
-        String zh = editReceive.getText().toString().trim();
-        String en = editEn.getText().toString().trim();
-        String ru = editRu.getText().toString().trim();
-        String uk = editUk.getText().toString().trim();
-        String ko = editKo.getText().toString().trim();
-        String es = editEs.getText().toString().trim();
+        SharedPreferences.Editor editor = prefs.edit();
+        editor.putString("api_key", key);
+        editor.putString("api_url", url);
+        editor.putString("model", mdl);
+        editor.putString("prompt_zh", zh);
+        editor.putString("prompt_en", en);
+        editor.putString("prompt_ru", ru);
+        editor.putString("prompt_uk", uk);
+        // ★ 新增：保存韩语和西班牙语到 SharedPreferences
+        editor.putString("prompt_ko", ko);
+        editor.putString("prompt_es", es);
+        editor.apply();
 
-        prefs.edit()
-                .putString("api_key", apiKey)
-                .putString("api_url", apiUrl)
-                .putString("model", model)
-                .putString("prompt_receive", zh)
-                .putString("prompt_en", en)
-                .putString("prompt_ru", ru)
-                .putString("prompt_uk", uk)
-                .putString("prompt_ko", ko)
-                .putString("prompt_es", es)
-                .apply();
-
-        // ★ 改为6个参数
-        AITranslator.savePrompts(zh, en, ru, uk, ko, es);
-
-        writePromptsToFile(zh, en, ru, uk, ko, es);
-
-        Toast.makeText(this, "✅ 配置已保存", Toast.LENGTH_SHORT).show();
-    }
-
-    private void writePromptsToFile(String zh, String en, String ru, String uk, String ko, String es) {
-        try {
-            File file = new File("/data/local/tmp/htai_prompts.txt");
-            file.getParentFile().mkdirs();
-            BufferedWriter w = new BufferedWriter(new FileWriter(file));
-            w.write("###ZH###\n" + zh + "\n");
-            w.write("###EN###\n" + en + "\n");
-            w.write("###RU###\n" + ru + "\n");
-            w.write("###UK###\n" + uk + "\n");
-            w.write("###KO###\n" + ko + "\n");
-            w.write("###ES###\n" + es + "\n");
-            w.close();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    // ★ 保留你原来的测试翻译功能
-    private void testTranslation() {
-        String apiKey = editApiKey.getText().toString().trim();
-        String apiUrl = editApiUrl.getText().toString().trim();
-        String model = editModel.getText().toString().trim();
-
-        if (apiKey.isEmpty()) {
-            Toast.makeText(this, "请先填写 API Key", Toast.LENGTH_SHORT).show();
-            return;
-        }
-
-        new AlertDialog.Builder(this)
-                .setTitle("测试翻译")
-                .setMessage("请输入要翻译的中文")
-                .setView(new EditText(this))
-                .setPositiveButton("翻译成英文", (d, w) -> {
-                    EditText input = (EditText) ((AlertDialog) d).findViewById(android.R.id.custom);
-                    if (input != null) {
-                        String text = input.getText().toString().trim();
-                        if (!text.isEmpty()) {
-                            doTranslation(text, "en", apiKey, apiUrl, model);
-                        }
-                    }
-                })
-                .setNegativeButton("翻译成俄文", (d, w) -> {
-                    EditText input = (EditText) ((AlertDialog) d).findViewById(android.R.id.custom);
-                    if (input != null) {
-                        String text = input.getText().toString().trim();
-                        if (!text.isEmpty()) {
-                            doTranslation(text, "ru", apiKey, apiUrl, model);
-                        }
-                    }
-                })
-                .setNeutralButton("取消", null)
-                .show();
-    }
-
-    private void doTranslation(String text, String lang, String key, String url, String model) {
         new Thread(() -> {
             try {
-                AITranslator.init(key, url, model);
-                String result = AITranslator.fromChinese(text, lang);
+                String modelList = prefs.getString("model_list", "");
+                String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
+                        + "api_key=" + key + "\n"
+                        + "api_url=" + url + "\n"
+                        + "model=" + mdl + "\n"
+                        + "model_list=" + modelList + "\n"
+                        + "EOF\n";
+                runRoot(cfg);
+
+                // ★ 新增 KO### 和 ES### 分段
+                String prompts = "cat > /data/local/tmp/htai_prompts.txt << 'EOF'\n"
+                        + "###ZH###\n" + zh + "\n"
+                        + "###EN###\n" + en + "\n"
+                        + "###RU###\n" + ru + "\n"
+                        + "###UK###\n" + uk + "\n"
+                        + "###KO###\n" + ko + "\n"
+                        + "###ES###\n" + es + "\n"
+                        + "EOF\n";
+                runRoot(prompts);
+
+                runRoot("chmod 644 /data/local/tmp/htai_config.txt /data/local/tmp/htai_prompts.txt");
+
+                // ★ 兼容处理：如果 AITranslator.savePrompts 只接受4个参数，用反射或直接调用6参版本
+                try {
+                    // 尝试调用6参数版本（如果 AITranslator 已更新）
+                    java.lang.reflect.Method m = AITranslator.class.getMethod("savePrompts", String.class, String.class, String.class, String.class, String.class, String.class);
+                    m.invoke(null, zh, en, ru, uk, ko, es);
+                } catch (NoSuchMethodException e) {
+                    //  fallback：只传原来的4个参数
+                    AITranslator.savePrompts(zh, en, ru, uk);
+                }
+
                 runOnUiThread(() -> {
-                    new AlertDialog.Builder(this)
-                            .setTitle("翻译结果 (" + lang + ")")
-                            .setMessage(result)
-                            .setPositiveButton("确定", null)
-                            .show();
+                    btnSave.setEnabled(true);
+                    btnSave.setText("💾 保存全部配置");
+                    toast("✅ 已保存！强制停止 HelloTalk 后重开");
                 });
             } catch (Exception e) {
-                runOnUiThread(() -> Toast.makeText(this, "翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show());
+                runOnUiThread(() -> {
+                    btnSave.setEnabled(true);
+                    btnSave.setText("💾 保存全部配置");
+                    toast("❌ " + e.getMessage());
+                });
+            }
+        }).start();
+    }
+
+    private void testTranslate() {
+        String key = etKey.getText().toString().trim();
+        if (key.isEmpty()) {
+            toast("先填 Key");
+            return;
+        }
+        String mdl = etModel.getText().toString().trim();
+        if (mdl.isEmpty()) {
+            toast("先选模型");
+            return;
+        }
+        btnTest.setEnabled(false);
+        btnTest.setText("翻译中...");
+        String url = etUrl.getText().toString().trim();
+
+        new Thread(() -> {
+            try {
+                AITranslator.init(key, url, mdl);
+                String result = AITranslator.translateTest("你好世界", "English");
+                runOnUiThread(() -> {
+                    btnTest.setEnabled(true);
+                    btnTest.setText("🧪 测试翻译");
+                    if ("你好世界".equals(result)) {
+                        toast("❌ 未翻译");
+                    } else {
+                        toast("✅ " + result);
+                    }
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    btnTest.setEnabled(true);
+                    btnTest.setText("🧪 测试翻译");
+                    toast("❌ " + e.getMessage());
+                });
             }
         }).start();
     }
