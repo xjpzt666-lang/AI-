@@ -12,7 +12,17 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
 
-        <!-- 将 MainActivity 设为默认启动页 -->
+        <!-- Xposed 模块必需的三行元数据 -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="empower" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="HT AI翻译 - 自动拦截翻译HelloTalk消息" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="93" />
+
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -20,7 +30,6 @@
             </intent-filter>
         </activity>
 
-        <!-- 注册 SettingsActivity（设置页） -->
         <activity android:name=".SettingsActivity" android:exported="false" />
 
     </application>
