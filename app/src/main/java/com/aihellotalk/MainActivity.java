@@ -244,6 +244,7 @@ public class MainActivity extends Activity {
         bottomBar.addView(sendBtn);
         mainContent.addView(bottomBar);
 
+
         drawerLayout.addView(mainContent);
 
         // 侧滑菜单
