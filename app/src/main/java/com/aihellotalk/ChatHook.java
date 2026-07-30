@@ -46,11 +46,10 @@ public class ChatHook {
 
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
 
-    // ★ 新增：用于跟踪当前是否正在等待 API 返回，防止正常聊天输入 @ 被误杀
     private static volatile boolean isTranslatingAPI = false;
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v10.1 (急停防悔版 + XML隔离舱) ===");
+        log("=== Hook v10.2 (Quote 锚定狙击 + Image URL 提取) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -136,15 +135,29 @@ public class ChatHook {
                     String text = null;
                     try { text = (String) XposedHelpers.callMethod(bean, "getText"); } catch (Exception ignored) {}
                     
+                    String msgType = null;
+                    try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Exception ignored) {}
+
                     if (text == null || text.isEmpty()) {
-                        String className = bean.getClass().getSimpleName().toLowerCase();
-                        if (className.contains("image") || className.contains("pic")) {
-                            text = "[对方发送了一张图片]";
-                        } else if (className.contains("voice") || className.contains("audio")) {
+                        // ★ 核心升级：利用逆向情报提取图片原图 URL
+                        if ("image".equals(msgType) || "photo".equals(msgType)) {
+                            try {
+                                Class<?> imgBeanClass = XposedHelpers.findClass("com.hellotalk.talk.detail.delegate.image.IMImageBean", cl);
+                                Object imgBean = XposedHelpers.callMethod(msg, "getMessageContent", imgBeanClass, true);
+                                String imgUrl = (String) XposedHelpers.callMethod(imgBean, "getUrl");
+                                if (imgUrl != null && !imgUrl.isEmpty()) {
+                                    text = "[对方发送了一张图片，URL: " + imgUrl + "]";
+                                } else {
+                                    text = "[对方发送了一张图片]";
+                                }
+                            } catch (Throwable e) {
+                                text = "[对方发送了一张图片]";
+                            }
+                        } else if ("voice".equals(msgType) || "audio".equals(msgType)) {
                             text = "[对方发送了一条语音]";
-                        } else if (className.contains("video")) {
+                        } else if ("video".equals(msgType)) {
                             text = "[对方发送了一段视频]";
-                        } else if (className.contains("emoji") || className.contains("sticker")) {
+                        } else if ("emoji".equals(msgType) || "sticker".equals(msgType)) {
                             text = "[对方发送了一个表情包]";
                         } else {
                             return; 
@@ -214,6 +227,33 @@ public class ChatHook {
                         } catch (Throwable ignored) {}
                     }
                 });
+    }
+
+    // ★ 核心升级：遍历屏幕组件，精准捕获“引用回复框”内的目标文字
+    private static String getQuoteReplyText(View rootView) {
+        if (rootView == null) return null;
+        
+        if (rootView instanceof android.widget.TextView) {
+            android.widget.TextView tv = (android.widget.TextView) rootView;
+            try {
+                String idName = tv.getResources().getResourceEntryName(tv.getId());
+                // 根据逆向情报，引用文本存在名为 tvReplyDesc 的控件中
+                if (idName != null && idName.equalsIgnoreCase("tvReplyDesc")) {
+                    if (tv.getVisibility() == View.VISIBLE) {
+                        return tv.getText().toString();
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        
+        if (rootView instanceof ViewGroup) {
+            ViewGroup vg = (ViewGroup) rootView;
+            for (int i = 0; i < vg.getChildCount(); i++) {
+                String res = getQuoteReplyText(vg.getChildAt(i));
+                if (res != null) return res;
+            }
+        }
+        return null;
     }
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
@@ -298,21 +338,18 @@ public class ChatHook {
                 if (s == null) return;
                 String currentText = s.toString();
 
-                // ★ 急停机制：如果正在转圈，且用户输入了 @ 符号
                 if (isTranslatingAPI && currentText.contains("@")) {
-                    AITranslator.cancelOngoingTranslation(); // 瞬间切断网络
+                    AITranslator.cancelOngoingTranslation(); 
                     
-                    // 自动擦除 @ 符号，免得留着碍眼
                     String cleanText = currentText.replace("@", "");
-                    edit.removeTextChangedListener(this); // 暂时屏蔽监听，防止死循环
+                    edit.removeTextChangedListener(this); 
                     edit.setText(cleanText);
-                    edit.setSelection(cleanText.length()); // 保持光标在末尾
+                    edit.setSelection(cleanText.length()); 
                     edit.addTextChangedListener(this);
                     
-                    return; // 结束逻辑，按钮恢复的动作交给 catch 块处理
+                    return; 
                 }
 
-                // 常密的按钮显隐逻辑，只在“非转圈状态”下生效
                 String textWithoutAt = currentText.replace("@", "");
                 if (!currentText.trim().isEmpty() && AITranslator.isChineseOnly(textWithoutAt)) {
                     if (!isTranslatingAPI) {
@@ -333,11 +370,24 @@ public class ChatHook {
             String text = edit.getText().toString().trim();
             if (text.isEmpty() || !AITranslator.isChineseOnly(text)) return;
 
-            // ★ 进入锁定转圈状态
             isTranslatingAPI = true;
             btn.setEnabled(false);
             btn.setText("...");
             btn.setAlpha(1.0f);
+
+            // ★ 核心战术：提取 Quote 引用文本，强行绑定语境
+            String quoteText = null;
+            try {
+                quoteText = getQuoteReplyText(edit.getRootView());
+            } catch (Exception ignored) {}
+
+            String textToTranslate = text;
+            if (quoteText != null && !quoteText.trim().isEmpty()) {
+                textToTranslate = "【我要回复的对方原话】：" + quoteText.trim() + "\n【我的回复】：" + text;
+                log("已成功锚定 Quote 语境：" + quoteText);
+            }
+
+            final String finalTextToTranslate = textToTranslate;
 
             new Thread(() -> {
                 try {
@@ -350,24 +400,23 @@ public class ChatHook {
                     String lastReq = chatRequestMap.get(currentChatId);
                     int retryCount = chatRetryCountMap.getOrDefault(currentChatId, 0);
                     
-                    boolean isRetry = text.equals(lastReq);
+                    boolean isRetry = finalTextToTranslate.equals(lastReq);
                     if (isRetry) {
                         retryCount++;
                         chatRetryCountMap.put(currentChatId, retryCount);
                     } else {
-                        chatRequestMap.put(currentChatId, text);
+                        chatRequestMap.put(currentChatId, finalTextToTranslate);
                         chatRetryCountMap.put(currentChatId, 0);
                         retryCount = 0;
                     }
 
-                    String finalPromptText = text;
+                    String finalPromptText = finalTextToTranslate;
                     if (isRetry) {
-                        finalPromptText = text + "\n\n【系统强制指令】：用户对刚才的翻译结果不满意，要求重新生成（重试第" + retryCount + "次）。请彻底抛弃你脑海中默认的第一反应，使用完全不同的表达方式、词汇或句式，给出4个全新的版本！严禁与上次翻译重复！";
+                        finalPromptText = finalTextToTranslate + "\n\n【系统强制指令】：用户对刚才的翻译结果不满意，要求重新生成（重试第" + retryCount + "次）。请彻底抛弃你脑海中默认的第一反应，使用完全不同的表达方式、词汇或句式，给出4个全新的版本！严禁与上次翻译重复！";
                     }
 
                     String result = AITranslator.translateWithHistory(finalPromptText, targetLang, currentChatId);
 
-                    // 正常返回
                     isTranslatingAPI = false;
                     edit.post(() -> {
                         btn.setEnabled(true);
@@ -376,7 +425,6 @@ public class ChatHook {
                         showPicker(edit, result);
                     });
                 } catch (Exception e) {
-                    // 异常或急停返回
                     isTranslatingAPI = false;
                     edit.post(() -> {
                         btn.setEnabled(true);
