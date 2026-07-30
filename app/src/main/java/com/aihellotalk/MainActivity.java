@@ -66,7 +66,7 @@ public class MainActivity extends Activity {
     private OkHttpClient httpClient;
     private Handler mainHandler;
     private DatabaseHelper dbHelper;
-    private static final int MAX_HISTORY_ROUNDS = 100;
+    private static final int MAX_HISTORY_ROUNDS = 50;
 
     private String cachedApiKey = "";
     private String cachedApiUrl = "";
@@ -97,7 +97,7 @@ public class MainActivity extends Activity {
         // 顶部栏
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setPadding(16, 16, 16, 16);
+        topBar.setPadding(16, 48, 16, 16);
         topBar.setBackgroundColor(Color.parseColor("#F5F5F5"));
 
         Button leftMenuBtn = new Button(this);
@@ -177,19 +177,22 @@ public class MainActivity extends Activity {
         imagePreviewBar.addView(previewCloseBtn);
         mainContent.addView(imagePreviewBar);
 
-        // 底部输入栏
+        // ★★ 底部输入栏（全新布局，解决拥挤问题）★★
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
-        bottomBar.setPadding(8, 8, 8, 8);
+        bottomBar.setPadding(12, 8, 12, 8);
         bottomBar.setBackgroundColor(Color.parseColor("#F0F0F0"));
 
+        // 1. 加号按钮
         attachBtn = new Button(this);
         attachBtn.setText("+");
-        attachBtn.setTextSize(26f);
+        attachBtn.setTextSize(24f);
         attachBtn.setBackgroundColor(Color.TRANSPARENT);
+        attachBtn.setMinWidth(dpToPx(36));
+        attachBtn.setMinimumHeight(dpToPx(36));
         attachBtn.setOnClickListener(v -> showAttachMenu());
 
-        // 模型切换 Spinner
+        // 2. 模型切换 Spinner
         modelList = loadModelList();
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_item, modelList);
@@ -197,37 +200,43 @@ public class MainActivity extends Activity {
         modelSpinner = new Spinner(this);
         modelSpinner.setAdapter(adapter);
         modelSpinner.setLayoutParams(new LinearLayout.LayoutParams(
-                dpToPx(140), ViewGroup.LayoutParams.WRAP_CONTENT));
+                dpToPx(130), ViewGroup.LayoutParams.WRAP_CONTENT));
+        modelSpinner.setMinimumHeight(dpToPx(36));
 
+        // 设置当前选中模型
         String currentModel = prefs.getString("model", "");
-        if (!currentModel.isEmpty()) {
-            for (int i = 0; i < modelList.size(); i++) {
-                if (modelList.get(i).equals(currentModel)) {
-                    modelSpinner.setSelection(i);
-                    break;
-                }
-            }
+        if (!currentModel.isEmpty() && modelList.contains(currentModel)) {
+            modelSpinner.setSelection(modelList.indexOf(currentModel));
         }
 
         modelSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 String selected = modelList.get(position);
-                cachedModel = selected;
-                prefs.edit().putString("model", selected).apply();
+                if (!selected.isEmpty()) {
+                    cachedModel = selected;
+                    prefs.edit().putString("model", selected).apply();
+                }
             }
             @Override
             public void onNothingSelected(AdapterView<?> parent) {}
         });
 
+        // 3. 输入框
         inputBox = new EditText(this);
         inputBox.setHint("输入消息...");
         inputBox.setBackgroundColor(Color.WHITE);
-        inputBox.setPadding(16, 12, 16, 12);
-        inputBox.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        inputBox.setPadding(12, 8, 12, 8);
+        inputBox.setLayoutParams(new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        inputBox.setMinimumHeight(dpToPx(36));
 
+        // 4. 发送按钮
         sendBtn = new Button(this);
         sendBtn.setText("发送");
+        sendBtn.setTextSize(14f);
+        sendBtn.setMinWidth(dpToPx(60));
+        sendBtn.setMinimumHeight(dpToPx(36));
         sendBtn.setOnClickListener(v -> sendMessage());
 
         bottomBar.addView(attachBtn);
@@ -241,10 +250,10 @@ public class MainActivity extends Activity {
         // 侧滑菜单
         drawerContent = new LinearLayout(this);
         drawerContent.setOrientation(LinearLayout.VERTICAL);
-        drawerContent.setPadding(20, 70, 20, 20);
+        drawerContent.setPadding(20, 90, 20, 20);
         drawerContent.setBackgroundColor(Color.parseColor("#FAFAFA"));
 
-        DrawerLayout.LayoutParams lp = new DrawerLayout.LayoutParams(dpToPx(300), ViewGroup.LayoutParams.MATCH_PARENT);
+        DrawerLayout.LayoutParams lp = new DrawerLayout.LayoutParams(dpToPx(280), ViewGroup.LayoutParams.MATCH_PARENT);
         lp.gravity = Gravity.LEFT;
         drawerContent.setLayoutParams(lp);
 
@@ -261,21 +270,24 @@ public class MainActivity extends Activity {
         setContentView(drawerLayout);
     }
 
+    /** ★★ 核心修复：loadModelList 不再使用硬编码默认值 ★★ */
     private List<String> loadModelList() {
         List<String> list = new ArrayList<>();
         String saved = prefs.getString("model_list", "");
         if (!saved.isEmpty()) {
             String[] arr = saved.split(",");
             for (String s : arr) {
-                list.add(s.trim());
+                String trimmed = s.trim();
+                if (!trimmed.isEmpty()) {
+                    list.add(trimmed);
+                }
             }
         }
-        if (list.isEmpty()) {
-            String defaultModel = prefs.getString("model", "deepseek-v4");
-            list.add(defaultModel);
-        }
+        // ★ 如果列表为空，不添加任何默认值，让 Spinner 显示空
         return list;
     }
+
+    // ---------- 以下方法保持不变，直接从原文件复制即可 ----------
 
     private void clearImagePreview() {
         pendingImageBase64 = "";
@@ -655,196 +667,4 @@ public class MainActivity extends Activity {
                 JSONObject imagePart = new JSONObject();
                 imagePart.put("type", "image_url");
                 JSONObject imageUrl = new JSONObject();
-                imageUrl.put("url", "data:image/jpeg;base64," + localImageBase64);
-                imagePart.put("image_url", imageUrl);
-                contentArray.put(imagePart);
-                userMessage.put("content", contentArray);
-            } else {
-                userMessage.put("content", text);
-            }
-            messages.put(userMessage);
-            requestBody.put("messages", messages);
-
-            Request request = new Request.Builder()
-                    .url(apiUrl)
-                    .addHeader("Authorization", "Bearer " + apiKey)
-                    .addHeader("Content-Type", "application/json")
-                    .post(RequestBody.create(requestBody.toString(), MediaType.parse("application/json")))
-                    .build();
-
-            httpClient.newCall(request).enqueue(new Callback() {
-                @Override
-                public void onFailure(Call call, IOException e) {
-                    mainHandler.post(() -> {
-                        removeLastSystemMessage();
-                        displayMessage("system", "❌ 请求失败: " + e.getMessage());
-                        saveMessageToDb(currentChatId, "system", "❌ 请求失败: " + e.getMessage());
-                    });
-                }
-                @Override
-                public void onResponse(Call call, Response response) throws IOException {
-                    String responseBody = response.body().string();
-                    mainHandler.post(() -> {
-                        removeLastSystemMessage();
-                        if (response.isSuccessful()) {
-                            try {
-                                JSONObject json = new JSONObject(responseBody);
-                                String reply = json.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content");
-                                displayMessage("ai", reply);
-                                saveMessageToDb(currentChatId, "ai", reply);
-                            } catch (Exception e) {
-                                displayMessage("system", "❌ 解析响应失败: " + e.getMessage());
-                                saveMessageToDb(currentChatId, "system", "❌ 解析响应失败: " + e.getMessage());
-                            }
-                        } else {
-                            displayMessage("system", "❌ 服务器错误 " + response.code() + ": " + responseBody);
-                            saveMessageToDb(currentChatId, "system", "❌ 服务器错误 " + response.code() + ": " + responseBody);
-                        }
-                    });
-                }
-            });
-        } catch (Exception e) {
-            removeLastSystemMessage();
-            displayMessage("system", "❌ 构建请求失败: " + e.getMessage());
-            saveMessageToDb(currentChatId, "system", "❌ 构建请求失败: " + e.getMessage());
-        }
-    }
-
-    private void regenerateAnswer() {
-        if (lastUserMessage.isEmpty()) { Toast.makeText(this, "没有可重新回答的消息", Toast.LENGTH_SHORT).show(); return; }
-        removeLastAiMessage();
-        inputBox.setText(lastUserMessage);
-        sendMessage();
-    }
-
-    private void removeLastAiMessage() {
-        for (int i = messageContainer.getChildCount() - 1; i >= 0; i--) {
-            View child = messageContainer.getChildAt(i);
-            if (child instanceof LinearLayout) {
-                LinearLayout row = (LinearLayout) child;
-                if (row.getChildCount() > 0 && row.getChildAt(0) instanceof TextView) {
-                    TextView bubble = (TextView) row.getChildAt(0);
-                    String text = bubble.getText().toString();
-                    if (!text.contains("正在思考") && !text.contains("⚠️") && !text.contains("❌")) {
-                        if (bubble.getCurrentTextColor() == Color.parseColor("#E8E8E8") || bubble.getBackground() != null) {
-                            messageContainer.removeViewAt(i);
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private void displayMessage(String role, String content) {
-        String filteredContent = content.replaceAll("[*\\-#：；—]", "");
-        LinearLayout msgRow = new LinearLayout(this);
-        msgRow.setOrientation(LinearLayout.HORIZONTAL);
-        msgRow.setPadding(0, 8, 0, 8);
-
-        if ("ai".equals(role)) {
-            LinearLayout bubbleWrapper = new LinearLayout(this);
-            bubbleWrapper.setOrientation(LinearLayout.VERTICAL);
-            bubbleWrapper.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            TextView bubble = new TextView(this);
-            bubble.setText(filteredContent);
-            bubble.setTextSize(15f);
-            bubble.setPadding(16, 12, 16, 12);
-            bubble.setLineSpacing(4f, 1f);
-            bubble.setBackgroundColor(Color.parseColor("#E8E8E8"));
-            bubble.setTextIsSelectable(true);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.7);
-            bubble.setLayoutParams(lp);
-            bubbleWrapper.addView(bubble);
-            msgRow.addView(bubbleWrapper);
-            Button rotateBtn = new Button(this);
-            rotateBtn.setText("🔄");
-            rotateBtn.setTextSize(18f);
-            rotateBtn.setBackgroundColor(Color.TRANSPARENT);
-            rotateBtn.setOnClickListener(v -> regenerateAnswer());
-            msgRow.addView(rotateBtn);
-            msgRow.setGravity(Gravity.START);
-        } else if ("user".equals(role)) {
-            TextView bubble = new TextView(this);
-            bubble.setText(filteredContent);
-            bubble.setTextSize(15f);
-            bubble.setPadding(16, 12, 16, 12);
-            bubble.setLineSpacing(4f, 1f);
-            bubble.setBackgroundColor(Color.parseColor("#DCF8C6"));
-            bubble.setTextIsSelectable(true);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.7);
-            bubble.setLayoutParams(lp);
-            LinearLayout spacer = new LinearLayout(this);
-            spacer.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-            msgRow.addView(spacer);
-            msgRow.addView(bubble);
-            msgRow.setGravity(Gravity.END);
-        } else {
-            TextView bubble = new TextView(this);
-            bubble.setText(filteredContent);
-            bubble.setTextSize(13f);
-            bubble.setPadding(16, 12, 16, 12);
-            bubble.setLineSpacing(4f, 1f);
-            bubble.setBackgroundColor(Color.parseColor("#FFF3CD"));
-            bubble.setTextIsSelectable(true);
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.75);
-            bubble.setLayoutParams(lp);
-            msgRow.addView(bubble);
-            msgRow.setGravity(Gravity.CENTER);
-        }
-        messageContainer.addView(msgRow);
-        messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
-    }
-
-    private void removeLastSystemMessage() {
-        if (messageContainer.getChildCount() == 0) return;
-        View lastView = messageContainer.getChildAt(messageContainer.getChildCount() - 1);
-        if (lastView instanceof LinearLayout) {
-            LinearLayout lastRow = (LinearLayout) lastView;
-            if (lastRow.getChildCount() > 0 && lastRow.getChildAt(0) instanceof TextView) {
-                TextView lastBubble = (TextView) lastRow.getChildAt(0);
-                String text = lastBubble.getText().toString();
-                if (text.contains("正在思考") || text.contains("⚠️") || text.contains("❌"))
-                    messageContainer.removeViewAt(messageContainer.getChildCount() - 1);
-            }
-        }
-    }
-
-    private String readConfig(String key) {
-        try {
-            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", "cat /data/local/tmp/htai_config.txt"});
-            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
-            String line;
-            while ((line = r.readLine()) != null) {
-                if (line.startsWith(key + "=")) return line.substring(key.length() + 1).trim();
-            }
-            p.waitFor();
-        } catch (Exception e) { e.printStackTrace(); }
-        return "";
-    }
-
-    private int dpToPx(int dp) {
-        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, getResources().getDisplayMetrics());
-    }
-
-    static class ChatSession { String id; String name; ChatSession(String id, String name) { this.id = id; this.name = name; } }
-    static class Message { String role; String content; Message(String role, String content) { this.role = role; this.content = content; } }
-
-    static class DatabaseHelper extends SQLiteOpenHelper {
-        private static final String DB_NAME = "chat_history.db";
-        private static final int DB_VERSION = 1;
-        DatabaseHelper(Context context) { super(context, DB_NAME, null, DB_VERSION); }
-        @Override
-        public void onCreate(SQLiteDatabase db) {
-            db.execSQL("CREATE TABLE chats (id TEXT PRIMARY KEY, name TEXT NOT NULL, updated_at INTEGER NOT NULL)");
-            db.execSQL("CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, timestamp INTEGER NOT NULL, FOREIGN KEY (chat_id) REFERENCES chats(id))");
-        }
-        @Override
-        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-            db.execSQL("DROP TABLE IF EXISTS messages"); db.execSQL("DROP TABLE IF EXISTS chats"); onCreate(db);
-        }
-    }
-}
+                imageUrl.put("url", "data:image/jpeg
