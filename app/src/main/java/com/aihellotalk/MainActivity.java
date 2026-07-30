@@ -103,9 +103,17 @@ public class MainActivity extends Activity {
         modelLabel.setGravity(Gravity.CENTER_VERTICAL);
         modelLabel.setTag("modelLabel");
 
+        // ★ 重新加回来的设置菜单按钮
+        Button rightMenuBtn = new Button(this);
+        rightMenuBtn.setText("⋮");
+        rightMenuBtn.setTextSize(24f);
+        rightMenuBtn.setBackgroundColor(Color.TRANSPARENT);
+        rightMenuBtn.setOnClickListener(this::showPopupMenu);
+
         topBar.addView(leftMenuBtn);
         topBar.addView(title);
         topBar.addView(modelLabel);
+        topBar.addView(rightMenuBtn); // ★ 挂载到顶部栏
         mainContent.addView(topBar);
 
         // 当前对话标题
@@ -256,6 +264,22 @@ public class MainActivity extends Activity {
         refreshDrawerList();
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
+    }
+
+    // ──────────────────────────────────────
+    // 弹出设置菜单 (★ 恢复的功能)
+    // ──────────────────────────────────────
+    private void showPopupMenu(View v) {
+        PopupMenu popup = new PopupMenu(this, v);
+        popup.getMenu().add(0, 1, 0, "⚙️ 设置/API配置");
+        popup.setOnMenuItemClickListener(item -> {
+            if (item.getItemId() == 1) {
+                startActivity(new Intent(this, SettingsActivity.class));
+                return true;
+            }
+            return false;
+        });
+        popup.show();
     }
 
     // ──────────────────────────────────────
