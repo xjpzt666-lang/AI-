@@ -107,6 +107,15 @@ public class MainActivity extends Activity {
         title.setGravity(Gravity.CENTER);
         title.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
+        // ★ 新增：右上角模型名称显示
+        TextView modelLabel = new TextView(this);
+        modelLabel.setText(cachedModel.isEmpty() ? "未选择" : cachedModel);
+        modelLabel.setTextSize(12f);
+        modelLabel.setTextColor(Color.parseColor("#666666"));
+        modelLabel.setPadding(0, 0, 8, 0);
+        modelLabel.setGravity(Gravity.CENTER_VERTICAL);
+        modelLabel.setTag("modelLabel");
+
         Button rightMenuBtn = new Button(this);
         rightMenuBtn.setText("⋮");
         rightMenuBtn.setTextSize(24f);
@@ -115,6 +124,7 @@ public class MainActivity extends Activity {
 
         topBar.addView(leftMenuBtn);
         topBar.addView(title);
+        topBar.addView(modelLabel);     // ★ 新增：模型名显示在右上角
         topBar.addView(rightMenuBtn);
         mainContent.addView(topBar);
 
@@ -207,6 +217,9 @@ public class MainActivity extends Activity {
                 if (!selected.isEmpty()) {
                     cachedModel = selected;
                     prefs.edit().putString("model", selected).apply();
+                    // ★ 新增：更新右上角的模型名称显示
+                    TextView ml = (TextView) drawerLayout.findViewWithTag("modelLabel");
+                    if (ml != null) ml.setText(selected);
                 }
             }
             @Override
