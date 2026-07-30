@@ -718,7 +718,7 @@ public class MainActivity extends Activity {
             removeLastSystemMessage();
             displayMessage("system", "❌ 构建请求失败: " + e.getMessage());
             saveMessageToDb(currentChatId, "system", "❌ 构建请求失败: " + e.getMessage());
-        }
+
     }
 
     private void regenerateAnswer() {
