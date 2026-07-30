@@ -44,12 +44,13 @@ public class ChatHook {
     private static final Map<String, String> chatRequestMap = new ConcurrentHashMap<>();
     private static final Map<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
 
+    // 内存防线保留：应付正常运行时的毫秒级拦截
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
 
     private static volatile boolean isTranslatingAPI = false;
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v10.2 (Quote 锚定狙击 + Image URL 提取) ===");
+        log("=== Hook v10.3 (硬盘级穿透去重版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -139,7 +140,6 @@ public class ChatHook {
                     try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Exception ignored) {}
 
                     if (text == null || text.isEmpty()) {
-                        // ★ 核心升级：利用逆向情报提取图片原图 URL
                         if ("image".equals(msgType) || "photo".equals(msgType)) {
                             try {
                                 Class<?> imgBeanClass = XposedHelpers.findClass("com.hellotalk.talk.detail.delegate.image.IMImageBean", cl);
@@ -168,12 +168,15 @@ public class ChatHook {
                     try { mid = (String) XposedHelpers.callMethod(msg, "getMsgId"); } catch (Exception ignored) {}
                     if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
 
+                    // 内存防线
                     boolean isNewMessage = recordedMsgIds.add(currentChatId + "_" + mid);
+                    
                     if (isNewMessage) {
+                        // ★ 穿透升级：将 mid 直接传给 AITranslator 激活硬盘锁
                         if (isMine) {
-                            AITranslator.appendHistory(currentChatId, "assistant", text);
+                            AITranslator.appendHistory(currentChatId, mid, "assistant", text);
                         } else {
-                            AITranslator.appendHistory(currentChatId, "user", text);
+                            AITranslator.appendHistory(currentChatId, mid, "user", text);
                         }
                     }
 
@@ -229,7 +232,6 @@ public class ChatHook {
                 });
     }
 
-    // ★ 核心升级：遍历屏幕组件，精准捕获“引用回复框”内的目标文字
     private static String getQuoteReplyText(View rootView) {
         if (rootView == null) return null;
         
@@ -237,7 +239,6 @@ public class ChatHook {
             android.widget.TextView tv = (android.widget.TextView) rootView;
             try {
                 String idName = tv.getResources().getResourceEntryName(tv.getId());
-                // 根据逆向情报，引用文本存在名为 tvReplyDesc 的控件中
                 if (idName != null && idName.equalsIgnoreCase("tvReplyDesc")) {
                     if (tv.getVisibility() == View.VISIBLE) {
                         return tv.getText().toString();
@@ -375,7 +376,6 @@ public class ChatHook {
             btn.setText("...");
             btn.setAlpha(1.0f);
 
-            // ★ 核心战术：提取 Quote 引用文本，强行绑定语境
             String quoteText = null;
             try {
                 quoteText = getQuoteReplyText(edit.getRootView());
