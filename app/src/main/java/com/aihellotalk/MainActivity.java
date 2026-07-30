@@ -525,10 +525,11 @@ public class MainActivity extends Activity {
         if (text.isEmpty() && !pendingImageBase64.isEmpty()) text = "请描述这张图片";
         lastUserMessage = text;
 
-        // ★★★ 修复点：在发送前先记录是否有图片，然后立即隐藏预览条 ★★★
-        boolean hasImage = !pendingImageBase64.isEmpty();
+        // ★★★ 修复：在清空 pendingImageBase64 之前，先保存到局部变量 ★★★
+        String localImageBase64 = pendingImageBase64;
+        boolean hasImage = !localImageBase64.isEmpty();
         if (hasImage) {
-            clearImagePreview(); // 立即隐藏预览条，防止用户重复点击
+            clearImagePreview(); // 清空 UI 和 pendingImageBase64
         }
 
         if (currentChatId.isEmpty()) {
@@ -594,7 +595,7 @@ public class MainActivity extends Activity {
             }
             JSONObject userMessage = new JSONObject();
             userMessage.put("role", "user");
-            // ★★★ 修复点：使用 hasImage 判断，而不是 pendingImageBase64（已被清空）★★★
+            // ★★★ 修复：使用局部变量 localImageBase64 ★★★
             if (hasImage) {
                 JSONArray contentArray = new JSONArray();
                 JSONObject textPart = new JSONObject();
@@ -604,7 +605,7 @@ public class MainActivity extends Activity {
                 JSONObject imagePart = new JSONObject();
                 imagePart.put("type", "image_url");
                 JSONObject imageUrl = new JSONObject();
-                imageUrl.put("url", "data:image/jpeg;base64," + pendingImageBase64);
+                imageUrl.put("url", "data:image/jpeg;base64," + localImageBase64);
                 imagePart.put("image_url", imageUrl);
                 contentArray.put(imagePart);
                 userMessage.put("content", contentArray);
