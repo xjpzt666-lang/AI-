@@ -240,6 +240,7 @@ public class AITranslator {
         }
     }
 
+    // ★ 修改区域 1：带有“滑动窗口+指令保鲜”的历史打包逻辑
     public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
         try {
             JSONArray messages = new JSONArray();
@@ -268,9 +269,31 @@ public class AITranslator {
             sys.put("content", sysPrompt);
             messages.put(sys);
 
-            JSONArray history = loadHistory(chatId);
-            for (int i = 0; i < history.length(); i++) {
-                messages.put(history.get(i));
+            JSONArray fullHistory = loadHistory(chatId);
+            
+            JSONArray systemDirectives = new JSONArray();
+            JSONArray chatMessages = new JSONArray();
+
+            for (int i = 0; i < fullHistory.length(); i++) {
+                JSONObject msg = fullHistory.getJSONObject(i);
+                String role = msg.optString("role", "");
+                if ("system".equals(role)) {
+                    systemDirectives.put(msg); // 系统调教指令全部留存
+                } else {
+                    chatMessages.put(msg);     // 聊天记录分离出来
+                }
+            }
+
+            // 把调教指令先塞进去
+            for (int i = 0; i < systemDirectives.length(); i++) {
+                messages.put(systemDirectives.get(i));
+            }
+
+            // 滑动窗口：普通对话只保留最新的 80 条记录
+            int maxChatMessages = 80; 
+            int startIdx = Math.max(0, chatMessages.length() - maxChatMessages);
+            for (int i = startIdx; i < chatMessages.length(); i++) {
+                messages.put(chatMessages.get(i));
             }
 
             JSONObject user = new JSONObject();
@@ -544,13 +567,15 @@ public class AITranslator {
         }
     }
 
+    // ★ 修改区域 2：聊天历史写入上限放宽至 1000 字
     public static void appendHistory(String chatId, String role, String content) {
         if (content == null || content.isEmpty()) return;
         try {
             JSONArray history = loadHistory(chatId);
             JSONObject entry = new JSONObject();
             entry.put("role", role);
-            String display = content.length() > 200 ? content.substring(0, 200) : content;
+            // 调高到 1000 字，保留长文上下文，防止意外撑爆
+            String display = content.length() > 1000 ? content.substring(0, 1000) : content;
             entry.put("content", display);
             history.put(entry);
 
@@ -570,7 +595,6 @@ public class AITranslator {
                 JSONObject obj = history.getJSONObject(i);
                 String role = obj.optString("role", "");
                 String content = obj.optString("content", "");
-                // ★ 适配全新的身份标签
                 if ("user".equals(role)) {
                     list.add(new String[]{"对方", content});
                 } else if ("assistant".equals(role)) {
