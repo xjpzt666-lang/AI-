@@ -544,45 +544,122 @@ public class ChatHook {
     }
 
     // ──────────────────────────────────────
-    // showPicker（使用最新伙伴名）
+    // 弹窗优化：卡片式提取（纯净复制 + 中文提示）
     // ──────────────────────────────────────
 
     private static void showPicker(EditText edit, String result, List<String[]> history) {
-        List<String> versions = new ArrayList<>();
-        Pattern p = Pattern.compile("^(\\d)[\\.\\)\\s]+(.+)$");
-
+        List<String[]> parsedItems = new ArrayList<>();
         String[] lines = result.split("\n");
+        
         for (String line : lines) {
             line = line.trim();
             if (line.isEmpty()) continue;
-            Matcher m = p.matcher(line);
-            if (m.find()) {
-                String content = m.group(2);
-                content = content.replace("（", "").replace("）", "")
-                        .replace("【", "").replace("】", "");
-                versions.add(content.trim());
+            
+            // 容错处理：暴力剔除AI前缀，例如 "版本1："、"一、"、"1."、"*"、"-"
+            line = line.replaceFirst("^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\*\\-\\d一二三四五]+[\\.\\)、：:\\s]*)", "").trim();
+            
+            // 丢弃干扰的Markdown加粗符号
+            line = line.replace("**", "");
+            
+            if (line.isEmpty()) continue;
+
+            // 以 | 分割，精准定位：外文 | 中文大意 | 标签
+            if (line.contains("|")) {
+                String[] parts = line.split("\\|");
+                String foreignText = parts[0].trim();
+                
+                // 去除可能遗留的外文首尾多余引号等干扰符号
+                foreignText = foreignText.replaceAll("^[\"“'‘]+|[\"”'’]+$", "");
+                
+                String chineseMean = parts.length > 1 ? parts[1].trim() : "";
+                String labelText = parts.length > 2 ? parts[2].trim() : "";
+                parsedItems.add(new String[]{foreignText, chineseMean, labelText});
+            } else {
+                // 如果AI没有按要求带有|，就直接展示整行纯净结果，不带中文标签
+                String foreignText = line.replaceAll("^[\"“'‘]+|[\"”'’]+$", "");
+                parsedItems.add(new String[]{foreignText, "", ""});
             }
         }
-        if (versions.isEmpty()) {
-            versions.add(result);
+
+        // 兜底防御，如果什么都没匹配到，把完整的原始串塞进去
+        if (parsedItems.isEmpty()) {
+            parsedItems.add(new String[]{result, "", ""});
         }
 
-        String[] items = versions.toArray(new String[0]);
+        // 构建自定义UI
+        android.content.Context ctx = edit.getContext();
+        android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+        android.widget.LinearLayout container = new android.widget.LinearLayout(ctx);
+        container.setOrientation(android.widget.LinearLayout.VERTICAL);
+        container.setPadding(40, 20, 40, 20);
+        sv.addView(container);
 
-        // 使用最新伙伴名
         String displayName = !latestPartnerName.isEmpty() ? latestPartnerName : currentPartnerName;
-        new AlertDialog.Builder(edit.getContext())
-                .setTitle("选版本(" + items.length + "个) - " + displayName)
-                .setItems(items, (dialog, which) -> {
-                    edit.setText(items[which]);
-                    edit.setSelection(items[which].length());
-                    dialog.dismiss();
+        
+        // 预定义弹窗对象以便在点击事件中关闭
+        final AlertDialog dialog = new AlertDialog.Builder(ctx)
+                .setTitle("选版本 - " + displayName)
+                .setView(sv)
+                .setNegativeButton("取消", (d, w) -> {
                     edit.post(() -> edit.setText(edit.getText().toString()));
                 })
-                .setNegativeButton("取消", (dialog, which) -> {
-                    edit.post(() -> edit.setText(edit.getText().toString()));
-                })
-                .show();
+                .create();
+
+        // 遍历生成独立卡片
+        for (String[] item : parsedItems) {
+            final String foreign = item[0];
+            String chinese = item[1];
+            String label = item[2];
+
+            android.widget.LinearLayout card = new android.widget.LinearLayout(ctx);
+            card.setOrientation(android.widget.LinearLayout.VERTICAL);
+            card.setPadding(35, 35, 35, 35);
+            
+            android.widget.LinearLayout.LayoutParams params = new android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.setMargins(0, 10, 0, 15);
+            card.setLayoutParams(params);
+
+            // 卡片背景与边框
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(Color.parseColor("#F8F9FA")); 
+            bg.setCornerRadius(16f);
+            bg.setStroke(2, Color.parseColor("#E9ECEF")); 
+            card.setBackground(bg);
+
+            // 1. 上层：可插入的外文文本
+            android.widget.TextView tvForeign = new android.widget.TextView(ctx);
+            tvForeign.setText(foreign);
+            tvForeign.setTextColor(Color.parseColor("#212529"));
+            tvForeign.setTextSize(16f);
+            tvForeign.setTypeface(null, android.graphics.Typeface.BOLD);
+            card.addView(tvForeign);
+
+            // 2. 下层：不可插入的中文提示与标签
+            if (!chinese.isEmpty() || !label.isEmpty()) {
+                android.widget.TextView tvChinese = new android.widget.TextView(ctx);
+                String subText = chinese;
+                if (!label.isEmpty()) subText += " [" + label + "]";
+                tvChinese.setText(subText);
+                tvChinese.setTextColor(Color.parseColor("#6C757D"));
+                tvChinese.setTextSize(13f);
+                tvChinese.setPadding(0, 15, 0, 0);
+                card.addView(tvChinese);
+            }
+
+            // 核心逻辑：点击卡片后只抓取 foreign 塞进输入框
+            card.setOnClickListener(v -> {
+                edit.setText(foreign);
+                edit.setSelection(foreign.length());
+                dialog.dismiss();
+                // 刷新UI以显示赋值后的文本
+                edit.post(() -> edit.setText(edit.getText().toString()));
+            });
+
+            container.addView(card);
+        }
+
+        dialog.show();
     }
 
     // ──────────────────────────────────────
