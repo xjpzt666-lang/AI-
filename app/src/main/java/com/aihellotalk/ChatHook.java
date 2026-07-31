@@ -44,13 +44,12 @@ public class ChatHook {
     private static final Map<String, String> chatRequestMap = new ConcurrentHashMap<>();
     private static final Map<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
 
-    // 内存防线保留：应付正常运行时的毫秒级拦截
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
 
     private static volatile boolean isTranslatingAPI = false;
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v10.3 (硬盘级穿透去重版) ===");
+        log("=== Hook v10.5 (全域时间轴排序 + 对方Quote捕获版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -168,15 +167,38 @@ public class ChatHook {
                     try { mid = (String) XposedHelpers.callMethod(msg, "getMsgId"); } catch (Exception ignored) {}
                     if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
 
-                    // 内存防线
+                    // ★ 雷达 1 号：精准抓取真实发送时间戳
+                    long sendTime = System.currentTimeMillis();
+                    try {
+                        sendTime = (Long) XposedHelpers.callMethod(msg, "getSendTime");
+                    } catch (Exception ignored) {}
+
+                    // ★ 雷达 2 号：如果对方长按引用了你的话，把那句话强行揪出来！
+                    String quotedText = null;
+                    try {
+                        Object replyInfo = XposedHelpers.callMethod(msg, "getReplyInfo");
+                        if (replyInfo != null && !isMine) { // 只有对方引用你时，我们才需要标注
+                            String rMsgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
+                            if ("text".equals(rMsgType)) {
+                                Class<?> jsonBeanClass = XposedHelpers.findClass("com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
+                                Object contentBean = XposedHelpers.callMethod(replyInfo, "getMessageContent", jsonBeanClass, true);
+                                if (contentBean != null) quotedText = (String) XposedHelpers.callMethod(contentBean, "getText");
+                            } else if ("image".equals(rMsgType) || "photo".equals(rMsgType)) {
+                                quotedText = "[图片]";
+                            } else {
+                                quotedText = "[" + rMsgType + "]";
+                            }
+                        }
+                    } catch (Exception ignored) {}
+
                     boolean isNewMessage = recordedMsgIds.add(currentChatId + "_" + mid);
                     
                     if (isNewMessage) {
-                        // ★ 穿透升级：将 mid 直接传给 AITranslator 激活硬盘锁
+                        // 将时间和对方的引用内容一并送入引擎
                         if (isMine) {
-                            AITranslator.appendHistory(currentChatId, mid, "assistant", text);
+                            AITranslator.appendHistory(currentChatId, mid, "assistant", text, sendTime, null);
                         } else {
-                            AITranslator.appendHistory(currentChatId, mid, "user", text);
+                            AITranslator.appendHistory(currentChatId, mid, "user", text, sendTime, quotedText);
                         }
                     }
 
@@ -493,6 +515,11 @@ public class ChatHook {
     }
 
     private static void showPicker(EditText edit, String result) {
+        if (result == null || result.trim().isEmpty()) {
+            Toast.makeText(edit.getContext(), "⚠️ API返回了空数据（可能是触发了敏感词拦截或网络异常）", Toast.LENGTH_LONG).show();
+            return;
+        }
+
         List<String[]> parsedItems = new ArrayList<>();
         String[] lines = result.split("\n");
         
@@ -507,17 +534,31 @@ public class ChatHook {
             if (line.contains("|")) {
                 String[] parts = line.split("\\|");
                 String foreignText = parts[0].trim();
-                foreignText = foreignText.replaceAll("^[\"“'‘]+|[\"”'’]+$", "");
+                foreignText = foreignText.replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
                 String chineseMean = parts.length > 1 ? parts[1].trim() : "";
                 String labelText = parts.length > 2 ? parts[2].trim() : "";
-                parsedItems.add(new String[]{foreignText, chineseMean, labelText});
+                
+                if (!foreignText.isEmpty()) {
+                    parsedItems.add(new String[]{foreignText, chineseMean, labelText});
+                }
             } else {
-                String foreignText = line.replaceAll("^[\"“'‘]+|[\"”'’]+$", "");
-                parsedItems.add(new String[]{foreignText, "", ""});
+                String foreignText = line.replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
+                
+                if (!foreignText.isEmpty()) {
+                    parsedItems.add(new String[]{foreignText, "", ""});
+                }
             }
         }
 
-        if (parsedItems.isEmpty()) parsedItems.add(new String[]{result, "", ""});
+        if (parsedItems.isEmpty()) {
+            String fallbackText = result.replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
+            if (!fallbackText.isEmpty()) {
+                parsedItems.add(new String[]{fallbackText, "", ""});
+            } else {
+                Toast.makeText(edit.getContext(), "🛑 已拦截 API 的无效隐形字符 (触发了敏感词防御)", Toast.LENGTH_SHORT).show();
+                return;
+            }
+        }
 
         android.content.Context ctx = edit.getContext();
         android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
