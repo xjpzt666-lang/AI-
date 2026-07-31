@@ -485,6 +485,19 @@ public class AITranslator {
         return null;
     }
 
+    // ★ 发送侧草稿模糊匹配：彻底解决我发出的消息没带 🌐 的问题
+    public static String getDraftFuzzy(String sentForeignText) {
+        if (sentForeignText == null || sentForeignText.trim().isEmpty()) return null;
+        String clean = sentForeignText.trim();
+        if (mySentDrafts.containsKey(clean)) return mySentDrafts.get(clean);
+        for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
+            if (clean.contains(entry.getKey()) || entry.getKey().contains(clean)) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
     private static void loadPrompts() {
         try {
             if (promptFile.exists()) {
