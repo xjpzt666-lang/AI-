@@ -162,14 +162,14 @@ public class ChatHook {
                         // 图标区 = 最后两个字符（空格 + emoji）
                         int iconStart = s.length() - 2;
 
-                        // ★ 如果点的是正文，不拦截，让 HelloTalk 保留长按菜单
+                        // 点正文，放行，保留原生长按菜单
                         if (offset < iconStart) {
                             return;
                         }
 
-                        // 只有点中图标区域才拦截
+                        // 只有点图标区域才拦截
                         if (ev.getAction() == MotionEvent.ACTION_DOWN) {
-                            String clean = s.substring(0, iconStart);
+                            String clean = s.substring(0, iconStart).trim();
 
                             if (s.endsWith(" 🔄")) {
                                 String orig = AITranslator.getForeignByChinese(clean);
