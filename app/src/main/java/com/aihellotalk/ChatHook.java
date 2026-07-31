@@ -47,7 +47,7 @@ public class ChatHook {
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
     private static volatile boolean isTranslatingAPI = false;
 
-    // ★ 智能合并连发防抖池：应对连发消息的缓存系统
+    // ★ 智能合并连发防抖池系统
     private static final Map<String, List<PendingMsg>> pendingIncomingMap = new ConcurrentHashMap<>();
     private static final Map<String, java.util.Timer> debounceTimers = new ConcurrentHashMap<>();
 
@@ -63,7 +63,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v10.6 (智能防抖合并缓冲版) ===");
+        log("=== Hook v10.7 (防抖合并 + 全域历史上下文版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -202,8 +202,8 @@ public class ChatHook {
                         }
                     } catch (Exception ignored) {}
 
+                    // ★ 先进行历史记录登记，保证大模型能够读取到这句原始外语作为未来的上下文
                     boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
-                    
                     if (isNewMessage) {
                         if (isMine) {
                             AITranslator.appendHistory(thisChatId, mid, "assistant", text, sendTime, null);
@@ -223,7 +223,6 @@ public class ChatHook {
                         return;
                     }
 
-                    // 避免重复投递
                     if (!translating.add(mid)) return;
 
                     final String finalText = text;
@@ -252,7 +251,7 @@ public class ChatHook {
                             public void run() {
                                 processDebouncedMessages(thisChatId);
                             }
-                        }, 2500); // 让子弹飞 2.5 秒，拼凑断句
+                        }, 2500); // 2.5 秒黄金判定时间
                     }
 
                 } catch (Throwable ignored) {}
@@ -260,7 +259,7 @@ public class ChatHook {
         });
     }
 
-    // ★ 智能合并引擎处理函数
+    // ★ 智能合并引擎处理函数 (极简单句防呆 + 连发双语挂载版)
     private static void processDebouncedMessages(String chatId) {
         List<PendingMsg> msgs;
         synchronized (pendingIncomingMap) {
@@ -269,11 +268,12 @@ public class ChatHook {
         }
         if (msgs == null || msgs.isEmpty()) return;
 
-        // 情况1：如果只有单句，直接照旧处理
+        // ★ 情况1：单句无断连（正常聊天），追求 100% 沉浸感，无缝覆盖。
         if (msgs.size() == 1) {
             PendingMsg m = msgs.get(0);
             try {
-                String t = AITranslator.toChinese(m.text);
+                // 此时传入 chatId 激活 AITranslator 底层的上下文雷达
+                String t = AITranslator.toChinese(m.text, chatId);
                 if (t != null && !t.trim().isEmpty() && !t.equals(m.text)) {
                     AITranslator.cacheResult(m.mid, t);
                     try { XposedHelpers.callMethod(m.bean, "setText", t); } catch (Exception ignored) {}
@@ -285,7 +285,7 @@ public class ChatHook {
             return;
         }
 
-        // 情况2：连发轰炸，智能拼凑上下文
+        // ★ 情况2：碎嘴连发，智能拼凑并做双语挂载防御。
         StringBuilder combinedOriginal = new StringBuilder();
         for (int i = 0; i < msgs.size(); i++) {
             combinedOriginal.append(msgs.get(i).text);
@@ -294,24 +294,21 @@ public class ChatHook {
         String finalTextToTranslate = combinedOriginal.toString().trim();
 
         try {
-            // 一次性把拼凑好的段落交给 AI
-            String t = AITranslator.toChinese(finalTextToTranslate);
+            // 一次性把拼凑好的段落交给 AI（同样传入 chatId 以获取历史）
+            String t = AITranslator.toChinese(finalTextToTranslate, chatId);
             if (t != null && !t.trim().isEmpty() && !t.equals(finalTextToTranslate)) {
                 
-                // 将大段翻译结果挂载到最后一条气泡上
+                // 终极 UI 交互：大段翻译结果挂载到最后一条气泡上，前文静默保留防止引用死角
                 PendingMsg lastMsg = msgs.get(msgs.size() - 1);
-                AITranslator.cacheResult(lastMsg.mid, t);
-                try { XposedHelpers.callMethod(lastMsg.bean, "setText", t); } catch (Exception ignored) {}
-
-                // 前面的碎片气泡，优雅地标注为已被合并
-                for (int i = 0; i < msgs.size() - 1; i++) {
-                    try { XposedHelpers.callMethod(msgs.get(i).bean, "setText", "[⏬与下方合并翻译]"); } catch (Exception ignored) {}
-                }
+                String displayResult = lastMsg.text + "\n---\n[合并译]: " + t;
+                
+                AITranslator.cacheResult(lastMsg.mid, displayResult);
+                try { XposedHelpers.callMethod(lastMsg.bean, "setText", displayResult); } catch (Exception ignored) {}
             }
         } catch (Exception ignored) {
         } finally {
             for (PendingMsg m : msgs) {
-                translating.remove(m.mid); // 释放锁
+                translating.remove(m.mid); // 释放所有锁
             }
         }
     }
