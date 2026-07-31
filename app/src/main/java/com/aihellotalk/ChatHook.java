@@ -5,13 +5,14 @@ import android.content.ClipData;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
-import android.text.Layout;
 import android.text.TextWatcher;
-import android.view.MotionEvent;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -51,12 +52,15 @@ public class ChatHook {
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
 
+    // 外置按钮去重：key = msgId
+    private static final Set<String> attachedFlipBtns = ConcurrentHashMap.newKeySet();
+
     // ═══════════════════════════════════════════
     // 安装入口
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v19.0 (图标区域精准拦截 + 长按恢复版) ===");
+        log("=== Hook v20.0 (外置独立按钮试装版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -65,7 +69,7 @@ public class ChatHook {
         } catch (Throwable ignored) {}
 
         try { hookClipboard(cl); } catch (Throwable ignored) {}
-        try { hookBubbleFlip(cl); } catch (Throwable ignored) {}
+        try { hookAdapterBind(cl); } catch (Throwable ignored) {}
         try { hookStartChat(cl); } catch (Throwable ignored) {}
         try { hookRecv(cl); } catch (Throwable ignored) {}
         try { hookLang(cl); } catch (Throwable ignored) {}
@@ -131,70 +135,254 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 核心修复：精准拦截图标区域，不吞掉整条气泡
+    // 第二阶段核心：在 Adapter bind 后插入外置翻转按钮
     // ═══════════════════════════════════════════
 
-    private static void hookBubbleFlip(ClassLoader cl) throws Exception {
-        XposedHelpers.findAndHookMethod(
-                "com.hellotalk.lib.ui.text.view.HTCompatTextView",
-                cl,
-                "onTouchEvent",
-                MotionEvent.class,
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        TextView tv = (TextView) param.thisObject;
-                        MotionEvent ev = (MotionEvent) param.args[0];
-                        if (ev == null) return;
-
-                        CharSequence cs = tv.getText();
-                        if (cs == null) return;
-
-                        String s = cs.toString();
-                        if (!s.endsWith(" 🔄") && !s.endsWith(" 🌐")) return;
-
-                        Layout layout = tv.getLayout();
-                        if (layout == null) return;
-
-                        int line = layout.getLineForVertical((int) ev.getY());
-                        int offset = layout.getOffsetForHorizontal(line, ev.getX());
-
-                        // 图标区 = 最后两个字符（空格 + emoji）
-                        int iconStart = s.length() - 2;
-
-                        // 点正文，放行，保留原生长按菜单
-                        if (offset < iconStart) {
-                            return;
+    private static void hookAdapterBind(ClassLoader cl) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "co0.a",
+                    cl,
+                    "G",
+                    XposedHelpers.findClass("oq0.a", cl),
+                    int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            Object holder = param.args[0];
+                            attachExternalFlipButton(holder, false); // 接收或泛用
                         }
+                    }
+            );
+        } catch (Throwable e) {
+            log("hookAdapterBind 失败: " + e.getMessage());
+        }
+    }
 
-                        // 只有点图标区域才拦截
-                        if (ev.getAction() == MotionEvent.ACTION_DOWN) {
-                            String clean = s.substring(0, iconStart).trim();
+    private static void attachExternalFlipButton(Object holder, boolean forceSender) {
+        try {
+            if (holder == null) return;
 
-                            if (s.endsWith(" 🔄")) {
-                                String orig = AITranslator.getForeignByChinese(clean);
-                                if (orig != null && !orig.equals(clean)) {
-                                    tv.setText(orig + " 🌐");
-                                    log("翻转：中文 → 外语");
-                                } else {
-                                    log("翻转失败：未找到中文对应外语: " + clean);
-                                }
-                            } else if (s.endsWith(" 🌐")) {
-                                String zh = AITranslator.getChineseByForeign(clean);
-                                if (zh != null && !zh.equals(clean)) {
-                                    tv.setText(zh + " 🔄");
-                                    log("翻转：外语 → 中文");
-                                } else {
-                                    log("翻转失败：未找到外语对应中文: " + clean);
-                                }
-                            }
-                        }
+            // 1. 拿当前消息 delegate 和 msg
+            Field delegateField = holder.getClass().getSuperclass().getDeclaredField("b"); // Loq0/a.b
+            delegateField.setAccessible(true);
+            Object delegate = delegateField.get(holder);
+            if (delegate == null) return;
 
-                        // 图标区的事件全部吞掉，避免官方翻译 / 放大
-                        param.setResult(true);
+            Field msgField = delegate.getClass().getDeclaredField("a"); // oo0/f.a
+            msgField.setAccessible(true);
+            Object msg = msgField.get(delegate);
+            if (msg == null) return;
+
+            String msgId = null;
+            try {
+                msgId = (String) XposedHelpers.callMethod(msg, "getMsgId");
+            } catch (Throwable ignored) {}
+            if (msgId == null || msgId.isEmpty()) return;
+
+            String[] pair = AITranslator.getCached(msgId);
+            if (pair == null) {
+                // 发送侧 fallback：尝试用 draft fuzzy 对应
+                String msgType = null;
+                try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Throwable ignored) {}
+                if (!"text".equals(msgType)) return;
+            }
+
+            // 2. 优先寻找 Binding 里的 flContent
+            FrameLayout flContent = tryGetFrameLayoutFromBinding(holder);
+            if (flContent == null) return;
+
+            // 3. 去重
+            String btnTag = "HT_AI_FLIP_BTN_" + msgId;
+            View oldBtn = flContent.findViewWithTag(btnTag);
+            if (oldBtn != null) return;
+
+            // 4. 判断收发方向
+            boolean isMine = false;
+            try { isMine = (Boolean) XposedHelpers.callMethod(msg, "isSender"); } catch (Throwable ignored) {}
+            if (forceSender) isMine = true;
+
+            // 5. 创建按钮
+            TextView flipBtn = new TextView(flContent.getContext());
+            flipBtn.setTag(btnTag);
+            flipBtn.setText(isMine ? "🌐" : "🔄");
+            flipBtn.setTextSize(14f);
+            flipBtn.setTextColor(Color.parseColor("#1DA1F2"));
+            flipBtn.setGravity(Gravity.CENTER);
+
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(Color.parseColor("#CCFFFFFF"));
+            bg.setCornerRadius(22f);
+            bg.setStroke(1, Color.parseColor("#1DA1F2"));
+            flipBtn.setBackground(bg);
+            flipBtn.setPadding(10, 6, 10, 6);
+            flipBtn.setElevation(8f);
+
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            );
+            if (isMine) {
+                lp.gravity = Gravity.START | Gravity.CENTER_VERTICAL;
+                lp.leftMargin = -70; // 外置到左边
+            } else {
+                lp.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
+                lp.rightMargin = -70; // 外置到右边
+            }
+            flipBtn.setLayoutParams(lp);
+
+            final boolean finalIsMine = isMine;
+            final String finalMsgId = msgId;
+            flipBtn.setOnClickListener(v -> {
+                try {
+                    toggleBubbleText(holder, finalMsgId, finalIsMine, flipBtn);
+                } catch (Throwable e) {
+                    log("外置按钮翻转失败: " + e.getMessage());
+                }
+            });
+
+            flContent.addView(flipBtn);
+            attachedFlipBtns.add(msgId);
+        } catch (Throwable e) {
+            log("attachExternalFlipButton 失败: " + e.getMessage());
+        }
+    }
+
+    private static FrameLayout tryGetFrameLayoutFromBinding(Object holder) {
+        try {
+            for (Field f : holder.getClass().getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(holder);
+                if (val == null) continue;
+
+                String cn = val.getClass().getName();
+
+                // 接收消息 binding
+                if ("com.hellotalk.talk.databinding.TalkItemMessageSimpleRecBinding".equals(cn)) {
+                    Field fl = val.getClass().getDeclaredField("flContent");
+                    fl.setAccessible(true);
+                    Object flObj = fl.get(val);
+                    if (flObj instanceof FrameLayout) return (FrameLayout) flObj;
+                }
+
+                // 发送消息 binding
+                if ("com.hellotalk.talk.databinding.TalkItemMessageSimpleSendBinding".equals(cn)) {
+                    Field fl = val.getClass().getDeclaredField("flContent");
+                    fl.setAccessible(true);
+                    Object flObj = fl.get(val);
+                    if (flObj instanceof FrameLayout) return (FrameLayout) flObj;
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    // ═══════════════════════════════════════════
+    // 外置按钮翻转逻辑
+    // ═══════════════════════════════════════════
+
+    private static void toggleBubbleText(Object holder, String msgId, boolean isMine, TextView flipBtn) {
+        try {
+            TextView bubble = findBubbleTextView(holder);
+            if (bubble == null) return;
+
+            String current = bubble.getText() != null ? bubble.getText().toString() : "";
+            String[] pair = AITranslator.getCached(msgId);
+
+            if (pair != null) {
+                String foreign = pair[0];
+                String chinese = pair[1];
+
+                if (isMine) {
+                    // 我发的消息：默认显示外语，点击切到中文
+                    if (current.equals(foreign) || current.contains(foreign)) {
+                        bubble.setText(chinese);
+                        flipBtn.setText("🔄");
+                    } else {
+                        bubble.setText(foreign);
+                        flipBtn.setText("🌐");
+                    }
+                } else {
+                    // 对方发来的消息：默认显示中文，点击切到外语
+                    if (current.equals(chinese) || current.contains(chinese)) {
+                        bubble.setText(foreign);
+                        flipBtn.setText("🌐");
+                    } else {
+                        bubble.setText(chinese);
+                        flipBtn.setText("🔄");
                     }
                 }
-        );
+            } else if (isMine) {
+                // 发送侧没缓存命中，尝试 draft fuzzy
+                String draft = AITranslator.getDraftFuzzy(current);
+                if (draft != null) {
+                    bubble.setText(draft);
+                    flipBtn.setText("🔄");
+                }
+            }
+        } catch (Throwable e) {
+            log("toggleBubbleText 失败: " + e.getMessage());
+        }
+    }
+
+    // 找当前 holder 内部真正显示正文的 TextView（先简单找）
+    private static TextView findBubbleTextView(Object holder) {
+        try {
+            // 遍历 holder 所有字段，优先找 HTCompatTextView
+            for (Field f : holder.getClass().getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(holder);
+                if (val == null) continue;
+
+                if (val instanceof TextView &&
+                        "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(val.getClass().getName())) {
+                    return (TextView) val;
+                }
+
+                if (val instanceof ViewGroup) {
+                    TextView found = findTextViewRecursively((ViewGroup) val);
+                    if (found != null) return found;
+                }
+            }
+
+            // 再去 binding 里递归找
+            for (Field f : holder.getClass().getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(holder);
+                if (val == null) continue;
+
+                String cn = val.getClass().getName();
+                if (cn.startsWith("com.hellotalk.talk.databinding.")) {
+                    for (Field bf : val.getClass().getDeclaredFields()) {
+                        bf.setAccessible(true);
+                        Object bv = bf.get(val);
+                        if (bv instanceof ViewGroup) {
+                            TextView found = findTextViewRecursively((ViewGroup) bv);
+                            if (found != null) return found;
+                        } else if (bv instanceof TextView &&
+                                "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(bv.getClass().getName())) {
+                            return (TextView) bv;
+                        }
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    private static TextView findTextViewRecursively(ViewGroup group) {
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child instanceof TextView &&
+                    "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(child.getClass().getName())) {
+                return (TextView) child;
+            }
+            if (child instanceof ViewGroup) {
+                TextView found = findTextViewRecursively((ViewGroup) child);
+                if (found != null) return found;
+            }
+        }
+        return null;
     }
 
     // ═══════════════════════════════════════════
@@ -353,27 +541,20 @@ public class ChatHook {
                     if (text.startsWith("[")) return;
                     if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
-                    // 我发出的消息：外语 + 🌐
+                    // 我发出的消息：正文保持纯外语，不再追加 🌐
                     if (isMine) {
                         String myChineseDraft = AITranslator.getDraftFuzzy(text);
                         if (myChineseDraft != null) {
                             AITranslator.cacheResult(mid, text, myChineseDraft);
                         }
-
-                        String[] cached = AITranslator.getCached(mid);
-                        if (cached != null) {
-                            try {
-                                XposedHelpers.callMethod(bean, "setText", cached[0] + " 🌐");
-                            } catch (Exception ignored) {}
-                        }
                         return;
                     }
 
-                    // 对方发来的消息：中文 + 🔄
+                    // 对方发来的消息：正文保持纯中文，不再追加 🔄
                     String[] cached = AITranslator.getCached(mid);
                     if (cached != null) {
                         try {
-                            XposedHelpers.callMethod(bean, "setText", cached[1] + " 🔄");
+                            XposedHelpers.callMethod(bean, "setText", cached[1]);
                         } catch (Exception ignored) {}
                         return;
                     }
@@ -390,7 +571,7 @@ public class ChatHook {
                             if (t != null && !t.trim().isEmpty() && !t.equals(finalText)) {
                                 AITranslator.cacheResult(finalMid, finalText, t);
                                 try {
-                                    XposedHelpers.callMethod(finalBean, "setText", t + " 🔄");
+                                    XposedHelpers.callMethod(finalBean, "setText", t);
                                 } catch (Exception ignored) {}
                             }
                         } catch (Exception ignored) {
@@ -659,231 +840,6 @@ public class ChatHook {
                 }
             }).start();
         });
-    }
-
-    // ═══════════════════════════════════════════
-    // 智能目标语言
-    // ═══════════════════════════════════════════
-
-    private static String determineSmartTargetLang() {
-        String nationality = latestNationality.toLowerCase();
-        if (!nationality.isEmpty()) {
-            String mappedLang = mapNationalityToLang(nationality);
-            if (mappedLang != null) return mappedLang;
-        }
-
-        int nativeLang = latestNativeLang;
-        String langCode = getDynamicLangCode(nativeLang);
-        String langName = getDynamicLangName(nativeLang);
-        if (langName != null && langName.contains("Chinese")) return DEFAULT_REPLY_LANG;
-        if (langCode != null && !langCode.isEmpty() && !"en".equals(langCode)) return langCode;
-
-        String friendLang = AITranslator.getFriendLang(currentChatId);
-        if (friendLang != null && !friendLang.isEmpty()) {
-            if (friendLang.equalsIgnoreCase("zh")
-                    || friendLang.equalsIgnoreCase("cn")
-                    || friendLang.startsWith("zh")) {
-                return DEFAULT_REPLY_LANG;
-            }
-            return friendLang;
-        }
-        return DEFAULT_REPLY_LANG;
-    }
-
-    private static String mapNationalityToLang(String nationality) {
-        if (nationality == null || nationality.isEmpty()) return null;
-        switch (nationality) {
-            case "china":
-            case "taiwan":
-            case "hong kong":
-            case "macau":
-                return "zh";
-            case "russia":
-            case "belarus":
-            case "kazakhstan":
-            case "kyrgyzstan":
-                return "ru";
-            case "ukraine":
-                return "uk";
-            case "poland":
-                return "pl";
-            case "japan":
-                return "ja";
-            case "korea":
-            case "south korea":
-                return "ko";
-            case "vietnam":
-                return "vi";
-            case "thailand":
-                return "th";
-            case "france":
-                return "fr";
-            case "germany":
-                return "de";
-            case "spain":
-                return "es";
-            case "italy":
-                return "it";
-            case "portugal":
-            case "brazil":
-                return "pt";
-            case "netherlands":
-                return "nl";
-            case "turkey":
-                return "tr";
-            case "indonesia":
-                return "id";
-            case "malaysia":
-                return "ms";
-            case "india":
-                return "hi";
-            case "arabia":
-            case "saudi arabia":
-            case "egypt":
-            case "uae":
-            case "qatar":
-            case "oman":
-            case "kuwait":
-            case "bahrain":
-            case "jordan":
-            case "lebanon":
-            case "iraq":
-            case "syria":
-            case "yemen":
-            case "libya":
-            case "tunisia":
-            case "algeria":
-            case "morocco":
-            case "sudan":
-            case "palestine":
-                return "ar";
-            default:
-                return null;
-        }
-    }
-
-    // ═══════════════════════════════════════════
-    // 版本选择器
-    // ═══════════════════════════════════════════
-
-    private static void showPicker(EditText edit, String result, String originalChineseInput) {
-        if (result == null || result.trim().isEmpty()) {
-            Toast.makeText(edit.getContext(), "⚠️ API返回了空数据", Toast.LENGTH_LONG).show();
-            return;
-        }
-
-        List<String[]> parsedItems = new ArrayList<>();
-        String[] lines = result.split("\n");
-
-        for (String line : lines) {
-            line = line.trim();
-            if (line.isEmpty()) continue;
-
-            line = line.replaceFirst(
-                    "^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\*\\-\\d一二三四五]+[\\.\\)、：:\\s]*)",
-                    ""
-            ).trim();
-            line = line.replace("**", "");
-            if (line.isEmpty()) continue;
-
-            if (line.contains("|")) {
-                String[] parts = line.split("\\|");
-                String foreignText = parts[0].trim()
-                        .replaceAll("^[\"“'‘]+|[\"”'’]+$", "")
-                        .trim();
-                String chineseMean = parts.length > 1 ? parts[1].trim() : "";
-                String labelText = parts.length > 2 ? parts[2].trim() : "";
-
-                if (!foreignText.isEmpty()) {
-                    parsedItems.add(new String[]{foreignText, chineseMean, labelText});
-                }
-            } else {
-                String foreignText = line.replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
-                if (!foreignText.isEmpty()) {
-                    parsedItems.add(new String[]{foreignText, "", ""});
-                }
-            }
-        }
-
-        if (parsedItems.isEmpty()) {
-            String fallbackText = result.replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
-            if (!fallbackText.isEmpty()) {
-                parsedItems.add(new String[]{fallbackText, "", ""});
-            } else {
-                Toast.makeText(edit.getContext(), "🛑 已拦截无效字符", Toast.LENGTH_SHORT).show();
-                return;
-            }
-        }
-
-        android.content.Context ctx = edit.getContext();
-        android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
-        android.widget.LinearLayout container = new android.widget.LinearLayout(ctx);
-        container.setOrientation(android.widget.LinearLayout.VERTICAL);
-        container.setPadding(40, 20, 40, 20);
-        sv.addView(container);
-
-        String displayName = !latestPartnerName.isEmpty() ? latestPartnerName : currentPartnerName;
-
-        final AlertDialog dialog = new AlertDialog.Builder(ctx)
-                .setTitle("选版本 - " + displayName)
-                .setView(sv)
-                .setNegativeButton("取消", (d, w) -> {
-                    edit.post(() -> edit.setText(edit.getText().toString()));
-                })
-                .create();
-
-        for (String[] item : parsedItems) {
-            final String foreign = item[0];
-            String chinese = item[1];
-            String label = item[2];
-
-            android.widget.LinearLayout card = new android.widget.LinearLayout(ctx);
-            card.setOrientation(android.widget.LinearLayout.VERTICAL);
-            card.setPadding(35, 35, 35, 35);
-
-            android.widget.LinearLayout.LayoutParams params =
-                    new android.widget.LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                    );
-            params.setMargins(0, 10, 0, 15);
-            card.setLayoutParams(params);
-
-            GradientDrawable cardBg = new GradientDrawable();
-            cardBg.setColor(Color.parseColor("#F8F9FA"));
-            cardBg.setCornerRadius(16f);
-            cardBg.setStroke(2, Color.parseColor("#E9ECEF"));
-            card.setBackground(cardBg);
-
-            TextView tvForeign = new TextView(ctx);
-            tvForeign.setText(foreign);
-            tvForeign.setTextColor(Color.parseColor("#212529"));
-            tvForeign.setTextSize(16f);
-            tvForeign.setTypeface(null, android.graphics.Typeface.BOLD);
-            card.addView(tvForeign);
-
-            if (!chinese.isEmpty() || !label.isEmpty()) {
-                TextView tvChinese = new TextView(ctx);
-                String subText = chinese;
-                if (!label.isEmpty()) subText += " [" + label + "]";
-                tvChinese.setText(subText);
-                tvChinese.setTextColor(Color.parseColor("#6C757D"));
-                tvChinese.setTextSize(13f);
-                tvChinese.setPadding(0, 15, 0, 0);
-                card.addView(tvChinese);
-            }
-
-            card.setOnClickListener(v -> {
-                AITranslator.mySentDrafts.put(foreign.trim(), originalChineseInput.trim());
-                edit.setText(foreign);
-                edit.setSelection(foreign.length());
-                dialog.dismiss();
-            });
-
-            container.addView(card);
-        }
-
-        dialog.show();
     }
 
     // ═══════════════════════════════════════════
