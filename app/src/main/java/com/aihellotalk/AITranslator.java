@@ -419,7 +419,22 @@ public class AITranslator {
             }
         } catch (Exception ignored) {}
 
-        if (receivePrompt.isEmpty()) receivePrompt = "你是一个社交情报传译员。代入对方身份，将外语翻译成地道有呼吸感的中文。";
+        // ★ 核心：注入全新定稿的出厂强控制接收指令，确保无上下文时也能极致还原个人体感
+        if (receivePrompt.isEmpty()) receivePrompt = "你是我的专属社交情报传译员。你的任务是代入对方（外国女性）的身份，将接下来需要翻译的单句或多句外语，转化为最贴合她真实人设的现代中文口语。\n" +
+                "\n" +
+                "【翻译核心准则】\n" +
+                "1. 说话风格克隆（绝对优先）：敏锐捕捉她原话里的口癖、语速感和受教育程度。她是高冷、泼辣还是爱撒娇？请在中文里 1:1 镜像复刻她的个人语型，严禁将其洗稿成“标准但毫无个性”的通用播音腔。\n" +
+                "2. 情感与潜台词还原：用相匹配的中文词汇把潜台词表达出来，但严禁滥用过度夸张的网络烂梗。\n" +
+                "\n" +
+                "【输出格式强制要求（极其重要）】\n" +
+                "1. 只提供 1 个最终版本的中文翻译，不需要多个选项。\n" +
+                "2. 严禁输出任何社交分析、前言或后语！严禁和我对话！\n" +
+                "3. 如果需要提示她的真实状态或潜台词，必须放在译文末尾的中文全角括号 `（）` 内，且括号内的字数绝对不可超过 20 个字！如果没有特殊情绪，可以不加括号。\n" +
+                "\n" +
+                "【强制输出骨架示例】（必须严格套用以下两种骨架之一，禁止自行创造格式）：\n" +
+                "骨架 A：[极具她个人色彩的中文翻译结果]。（不超过20字的状态精准批注）\n" +
+                "骨架 B：[极具她个人色彩的中文翻译结果]。";
+        
         if (promptEN.isEmpty()) promptEN = "你是社交嘴替。把中文转成地道英语口语，4版本：自然/暖男/奶狗/推荐。格式：外文|中文大意|标签。";
         if (promptRU.isEmpty()) promptRU = "你是社交嘴替。把中文转成地道俄语口语。4版本。格式：外文|中文大意|标签。";
         if (promptUK.isEmpty()) promptUK = "你是社交嘴替。把中文转成地道乌克兰语口语。4版本。格式：外文|中文大意|标签。";
@@ -454,19 +469,16 @@ public class AITranslator {
         }
     }
 
-    // ★ 重载方法：兼容老代码和 MainActivity 的调用
     public static void appendHistory(String chatId, String msgId, String role, String content) {
         appendHistory(chatId, msgId, role, content, System.currentTimeMillis(), null);
     }
 
-    // ★ 核心引擎升级：接收时间戳和对方引用文本，并执行硬盘级重排
     public static void appendHistory(String chatId, String msgId, String role, String content, long timestamp, String quotedText) {
         if (content == null || content.isEmpty()) return;
         synchronized (fileLock) { 
             try {
                 JSONArray history = loadHistory(chatId);
 
-                // 硬盘防重
                 if (msgId != null && !msgId.isEmpty()) {
                     for (int i = 0; i < history.length(); i++) {
                         JSONObject obj = history.getJSONObject(i);
@@ -476,7 +488,6 @@ public class AITranslator {
                     }
                 }
 
-                // ★ 如果带有引用信息，把引用的话强行缝合进文本里
                 if (quotedText != null && !quotedText.isEmpty()) {
                     content = "（针对我的原话：\"" + quotedText + "\" 进行了专门回复）\n" + content;
                 }
@@ -486,13 +497,12 @@ public class AITranslator {
                     entry.put("msgId", msgId);
                 }
                 entry.put("role", role);
-                entry.put("timestamp", timestamp); // ★ 烙印绝对时间戳
+                entry.put("timestamp", timestamp); 
                 
                 String display = content.length() > 1000 ? content.substring(0, 1000) : content;
                 entry.put("content", display);
                 history.put(entry);
 
-                // ★ 时间轴引擎：提取所有记录，按 timestamp 从旧到新强制重排，消灭一切乱序！
                 List<JSONObject> list = new ArrayList<>();
                 for (int i = 0; i < history.length(); i++) {
                     list.add(history.getJSONObject(i));
