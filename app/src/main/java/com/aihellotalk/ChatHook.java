@@ -47,22 +47,11 @@ public class ChatHook {
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
     private static volatile boolean isTranslatingAPI = false;
 
-    private static final Map<String, List<PendingMsg>> pendingIncomingMap = new ConcurrentHashMap<>();
-    private static final Map<String, java.util.Timer> debounceTimers = new ConcurrentHashMap<>();
-
-    static class PendingMsg {
-        String mid;
-        String text;
-        Object bean;
-        public PendingMsg(String mid, String text, Object bean) {
-            this.mid = mid;
-            this.text = text;
-            this.bean = bean;
-        }
-    }
+    // 记录已经挂载了双击事件的 TextView，防止重复挂载造成卡顿
+    private static final java.util.WeakHashMap<View, Boolean> touchAttachedMap = new java.util.WeakHashMap<>();
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v10.8 (彻底修复滑屏无限死循环Bug版) ===");
+        log("=== Hook v11.0 (纯单句 + 剪贴板拦截 + 双击翻转极简版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -70,11 +59,88 @@ public class ChatHook {
             langNameMethod = avClass.getMethod("b", int.class);
         } catch (Throwable ignored) {}
 
+        try { hookClipboard(cl); } catch (Throwable e) {}
+        try { hookTextViewForFlip(); } catch (Throwable e) {}
         try { hookStartChat(cl); } catch (Throwable e) {}
         try { hookRecv(cl); } catch (Throwable e) {}
         try { hookLang(cl); } catch (Throwable e) {}
         try { hookBtnOld(cl); } catch (Throwable e) {}
         try { hookBtnNew(cl); } catch (Throwable e) {}
+    }
+
+    // ★ 剪贴板拦截系统：强制替换为外语原文
+    private static void hookClipboard(ClassLoader cl) {
+        XposedHelpers.findAndHookMethod("android.content.ClipboardManager", cl, "setPrimaryClip", android.content.ClipData.class, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                android.content.ClipData clip = (android.content.ClipData) param.args[0];
+                if (clip != null && clip.getItemCount() > 0) {
+                    CharSequence text = clip.getItemAt(0).getText();
+                    if (text != null) {
+                        String copiedText = text.toString();
+                        if (copiedText.endsWith(" 🔄")) {
+                            // 复制了中文翻译，找出原文替换
+                            String clean = copiedText.substring(0, copiedText.length() - 2);
+                            String orig = AITranslator.getOriginalByTranslated(clean);
+                            if (orig != null) {
+                                param.args[0] = android.content.ClipData.newPlainText(clip.getDescription().getLabel(), orig);
+                                log("【剪贴板拦截】已将复制的中文翻译替换为真实外语原文！");
+                            }
+                        } else if (copiedText.endsWith(" 🌐")) {
+                            // 复制了英文翻转态，直接去掉地球符号
+                            String clean = copiedText.substring(0, copiedText.length() - 2);
+                            param.args[0] = android.content.ClipData.newPlainText(clip.getDescription().getLabel(), clean);
+                            log("【剪贴板清洗】已去除原生外语尾部的特殊符号！");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // ★ 监听 TextView 更新，绑定双击翻转事件
+    private static void hookTextViewForFlip() {
+        XposedBridge.hookAllMethods(android.widget.TextView.class, "setText", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                android.widget.TextView tv = (android.widget.TextView) param.thisObject;
+                CharSequence text = tv.getText();
+                if (text != null) {
+                    String s = text.toString();
+                    if (s.endsWith(" 🔄") || s.endsWith(" 🌐")) {
+                        attachDoubleTapListener(tv);
+                    }
+                }
+            }
+        });
+    }
+
+    private static void attachDoubleTapListener(android.widget.TextView tv) {
+        if (touchAttachedMap.containsKey(tv)) return;
+        
+        android.view.GestureDetector gd = new android.view.GestureDetector(tv.getContext(), new android.view.GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onDoubleTap(android.view.MotionEvent e) {
+                String currentText = tv.getText().toString();
+                if (currentText.endsWith(" 🔄")) {
+                    String clean = currentText.substring(0, currentText.length() - 2);
+                    String orig = AITranslator.getOriginalByTranslated(clean);
+                    if (orig != null) tv.setText(orig + " 🌐"); // 翻转为英文
+                } else if (currentText.endsWith(" 🌐")) {
+                    String clean = currentText.substring(0, currentText.length() - 2);
+                    String trans = AITranslator.getTranslatedByOriginal(clean);
+                    if (trans != null) tv.setText(trans + " 🔄"); // 翻转回中文
+                }
+                return true;
+            }
+        });
+        
+        tv.setOnTouchListener((v, event) -> {
+            gd.onTouchEvent(event);
+            return false; // 绝对不拦截事件，让 HelloTalk 原生的长按菜单正常弹出！
+        });
+        
+        touchAttachedMap.put(tv, true);
     }
 
     private static void hookStartChat(ClassLoader cl) throws Exception {
@@ -154,18 +220,7 @@ public class ChatHook {
 
                     if (text == null || text.isEmpty()) {
                         if ("image".equals(msgType) || "photo".equals(msgType)) {
-                            try {
-                                Class<?> imgBeanClass = XposedHelpers.findClass("com.hellotalk.talk.detail.delegate.image.IMImageBean", cl);
-                                Object imgBean = XposedHelpers.callMethod(msg, "getMessageContent", imgBeanClass, true);
-                                String imgUrl = (String) XposedHelpers.callMethod(imgBean, "getUrl");
-                                if (imgUrl != null && !imgUrl.isEmpty()) {
-                                    text = "[对方发送了一张图片，URL: " + imgUrl + "]";
-                                } else {
-                                    text = "[对方发送了一张图片]";
-                                }
-                            } catch (Throwable e) {
-                                text = "[对方发送了一张图片]";
-                            }
+                            text = "[对方发送了一张图片]";
                         } else if ("voice".equals(msgType) || "audio".equals(msgType)) {
                             text = "[对方发送了一条语音]";
                         } else if ("video".equals(msgType)) {
@@ -215,10 +270,11 @@ public class ChatHook {
                     if (text.startsWith("[")) return; 
                     if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
-                    // ★ 核心拦截：只要缓存里有（不管是翻译后的还是被静默的原句），绝对不碰！
-                    String cached = AITranslator.getCached(mid);
+                    // ★ 单句无脑渲染拦截：直接读取缓存
+                    String[] cached = AITranslator.getCached(mid);
                     if (cached != null) {
-                        try { XposedHelpers.callMethod(bean, "setText", cached); } catch (Exception ignored) {}
+                        // cached[1] 是译文
+                        try { XposedHelpers.callMethod(bean, "setText", cached[1] + " 🔄"); } catch (Exception ignored) {}
                         return;
                     }
 
@@ -228,91 +284,25 @@ public class ChatHook {
                     final String finalMid = mid;
                     final Object finalBean = bean;
 
-                    synchronized (pendingIncomingMap) {
-                        List<PendingMsg> queue = pendingIncomingMap.get(thisChatId);
-                        if (queue == null) {
-                            queue = new ArrayList<>();
-                            pendingIncomingMap.put(thisChatId, queue);
-                        }
-                        queue.add(new PendingMsg(finalMid, finalText, finalBean));
-
-                        java.util.Timer oldTimer = debounceTimers.get(thisChatId);
-                        if (oldTimer != null) {
-                            oldTimer.cancel();
-                        }
-
-                        java.util.Timer newTimer = new java.util.Timer();
-                        debounceTimers.put(thisChatId, newTimer);
-
-                        newTimer.schedule(new java.util.TimerTask() {
-                            @Override
-                            public void run() {
-                                processDebouncedMessages(thisChatId);
+                    // ★ 彻底砍掉 2.5 秒合并定时器，恢复极致顺滑的单句直译模式！
+                    new Thread(() -> {
+                        try {
+                            String t = AITranslator.toChinese(finalText, thisChatId);
+                            if (t != null && !t.trim().isEmpty() && !t.equals(finalText)) {
+                                // 同步保存原文和译文到全新缓存库
+                                AITranslator.cacheResult(finalMid, finalText, t);
+                                // 给译文挂载转换小尾巴，等待用户双击
+                                try { XposedHelpers.callMethod(finalBean, "setText", t + " 🔄"); } catch (Exception ignored) {}
                             }
-                        }, 2500);
-                    }
+                        } catch (Exception ignored) {
+                        } finally {
+                            translating.remove(finalMid);
+                        }
+                    }).start();
 
                 } catch (Throwable ignored) {}
             }
         });
-    }
-
-    // ★ 智能合并引擎处理函数
-    private static void processDebouncedMessages(String chatId) {
-        List<PendingMsg> msgs;
-        synchronized (pendingIncomingMap) {
-            msgs = pendingIncomingMap.remove(chatId);
-            debounceTimers.remove(chatId);
-        }
-        if (msgs == null || msgs.isEmpty()) return;
-
-        // ★ 情况1：单句无断连（正常聊天）
-        if (msgs.size() == 1) {
-            PendingMsg m = msgs.get(0);
-            try {
-                String t = AITranslator.toChinese(m.text, chatId);
-                if (t != null && !t.trim().isEmpty() && !t.equals(m.text)) {
-                    AITranslator.cacheResult(m.mid, t);
-                    try { XposedHelpers.callMethod(m.bean, "setText", t); } catch (Exception ignored) {}
-                }
-            } catch (Exception ignored) {
-            } finally {
-                translating.remove(m.mid);
-            }
-            return;
-        }
-
-        // ★ 情况2：碎嘴连发
-        StringBuilder combinedOriginal = new StringBuilder();
-        for (int i = 0; i < msgs.size(); i++) {
-            combinedOriginal.append(msgs.get(i).text);
-            if (i < msgs.size() - 1) combinedOriginal.append("\n");
-        }
-        String finalTextToTranslate = combinedOriginal.toString().trim();
-
-        try {
-            String t = AITranslator.toChinese(finalTextToTranslate, chatId);
-            if (t != null && !t.trim().isEmpty() && !t.equals(finalTextToTranslate)) {
-                
-                // 将大段翻译结果挂载到最后一条气泡上
-                PendingMsg lastMsg = msgs.get(msgs.size() - 1);
-                String displayResult = lastMsg.text + "\n---\n[合并译]: " + t;
-                
-                AITranslator.cacheResult(lastMsg.mid, displayResult);
-                try { XposedHelpers.callMethod(lastMsg.bean, "setText", displayResult); } catch (Exception ignored) {}
-
-                // ★ 修复案发现场二：把前面静默保留的句子也存进缓存库里，彻底斩断滑屏无限触发的死循环！
-                for (int i = 0; i < msgs.size() - 1; i++) {
-                    PendingMsg m = msgs.get(i);
-                    AITranslator.cacheResult(m.mid, m.text); // 静默打上“已处理”标签，存入原外语
-                }
-            }
-        } catch (Exception ignored) {
-        } finally {
-            for (PendingMsg m : msgs) {
-                translating.remove(m.mid); // 释放所有锁
-            }
-        }
     }
 
     private static void hookLang(ClassLoader cl) throws Exception {
@@ -483,9 +473,19 @@ public class ChatHook {
             } catch (Exception ignored) {}
 
             String textToTranslate = text;
+            
+            // ★ 回复清洗逻辑：当用户点“回复”时，如果引用框里带有我们的特殊后缀，先清洗还原成原始语境
             if (quoteText != null && !quoteText.trim().isEmpty()) {
-                textToTranslate = "【我要回复的对方原话】：" + quoteText.trim() + "\n【我的回复】：" + text;
-                log("已成功锚定 Quote 语境：" + quoteText);
+                quoteText = quoteText.trim();
+                if (quoteText.endsWith(" 🔄")) {
+                    String clean = quoteText.substring(0, quoteText.length() - 2);
+                    String orig = AITranslator.getOriginalByTranslated(clean);
+                    if (orig != null) quoteText = orig;
+                } else if (quoteText.endsWith(" 🌐")) {
+                    quoteText = quoteText.substring(0, quoteText.length() - 2);
+                }
+                textToTranslate = "【我要回复的对方原话】：" + quoteText + "\n【我的回复】：" + text;
+                log("已成功清洗并锚定纯正 Quote 语境：" + quoteText);
             }
 
             final String finalTextToTranslate = textToTranslate;
