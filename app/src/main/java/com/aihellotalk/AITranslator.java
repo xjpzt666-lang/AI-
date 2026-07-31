@@ -218,6 +218,15 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
+    // 文本清洗（核心止血）
+    // ═══════════════════════════════════════════
+
+    private static String stripFlipMarks(String s) {
+        if (s == null) return null;
+        return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
+    }
+
+    // ═══════════════════════════════════════════
     // 翻译入口
     // ═══════════════════════════════════════════
 
@@ -501,9 +510,12 @@ public class AITranslator {
             while ((line = r.readLine()) != null) {
                 String[] parts = line.split("\\|\\|\\|");
                 if (parts.length >= 3) {
-                    cache.put(parts[0], new String[]{parts[1], parts[2]});
-                    foreignToChinese.put(parts[1], parts[2]);
-                    chineseToForeign.put(parts[2], parts[1]);
+                    String foreign = stripFlipMarks(parts[1]);
+                    String chinese = stripFlipMarks(parts[2]);
+
+                    cache.put(parts[0], new String[]{foreign, chinese});
+                    foreignToChinese.put(foreign, chinese);
+                    chineseToForeign.put(chinese, foreign);
                 }
             }
         } catch (Exception ignored) {
@@ -515,7 +527,9 @@ public class AITranslator {
             cacheFile.getParentFile().mkdirs();
             try (BufferedWriter w = new BufferedWriter(new FileWriter(cacheFile))) {
                 for (Map.Entry<String, String[]> e : cache.entrySet()) {
-                    w.write(e.getKey() + "|||" + e.getValue()[0] + "|||" + e.getValue()[1]);
+                    String foreign = stripFlipMarks(e.getValue()[0]);
+                    String chinese = stripFlipMarks(e.getValue()[1]);
+                    w.write(e.getKey() + "|||" + foreign + "|||" + chinese);
                     w.newLine();
                 }
             }
@@ -527,8 +541,10 @@ public class AITranslator {
         return cache.get(key);
     }
 
-    // foreign, chinese
     public static void cacheResult(String key, String foreign, String chinese) {
+        foreign = stripFlipMarks(foreign);
+        chinese = stripFlipMarks(chinese);
+
         cache.put(key, new String[]{foreign, chinese});
         foreignToChinese.put(foreign, chinese);
         chineseToForeign.put(chinese, foreign);
@@ -536,19 +552,19 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // 翻转查询（已增强模糊匹配）
+    // 双向查询（止血增强版）
     // ═══════════════════════════════════════════
 
     public static String getForeignByChinese(String chinese) {
         if (chinese == null || chinese.trim().isEmpty()) return null;
-        String clean = chinese.trim();
+        String clean = stripFlipMarks(chinese);
 
         String exact = chineseToForeign.get(clean);
         if (exact != null) return exact;
 
         for (Map.Entry<String, String> entry : chineseToForeign.entrySet()) {
-            String k = entry.getKey();
-            String v = entry.getValue();
+            String k = stripFlipMarks(entry.getKey());
+            String v = stripFlipMarks(entry.getValue());
             if (clean.equals(k) || clean.contains(k) || k.contains(clean)) {
                 return v;
             }
@@ -558,14 +574,14 @@ public class AITranslator {
 
     public static String getChineseByForeign(String foreign) {
         if (foreign == null || foreign.trim().isEmpty()) return null;
-        String clean = foreign.trim();
+        String clean = stripFlipMarks(foreign);
 
         String exact = foreignToChinese.get(clean);
         if (exact != null) return exact;
 
         for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) {
-            String k = entry.getKey();
-            String v = entry.getValue();
+            String k = stripFlipMarks(entry.getKey());
+            String v = stripFlipMarks(entry.getValue());
             if (clean.equals(k) || clean.contains(k) || k.contains(clean)) {
                 return v;
             }
@@ -575,14 +591,14 @@ public class AITranslator {
 
     public static String getForeignFuzzy(String copiedText) {
         if (copiedText == null || copiedText.trim().isEmpty()) return null;
-        String clean = copiedText.trim().replaceAll(" [🔄🌐]$", "");
+        String clean = stripFlipMarks(copiedText);
 
         if (foreignToChinese.containsKey(clean)) return clean;
         if (chineseToForeign.containsKey(clean)) return chineseToForeign.get(clean);
 
         for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) {
-            String f = entry.getKey();
-            String c = entry.getValue();
+            String f = stripFlipMarks(entry.getKey());
+            String c = stripFlipMarks(entry.getValue());
             if (clean.contains(c) || c.contains(clean) || clean.contains(f) || f.contains(clean)) {
                 return f;
             }
@@ -592,12 +608,13 @@ public class AITranslator {
 
     public static String getDraftFuzzy(String sentForeignText) {
         if (sentForeignText == null || sentForeignText.trim().isEmpty()) return null;
-        String clean = sentForeignText.trim().replaceAll(" [🔄🌐]$", "");
+        String clean = stripFlipMarks(sentForeignText);
 
         if (mySentDrafts.containsKey(clean)) return mySentDrafts.get(clean);
 
         for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
-            if (clean.contains(entry.getKey()) || entry.getKey().contains(clean)) {
+            String key = stripFlipMarks(entry.getKey());
+            if (clean.contains(key) || key.contains(clean)) {
                 return entry.getValue();
             }
         }
@@ -605,7 +622,7 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // Prompt 加载
+    // Prompt
     // ═══════════════════════════════════════════
 
     private static void loadPrompts() {
@@ -655,19 +672,19 @@ public class AITranslator {
 
         if (receivePrompt.isEmpty()) receivePrompt =
                 "你是我的专属社交情报传译员。你的任务是代入对方（外国女性）的身份，将接下来需要翻译的单句或多句外语，转化为最贴合她真实人设的现代中文口语。\n" +
-                "\n" +
-                "【翻译核心准则】\n" +
-                "1. 说话风格克隆（绝对优先）：敏锐捕捉她原话里的口癖、语速感和受教育程度。她是高冷、泼辣还是爱撒娇？请在中文里 1:1 镜像复刻她的个人语型，严禁将其洗稿成“标准但毫无个性”的通用播音腔。\n" +
-                "2. 情感与潜台词还原：用相匹配的中文词汇把潜台词表达出来，但严禁滥用过度夸张的网络烂梗。\n" +
-                "\n" +
-                "【输出格式强制要求（极其重要）】\n" +
-                "1. 只提供 1 个最终版本的中文翻译，不需要多个选项。\n" +
-                "2. 严禁输出任何社交分析、前言或后语！严禁和我对话！\n" +
-                "3. 如果需要提示她的真实状态或潜台词，必须放在译文末尾的中文全角括号 `（）` 内，且括号内的字数绝对不可超过 20 个字！如果没有特殊情绪，可以不加括号。\n" +
-                "\n" +
-                "【强制输出骨架示例】（必须严格套用以下两种骨架之一，禁止自行创造格式）：\n" +
-                "骨架 A：[极具她个人色彩的中文翻译结果]。（不超过20字的状态精准批注）\n" +
-                "骨架 B：[极具她个人色彩的中文翻译结果]。";
+                        "\n" +
+                        "【翻译核心准则】\n" +
+                        "1. 说话风格克隆（绝对优先）：敏锐捕捉她原话里的口癖、语速感和受教育程度。她是高冷、泼辣还是爱撒娇？请在中文里 1:1 镜像复刻她的个人语型，严禁将其洗稿成“标准但毫无个性”的通用播音腔。\n" +
+                        "2. 情感与潜台词还原：用相匹配的中文词汇把潜台词表达出来，但严禁滥用过度夸张的网络烂梗。\n" +
+                        "\n" +
+                        "【输出格式强制要求（极其重要）】\n" +
+                        "1. 只提供 1 个最终版本的中文翻译，不需要多个选项。\n" +
+                        "2. 严禁输出任何社交分析、前言或后语！严禁和我对话！\n" +
+                        "3. 如果需要提示她的真实状态或潜台词，必须放在译文末尾的中文全角括号 `（）` 内，且括号内的字数绝对不可超过 20 个字！如果没有特殊情绪，可以不加括号。\n" +
+                        "\n" +
+                        "【强制输出骨架示例】（必须严格套用以下两种骨架之一，禁止自行创造格式）：\n" +
+                        "骨架 A：[极具她个人色彩的中文翻译结果]。（不超过20字的状态精准批注）\n" +
+                        "骨架 B：[极具她个人色彩的中文翻译结果]。";
 
         if (promptEN.isEmpty()) promptEN = "你是社交嘴替。把中文转成地道英语口语，4版本：自然/暖男/奶狗/推荐。格式：外文|中文大意|标签。";
         if (promptRU.isEmpty()) promptRU = "你是社交嘴替。把中文转成地道俄语口语。4版本。格式：外文|中文大意|标签。";
