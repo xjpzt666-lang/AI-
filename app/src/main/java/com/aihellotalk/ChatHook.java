@@ -297,327 +297,582 @@ public class ChatHook {
                 }
             }
         } catch (Throwable ignored) {}
-        return null;
-    }
+        return null;// ═══════════════════════════════════════════
+// 外置按钮翻转逻辑
+// ═══════════════════════════════════════════
 
-    // ═══════════════════════════════════════════
-    // 外置按钮翻转逻辑
-    // ═══════════════════════════════════════════
+private static void toggleBubbleText(Object holder, String msgId, boolean isMine, TextView flipBtn) {
+    try {
+        TextView bubble = findBubbleTextView(holder);
+        if (bubble == null) {
+            log("toggleBubbleText: 没找到 bubble TextView");
+            return;
+        }
 
-    private static void toggleBubbleText(Object holder, String msgId, boolean isMine, TextView flipBtn) {
-        try {
-            TextView bubble = findBubbleTextView(holder);
-            if (bubble == null) {
-                log("toggleBubbleText: 没找到 bubble TextView");
-                return;
-            }
+        String current = bubble.getText() != null ? bubble.getText().toString() : "";
+        String[] pair = AITranslator.getCached(msgId);
 
-            String current = bubble.getText() != null ? bubble.getText().toString() : "";
-            String[] pair = AITranslator.getCached(msgId);
+        if (pair != null) {
+            String foreign = pair[0];
+            String chinese = pair[1];
 
-            if (pair != null) {
-                String foreign = pair[0];
-                String chinese = pair[1];
-
-                if (isMine) {
-                    if (current.equals(foreign) || current.contains(foreign)) {
-                        bubble.setText(chinese);
-                        flipBtn.setText("🔄");
-                        log("发送气泡：外语 → 中文");
-                    } else {
-                        bubble.setText(foreign);
-                        flipBtn.setText("🌐");
-                        log("发送气泡：中文 → 外语");
-                    }
-                } else {
-                    if (current.equals(chinese) || current.contains(chinese)) {
-                        bubble.setText(foreign);
-                        flipBtn.setText("🌐");
-                        log("接收气泡：中文 → 外语");
-                    } else {
-                        bubble.setText(chinese);
-                        flipBtn.setText("🔄");
-                        log("接收气泡：外语 → 中文");
-                    }
-                }
-                return;
-            }
-
-            // 发送侧没 cache 命中，尝试 draft fallback
             if (isMine) {
-                String draft = AITranslator.getDraftFuzzy(current);
-                if (draft != null) {
-                    bubble.setText(draft);
+                if (current.equals(foreign) || current.contains(foreign)) {
+                    bubble.setText(chinese);
                     flipBtn.setText("🔄");
-                    log("发送气泡：fallback draft 成功");
+                    log("发送气泡：外语 → 中文");
                 } else {
-                    log("发送气泡：fallback draft 失败");
+                    bubble.setText(foreign);
+                    flipBtn.setText("🌐");
+                    log("发送气泡：中文 → 外语");
+                }
+            } else {
+                if (current.equals(chinese) || current.contains(chinese)) {
+                    bubble.setText(foreign);
+                    flipBtn.setText("🌐");
+                    log("接收气泡：中文 → 外语");
+                } else {
+                    bubble.setText(chinese);
+                    flipBtn.setText("🔄");
+                    log("接收气泡：外语 → 中文");
                 }
             }
-        } catch (Throwable e) {
-            log("toggleBubbleText 失败: " + e.getMessage());
+            return;
         }
+
+        // 发送侧没 cache 命中，尝试 draft fallback
+        if (isMine) {
+            String draft = AITranslator.getDraftFuzzy(current);
+            if (draft != null) {
+                bubble.setText(draft);
+                flipBtn.setText("🔄");
+                log("发送气泡：fallback draft 成功");
+            } else {
+                log("发送气泡：fallback draft 失败");
+            }
+        }
+    } catch (Throwable e) {
+        log("toggleBubbleText 失败: " + e.getMessage());
     }
+}
 
-    private static TextView findBubbleTextView(Object holder) {
-        try {
-            // 先在 holder 自己字段里找 HTCompatTextView
-            for (Field f : holder.getClass().getDeclaredFields()) {
-                f.setAccessible(true);
-                Object val = f.get(holder);
-                if (val == null) continue;
+private static TextView findBubbleTextView(Object holder) {
+    try {
+        // 先在 holder 自己字段里找 HTCompatTextView
+        for (Field f : holder.getClass().getDeclaredFields()) {
+            f.setAccessible(true);
+            Object val = f.get(holder);
+            if (val == null) continue;
 
-                if (val instanceof TextView &&
-                        "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(val.getClass().getName())) {
-                    return (TextView) val;
-                }
-
-                if (val instanceof ViewGroup) {
-                    TextView found = findTextViewRecursively((ViewGroup) val);
-                    if (found != null) return found;
-                }
+            if (val instanceof TextView &&
+                    "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(val.getClass().getName())) {
+                return (TextView) val;
             }
 
-            // 再去 binding 里递归找
-            for (Field f : holder.getClass().getDeclaredFields()) {
-                f.setAccessible(true);
-                Object val = f.get(holder);
-                if (val == null) continue;
+            if (val instanceof ViewGroup) {
+                TextView found = findTextViewRecursively((ViewGroup) val);
+                if (found != null) return found;
+            }
+        }
 
-                String cn = val.getClass().getName();
-                if (cn.startsWith("com.hellotalk.talk.databinding.")) {
-                    for (Field bf : val.getClass().getDeclaredFields()) {
-                        bf.setAccessible(true);
-                        Object bv = bf.get(val);
-                        if (bv instanceof TextView &&
-                                "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(bv.getClass().getName())) {
-                            return (TextView) bv;
-                        }
-                        if (bv instanceof ViewGroup) {
-                            TextView found = findTextViewRecursively((ViewGroup) bv);
-                            if (found != null) return found;
-                        }
+        // 再去 binding 里递归找
+        for (Field f : holder.getClass().getDeclaredFields()) {
+            f.setAccessible(true);
+            Object val = f.get(holder);
+            if (val == null) continue;
+
+            String cn = val.getClass().getName();
+            if (cn.startsWith("com.hellotalk.talk.databinding.")) {
+                for (Field bf : val.getClass().getDeclaredFields()) {
+                    bf.setAccessible(true);
+                    Object bv = bf.get(val);
+
+                    if (bv instanceof TextView &&
+                            "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(bv.getClass().getName())) {
+                        return (TextView) bv;
+                    }
+
+                    if (bv instanceof ViewGroup) {
+                        TextView found = findTextViewRecursively((ViewGroup) bv);
+                        if (found != null) return found;
                     }
                 }
             }
-        } catch (Throwable ignored) {}
-        return null;
-    }
-
-    private static TextView findTextViewRecursively(ViewGroup group) {
-        for (int i = 0; i < group.getChildCount(); i++) {
-            View child = group.getChildAt(i);
-            if (child instanceof TextView &&
-                    "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(child.getClass().getName())) {
-                return (TextView) child;
-            }
-            if (child instanceof ViewGroup) {
-                TextView found = findTextViewRecursively((ViewGroup) child);
-                if (found != null) return found;
-            }
         }
-        return null;
-    }
+    } catch (Throwable ignored) {}
+    return null;
+}
 
-    // ═══════════════════════════════════════════
-    // 输入框按钮注入
-    // ═══════════════════════════════════════════
-
-    private static void hookBtnOld(ClassLoader cl) throws Exception {
-        Class<?> boxClass = XposedHelpers.findClass(
-                "com.hellotalk.chat.ui.ChatInputBoxView", cl);
-        XposedBridge.hookAllConstructors(boxClass, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) {
-                View v = (View) p.thisObject;
-                v.postDelayed(() -> tryAddBtn_Old(v), 2000);
-            }
-        });
-    }
-
-    private static void hookBtnNew(ClassLoader cl) throws Exception {
-        Class<?> operateClass = XposedHelpers.findClass(
-                "com.hellotalk.talk.detail.widget.input.ChatInputUIOperate", cl);
-        XposedBridge.hookAllConstructors(operateClass, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) {
-                View v = (View) p.thisObject;
-                v.postDelayed(() -> tryAddBtn_New(v), 2500);
-            }
-        });
-    }
-
-    private static void tryAddBtn_New(View box) {
-        EditText edit = findEditTextInView(box);
-        if (edit != null) addTranslateBtn((ViewGroup) box, edit);
-    }
-
-    private static void tryAddBtn_Old(View box) {
-        EditText edit = findEditTextInView(box);
-        if (edit != null) addTranslateBtn((ViewGroup) box, edit);
-    }
-
-    private static EditText findEditTextInView(View view) {
-        try {
-            for (Field field : view.getClass().getDeclaredFields()) {
-                field.setAccessible(true);
-                Object val = field.get(view);
-                if (val instanceof EditText) return (EditText) val;
-            }
-        } catch (Exception ignored) {}
-
-        if (view instanceof ViewGroup) {
-            ViewGroup group = (ViewGroup) view;
-            for (int i = 0; i < group.getChildCount(); i++) {
-                View child = group.getChildAt(i);
-                if (child instanceof EditText) return (EditText) child;
-                EditText found = findEditTextInView(child);
-                if (found != null) return found;
-            }
+private static TextView findTextViewRecursively(ViewGroup group) {
+    for (int i = 0; i < group.getChildCount(); i++) {
+        View child = group.getChildAt(i);
+        if (child instanceof TextView &&
+                "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(child.getClass().getName())) {
+            return (TextView) child;
         }
-        return null;
+        if (child instanceof ViewGroup) {
+            TextView found = findTextViewRecursively((ViewGroup) child);
+            if (found != null) return found;
+        }
     }
+    return null;
+}
 
-    private static void addTranslateBtn(ViewGroup layout, EditText edit) {
-        Object tag = layout.getTag();
-        if (tag != null && "HT_AI_BTN".equals(tag.toString())) return;
+// ═══════════════════════════════════════════
+// 聊天打开时，记录当前 chatId / 用户资料
+// ═══════════════════════════════════════════
 
-        Button btn = new Button(layout.getContext());
-        btn.setText("译");
-        btn.setTextSize(12f);
-        btn.setAllCaps(false);
-        btn.setPadding(12, 4, 12, 4);
+private static void hookStartChat(ClassLoader cl) throws Exception {
+    XposedHelpers.findAndHookMethod(
+            "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
+            cl,
+            "startChat",
+            int.class,
+            int.class,
+            new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    currentChatId = String.valueOf(param.args[0]);
+                    currentChatType = (int) param.args[1];
 
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.parseColor("#CC333333"));
-        bg.setCornerRadius(8f);
-        btn.setBackground(bg);
-        btn.setTextColor(Color.parseColor("#FFFFFFFF"));
-        btn.setAlpha(0.95f);
+                    final Object vm = param.thisObject;
+                    new Thread(() -> {
+                        try {
+                            Field f = vm.getClass().getDeclaredField("chatUser");
+                            f.setAccessible(true);
+                            for (int i = 0; i < 6; i++) {
+                                Object chatUser = f.get(vm);
+                                if (chatUser != null) {
+                                    updateFromChatUser(chatUser);
+                                    return;
+                                }
+                                Thread.sleep(500);
+                            }
+                        } catch (Exception ignored) {}
+                    }).start();
+                }
+            }
+    );
+}
 
-        btn.setVisibility(View.GONE);
-        layout.addView(btn, 0);
-        layout.setTag("HT_AI_BTN");
+private static void updateFromChatUser(Object chatUser) {
+    try {
+        int nativeLang = (Integer) XposedHelpers.callMethod(chatUser, "getNativeLang");
+        String nationality = (String) XposedHelpers.callMethod(chatUser, "getNationality");
+        String nickName = (String) XposedHelpers.callMethod(chatUser, "getNickName");
+        String userName = (String) XposedHelpers.callMethod(chatUser, "getUserName");
 
-        edit.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
-            @Override public void afterTextChanged(Editable s) {}
+        latestNativeLang = nativeLang;
+        latestNationality = nationality != null ? nationality : "";
+        latestPartnerName = (nickName != null && !nickName.isEmpty())
+                ? nickName
+                : (userName != null ? userName : "");
 
-            @Override
-            public void onTextChanged(CharSequence s, int st, int b, int c) {
-                if (s == null) return;
-                String currentText = s.toString();
+        if (!latestPartnerName.isEmpty()) {
+            currentPartnerName = latestPartnerName;
+        }
+    } catch (Throwable ignored) {}
+}
 
-                if (isTranslatingAPI && currentText.contains("@")) {
-                    AITranslator.cancelOngoingTranslation();
-                    String cleanText = currentText.replace("@", "");
-                    edit.removeTextChangedListener(this);
-                    edit.setText(cleanText);
-                    edit.setSelection(cleanText.length());
-                    edit.addTextChangedListener(this);
+// ═══════════════════════════════════════════
+// 接收/发送消息文本拦截
+// ═══════════════════════════════════════════
+
+private static void hookRecv(ClassLoader cl) throws Exception {
+    Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
+    XposedBridge.hookAllMethods(hm, "getMessageContent", new XC_MethodHook() {
+        @Override
+        protected void afterHookedMethod(MethodHookParam p) {
+            try {
+                Object msg = p.thisObject;
+                boolean isMine = (Boolean) XposedHelpers.callMethod(msg, "isSender");
+                Object bean = p.getResult();
+                if (bean == null) return;
+
+                int cidInt = 0;
+                try {
+                    cidInt = (Integer) XposedHelpers.callMethod(msg, "getChatId");
+                } catch (Exception ignored) {}
+                final String thisChatId = String.valueOf(cidInt);
+                currentChatId = thisChatId;
+
+                String senderName = null;
+                try {
+                    senderName = (String) XposedHelpers.callMethod(msg, "getSenderName");
+                } catch (Exception ignored) {}
+                if (senderName != null && !senderName.isEmpty() && !isMine) {
+                    currentPartnerName = senderName;
+                }
+
+                String text = null;
+                try {
+                    text = (String) XposedHelpers.callMethod(bean, "getText");
+                } catch (Exception ignored) {}
+
+                String msgType = null;
+                try {
+                    msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
+                } catch (Exception ignored) {}
+
+                if (text == null || text.isEmpty()) {
+                    if ("image".equals(msgType) || "photo".equals(msgType)) {
+                        text = "[对方发送了一张图片]";
+                    } else if ("voice".equals(msgType) || "audio".equals(msgType)) {
+                        text = "[对方发送了一条语音]";
+                    } else if ("video".equals(msgType)) {
+                        text = "[对方发送了一段视频]";
+                    } else if ("emoji".equals(msgType) || "sticker".equals(msgType)) {
+                        text = "[对方发送了一个表情包]";
+                    } else {
+                        return;
+                    }
+                }
+
+                String mid = null;
+                try {
+                    mid = (String) XposedHelpers.callMethod(msg, "getMsgId");
+                } catch (Exception ignored) {}
+                if (mid == null || mid.isEmpty()) {
+                    mid = "n_" + text.hashCode();
+                }
+
+                long sendTime = System.currentTimeMillis();
+                try {
+                    sendTime = (Long) XposedHelpers.callMethod(msg, "getSendTime");
+                } catch (Exception ignored) {}
+
+                String quotedText = null;
+                try {
+                    Object replyInfo = XposedHelpers.callMethod(msg, "getReplyInfo");
+                    if (replyInfo != null && !isMine) {
+                        String rMsgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
+                        if ("text".equals(rMsgType)) {
+                            Class<?> jsonBeanClass = XposedHelpers.findClass(
+                                    "com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
+                            Object contentBean = XposedHelpers.callMethod(
+                                    replyInfo, "getMessageContent", jsonBeanClass, true);
+                            if (contentBean != null) {
+                                quotedText = (String) XposedHelpers.callMethod(contentBean, "getText");
+                            }
+                        } else if ("image".equals(rMsgType) || "photo".equals(rMsgType)) {
+                            quotedText = "[图片]";
+                        } else {
+                            quotedText = "[" + rMsgType + "]";
+                        }
+                    }
+                } catch (Exception ignored) {}
+
+                boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
+                if (isNewMessage) {
+                    if (isMine) {
+                        AITranslator.appendHistory(thisChatId, mid, "assistant", text, sendTime, null);
+                    } else {
+                        AITranslator.appendHistory(thisChatId, mid, "user", text, sendTime, quotedText);
+                    }
+                }
+
+                if (text.startsWith("[")) return;
+                if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
+
+                // 我发出的消息：正文保持纯外语
+                if (isMine) {
+                    String myChineseDraft = AITranslator.getDraftFuzzy(text);
+                    if (myChineseDraft != null) {
+                        AITranslator.cacheResult(mid, text, myChineseDraft);
+                    }
                     return;
                 }
 
-                String textWithoutAt = currentText.replace("@", "");
-                if (!currentText.trim().isEmpty() && AITranslator.isChineseOnly(textWithoutAt)) {
-                    if (!isTranslatingAPI) {
-                        btn.setVisibility(View.VISIBLE);
-                        btn.setEnabled(true);
-                        btn.setText("译");
-                        btn.setAlpha(0.93f);
-                    }
-                } else {
-                    if (!isTranslatingAPI) {
-                        btn.setVisibility(View.GONE);
-                    }
+                // 对方发来的消息：正文保持纯中文
+                String[] cached = AITranslator.getCached(mid);
+                if (cached != null) {
+                    try {
+                        XposedHelpers.callMethod(bean, "setText", cached[1]);
+                    } catch (Exception ignored) {}
+                    return;
                 }
-            }
-        });
 
-        btn.setOnClickListener(v -> {
-            String text = edit.getText().toString().trim();
-            if (text.isEmpty() || !AITranslator.isChineseOnly(text)) return;
+                if (!translating.add(mid)) return;
 
-            isTranslatingAPI = true;
-            btn.setEnabled(false);
-            btn.setText("...");
-            btn.setAlpha(1.0f);
+                final String finalText = text;
+                final String finalMid = mid;
+                final Object finalBean = bean;
 
-            String quoteText = null;
-            try {
-                quoteText = getQuoteReplyText(edit.getRootView());
-            } catch (Exception ignored) {}
-
-            String textToTranslate = text;
-
-            if (quoteText != null && !quoteText.trim().isEmpty()) {
-                String orig = AITranslator.getForeignFuzzy(quoteText);
-                if (orig != null) {
-                    quoteText = orig;
-                    log("已成功锚定并还原出极净的原文 Quote 语境！");
-                }
-                textToTranslate = "【我要回复的对方原话】：" + quoteText.trim() + "\n【我的回复】：" + text;
-            }
-
-            final String finalTextToTranslate = textToTranslate;
-            final String rawChineseInput = text;
-
-            new Thread(() -> {
-                try {
-                    String targetLang = determineSmartTargetLang();
-
-                    if (currentChatType == 1) {
-                        AITranslator.registerFriend(currentChatId, currentPartnerName, targetLang);
-                    }
-
-                    String lastReq = chatRequestMap.get(currentChatId);
-                    int retryCount = chatRetryCountMap.getOrDefault(currentChatId, 0);
-
-                    boolean isRetry = finalTextToTranslate.equals(lastReq);
-                    if (isRetry) {
-                        retryCount++;
-                        chatRetryCountMap.put(currentChatId, retryCount);
-                    } else {
-                        chatRequestMap.put(currentChatId, finalTextToTranslate);
-                        chatRetryCountMap.put(currentChatId, 0);
-                        retryCount = 0;
-                    }
-
-                    String finalPromptText = finalTextToTranslate;
-                    if (isRetry) {
-                        finalPromptText = finalTextToTranslate
-                                + "\n\n【系统强制指令】：用户对刚才的翻译结果不满意，要求重新生成（重试第"
-                                + retryCount + "次）。请彻底抛弃你脑海中默认的第一反应，使用完全不同的表达方式、词汇或句式，给出4个全新的版本！严禁与上次翻译重复！";
-                    }
-
-                    String result = AITranslator.translateWithHistory(finalPromptText, targetLang, currentChatId);
-
-                    isTranslatingAPI = false;
-                    edit.post(() -> {
-                        btn.setEnabled(true);
-                        btn.setText("译");
-                        btn.setAlpha(0.92f);
-                        showPicker(edit, result, rawChineseInput);
-                    });
-                } catch (Exception e) {
-                    isTranslatingAPI = false;
-                    edit.post(() -> {
-                        btn.setEnabled(true);
-                        btn.setText("译");
-                        btn.setAlpha(0.88f);
-                        String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-                        if (msg.contains("canceled") || msg.contains("socket closed")) {
-                            Toast.makeText(edit.getContext(), "🛑 翻译已急停，可重新编辑", Toast.LENGTH_SHORT).show();
-                        } else {
-                            Toast.makeText(edit.getContext(), "翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                new Thread(() -> {
+                    try {
+                        String t = AITranslator.toChinese(finalText, thisChatId);
+                        if (t != null && !t.trim().isEmpty() && !t.equals(finalText)) {
+                            AITranslator.cacheResult(finalMid, finalText, t);
+                            try {
+                                XposedHelpers.callMethod(finalBean, "setText", t);
+                            } catch (Exception ignored) {}
                         }
-                    });
+                    } catch (Exception ignored) {
+                    } finally {
+                        translating.remove(finalMid);
+                    }
+                }).start();
+
+            } catch (Throwable ignored) {}
+        }
+    });
+}
+    }// ═══════════════════════════════════════════
+// 语言检测 Hook
+// ═══════════════════════════════════════════
+
+private static void hookLang(ClassLoader cl) throws Exception {
+    Class<?> vm = XposedHelpers.findClass(
+            "com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+    Field uf = vm.getDeclaredField("chatUser");
+    uf.setAccessible(true);
+    Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
+
+    XposedHelpers.findAndHookMethod(
+            vm,
+            "generateChatMessage",
+            hm,
+            boolean.class,
+            new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) {
+                    try {
+                        Object u = uf.get(p.thisObject);
+                        if (u != null) {
+                            partnerLang = (Integer) XposedHelpers.callMethod(u, "getNativeLang");
+                        }
+                    } catch (Throwable ignored) {}
                 }
-            }).start();
-        });
+            }
+    );
+}
+
+// ═══════════════════════════════════════════
+// 引用回复提取
+// ═══════════════════════════════════════════
+
+private static String getQuoteReplyText(View rootView) {
+    if (rootView == null) return null;
+
+    if (rootView instanceof TextView) {
+        TextView tv = (TextView) rootView;
+        try {
+            String idName = tv.getResources().getResourceEntryName(tv.getId());
+            if (idName != null && idName.equalsIgnoreCase("tvReplyDesc")) {
+                if (tv.getVisibility() == View.VISIBLE) {
+                    return tv.getText().toString();
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
-    // ═══════════════════════════════════════════
+    if (rootView instanceof ViewGroup) {
+        ViewGroup vg = (ViewGroup) rootView;
+        for (int i = 0; i < vg.getChildCount(); i++) {
+            String res = getQuoteReplyText(vg.getChildAt(i));
+            if (res != null) return res;
+        }
+    }
+    return null;
+}
+
+// ═══════════════════════════════════════════
+// 输入框按钮注入
+// ═══════════════════════════════════════════
+
+private static void hookBtnOld(ClassLoader cl) throws Exception {
+    Class<?> boxClass = XposedHelpers.findClass(
+            "com.hellotalk.chat.ui.ChatInputBoxView", cl);
+    XposedBridge.hookAllConstructors(boxClass, new XC_MethodHook() {
+        @Override
+        protected void afterHookedMethod(MethodHookParam p) {
+            View v = (View) p.thisObject;
+            v.postDelayed(() -> tryAddBtn_Old(v), 2000);
+        }
+    });
+}
+
+private static void hookBtnNew(ClassLoader cl) throws Exception {
+    Class<?> operateClass = XposedHelpers.findClass(
+            "com.hellotalk.talk.detail.widget.input.ChatInputUIOperate", cl);
+    XposedBridge.hookAllConstructors(operateClass, new XC_MethodHook() {
+        @Override
+        protected void afterHookedMethod(MethodHookParam p) {
+            View v = (View) p.thisObject;
+            v.postDelayed(() -> tryAddBtn_New(v), 2500);
+        }
+    });
+}
+
+private static void tryAddBtn_New(View box) {
+    EditText edit = findEditTextInView(box);
+    if (edit != null) addTranslateBtn((ViewGroup) box, edit);
+}
+
+private static void tryAddBtn_Old(View box) {
+    EditText edit = findEditTextInView(box);
+    if (edit != null) addTranslateBtn((ViewGroup) box, edit);
+}
+
+private static EditText findEditTextInView(View view) {
+    try {
+        for (Field field : view.getClass().getDeclaredFields()) {
+            field.setAccessible(true);
+            Object val = field.get(view);
+            if (val instanceof EditText) return (EditText) val;
+        }
+    } catch (Exception ignored) {}
+
+    if (view instanceof ViewGroup) {
+        ViewGroup group = (ViewGroup) view;
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child instanceof EditText) return (EditText) child;
+            EditText found = findEditTextInView(child);
+            if (found != null) return found;
+        }
+    }
+    return null;
+}
+
+private static void addTranslateBtn(ViewGroup layout, EditText edit) {
+    Object tag = layout.getTag();
+    if (tag != null && "HT_AI_BTN".equals(tag.toString())) return;
+
+    Button btn = new Button(layout.getContext());
+    btn.setText("译");
+    btn.setTextSize(12f);
+    btn.setAllCaps(false);
+    btn.setPadding(12, 4, 12, 4);
+
+    GradientDrawable bg = new GradientDrawable();
+    bg.setColor(Color.parseColor("#CC333333"));
+    bg.setCornerRadius(8f);
+    btn.setBackground(bg);
+    btn.setTextColor(Color.parseColor("#FFFFFFFF"));
+    btn.setAlpha(0.95f);
+
+    btn.setVisibility(View.GONE);
+    layout.addView(btn, 0);
+    layout.setTag("HT_AI_BTN");
+
+    edit.addTextChangedListener(new TextWatcher() {
+        @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+        @Override public void afterTextChanged(Editable s) {}
+
+        @Override
+        public void onTextChanged(CharSequence s, int st, int b, int c) {
+            if (s == null) return;
+            String currentText = s.toString();
+
+            if (isTranslatingAPI && currentText.contains("@")) {
+                AITranslator.cancelOngoingTranslation();
+                String cleanText = currentText.replace("@", "");
+                edit.removeTextChangedListener(this);
+                edit.setText(cleanText);
+                edit.setSelection(cleanText.length());
+                edit.addTextChangedListener(this);
+                return;
+            }
+
+            String textWithoutAt = currentText.replace("@", "");
+            if (!currentText.trim().isEmpty() && AITranslator.isChineseOnly(textWithoutAt)) {
+                if (!isTranslatingAPI) {
+                    btn.setVisibility(View.VISIBLE);
+                    btn.setEnabled(true);
+                    btn.setText("译");
+                    btn.setAlpha(0.93f);
+                }
+            } else {
+                if (!isTranslatingAPI) {
+                    btn.setVisibility(View.GONE);
+                }
+            }
+        }
+    });
+
+    btn.setOnClickListener(v -> {
+        String text = edit.getText().toString().trim();
+        if (text.isEmpty() || !AITranslator.isChineseOnly(text)) return;
+
+        isTranslatingAPI = true;
+        btn.setEnabled(false);
+        btn.setText("...");
+        btn.setAlpha(1.0f);
+
+        String quoteText = null;
+        try {
+            quoteText = getQuoteReplyText(edit.getRootView());
+        } catch (Exception ignored) {}
+
+        String textToTranslate = text;
+
+        if (quoteText != null && !quoteText.trim().isEmpty()) {
+            String orig = AITranslator.getForeignFuzzy(quoteText);
+            if (orig != null) {
+                quoteText = orig;
+                log("已成功锚定并还原出极净的原文 Quote 语境！");
+            }
+            textToTranslate = "【我要回复的对方原话】：" + quoteText.trim() + "\n【我的回复】：" + text;
+        }
+
+        final String finalTextToTranslate = textToTranslate;
+        final String rawChineseInput = text;
+
+        new Thread(() -> {
+            try {
+                String targetLang = determineSmartTargetLang();
+
+                if (currentChatType == 1) {
+                    AITranslator.registerFriend(currentChatId, currentPartnerName, targetLang);
+                }
+
+                String lastReq = chatRequestMap.get(currentChatId);
+                int retryCount = chatRetryCountMap.getOrDefault(currentChatId, 0);
+
+                boolean isRetry = finalTextToTranslate.equals(lastReq);
+                if (isRetry) {
+                    retryCount++;
+                    chatRetryCountMap.put(currentChatId, retryCount);
+                } else {
+                    chatRequestMap.put(currentChatId, finalTextToTranslate);
+                    chatRetryCountMap.put(currentChatId, 0);
+                    retryCount = 0;
+                }
+
+                String finalPromptText = finalTextToTranslate;
+                if (isRetry) {
+                    finalPromptText = finalTextToTranslate
+                            + "\n\n【系统强制指令】：用户对刚才的翻译结果不满意，要求重新生成（重试第"
+                            + retryCount + "次）。请彻底抛弃你脑海中默认的第一反应，使用完全不同的表达方式、词汇或句式，给出4个全新的版本！严禁与上次翻译重复！";
+                }
+
+                String result = AITranslator.translateWithHistory(finalPromptText, targetLang, currentChatId);
+
+                isTranslatingAPI = false;
+                edit.post(() -> {
+                    btn.setEnabled(true);
+                    btn.setText("译");
+                    btn.setAlpha(0.92f);
+                    showPicker(edit, result, rawChineseInput);
+                });
+            } catch (Exception e) {
+                isTranslatingAPI = false;
+                edit.post(() -> {
+                    btn.setEnabled(true);
+                    btn.setText("译");
+                    btn.setAlpha(0.88f);
+                    String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+                    if (msg.contains("canceled") || msg.contains("socket closed")) {
+                        Toast.makeText(edit.getContext(), "🛑 翻译已急停，可重新编辑", Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(edit.getContext(), "翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                    }
+                });
+            }
+        }).start();
+    });
+}    // ═══════════════════════════════════════════
     // 智能目标语言
     // ═══════════════════════════════════════════
 
@@ -827,8 +1082,7 @@ public class ChatHook {
             params.setMargins(0, 10, 0, 15);
             card.setLayoutParams(params);
 
-            android.graphics.drawable.GradientDrawable cardBg =
-                    new android.graphics.drawable.GradientDrawable();
+            GradientDrawable cardBg = new GradientDrawable();
             cardBg.setColor(Color.parseColor("#F8F9FA"));
             cardBg.setCornerRadius(16f);
             cardBg.setStroke(2, Color.parseColor("#E9ECEF"));
