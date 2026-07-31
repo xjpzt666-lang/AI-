@@ -36,10 +36,13 @@ public class AITranslator {
     private static String model;
     private static OkHttpClient client;
 
-    // ★ 缓存升级：保存 [原文, 译文] 数组，用于剪贴板和双击翻转的反向查找
+    // ★ 缓存升级：明确区分 外语 和 中文，确保复制出去的永远是外语
     public static final Map<String, String[]> cache = new ConcurrentHashMap<>();
-    public static final Map<String, String> translatedToOriginal = new ConcurrentHashMap<>();
-    public static final Map<String, String> originalToTranslated = new ConcurrentHashMap<>();
+    public static final Map<String, String> foreignToChinese = new ConcurrentHashMap<>();
+    public static final Map<String, String> chineseToForeign = new ConcurrentHashMap<>();
+    
+    // ★ 暂存我发出去的中文草稿
+    public static final Map<String, String> mySentDrafts = new ConcurrentHashMap<>();
     
     private static File cacheFile;
     private static File promptFile;
@@ -432,11 +435,8 @@ public class AITranslator {
                 String[] parts = line.split("\\|\\|\\|");
                 if (parts.length >= 3) {
                     cache.put(parts[0], new String[]{parts[1], parts[2]});
-                    translatedToOriginal.put(parts[2], parts[1]);
-                    originalToTranslated.put(parts[1], parts[2]);
-                } else if (parts.length == 2) {
-                    // 兼容老版本缓存结构
-                    cache.put(parts[0], new String[]{parts[1], parts[1]});
+                    foreignToChinese.put(parts[1], parts[2]);
+                    chineseToForeign.put(parts[2], parts[1]);
                 }
             }
         } catch (Exception ignored) {}
@@ -456,17 +456,34 @@ public class AITranslator {
 
     public static String[] getCached(String key) { return cache.get(key); }
     
-    // ★ 保存缓存时，同步建立双向查询表
-    public static void cacheResult(String key, String original, String translated) { 
-        cache.put(key, new String[]{original, translated}); 
-        translatedToOriginal.put(translated, original);
-        originalToTranslated.put(original, translated);
+    // ★ 统一标准：第一个参数永远是外语，第二个参数永远是中文
+    public static void cacheResult(String key, String foreign, String chinese) { 
+        cache.put(key, new String[]{foreign, chinese}); 
+        foreignToChinese.put(foreign, chinese);
+        chineseToForeign.put(chinese, foreign);
         saveCache(); 
     }
 
-    // ★ 供给反向查询使用
-    public static String getOriginalByTranslated(String translated) { return translatedToOriginal.get(translated); }
-    public static String getTranslatedByOriginal(String original) { return originalToTranslated.get(original); }
+    public static String getForeignByChinese(String chinese) { return chineseToForeign.get(chinese); }
+    public static String getChineseByForeign(String foreign) { return foreignToChinese.get(foreign); }
+
+    // ★ 终极保险：只要包含，无论中外文，强制清洗出纯正外语！
+    public static String getForeignFuzzy(String copiedText) {
+        if (copiedText == null || copiedText.trim().isEmpty()) return null;
+        String clean = copiedText.trim().replaceAll(" [🔄🌐]$", "");
+        
+        if (foreignToChinese.containsKey(clean)) return clean; // 本来就是外语
+        if (chineseToForeign.containsKey(clean)) return chineseToForeign.get(clean); // 是完整的中文
+        
+        for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) {
+            String f = entry.getKey();
+            String c = entry.getValue();
+            if (clean.contains(c) || c.contains(clean) || clean.contains(f) || f.contains(clean)) {
+                return f; // 强行返回纯正外语
+            }
+        }
+        return null;
+    }
 
     private static void loadPrompts() {
         try {
@@ -602,30 +619,5 @@ public class AITranslator {
                 }
             } catch (Exception ignored) {}
         }
-    }
-
-    public static List<String[]> loadHistoryForDisplay(String chatId) {
-        List<String[]> list = new ArrayList<>();
-        JSONArray history = loadHistory(chatId);
-        for (int i = 0; i < history.length(); i++) {
-            try {
-                JSONObject obj = history.getJSONObject(i);
-                String role = obj.optString("role", "");
-                String content = obj.optString("content", "");
-                
-                if (content.contains("[IMAGE_BASE64:")) {
-                    int start = content.indexOf("[IMAGE_BASE64:");
-                    int end = content.indexOf("]", start);
-                    if (end != -1) {
-                        content = content.substring(0, start) + "[附图]" + content.substring(end + 1);
-                    }
-                }
-
-                if ("user".equals(role)) list.add(new String[]{"对方", content});
-                else if ("assistant".equals(role)) list.add(new String[]{"我", content});
-                else list.add(new String[]{"指令", content});
-            } catch (Exception ignored) {}
-        }
-        return list;
     }
 }
