@@ -47,7 +47,6 @@ public class ChatHook {
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
     private static volatile boolean isTranslatingAPI = false;
 
-    // ★ 智能合并连发防抖池系统
     private static final Map<String, List<PendingMsg>> pendingIncomingMap = new ConcurrentHashMap<>();
     private static final Map<String, java.util.Timer> debounceTimers = new ConcurrentHashMap<>();
 
@@ -63,7 +62,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v10.7 (防抖合并 + 全域历史上下文版) ===");
+        log("=== Hook v10.8 (彻底修复滑屏无限死循环Bug版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -202,7 +201,6 @@ public class ChatHook {
                         }
                     } catch (Exception ignored) {}
 
-                    // ★ 先进行历史记录登记，保证大模型能够读取到这句原始外语作为未来的上下文
                     boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
                     if (isNewMessage) {
                         if (isMine) {
@@ -217,6 +215,7 @@ public class ChatHook {
                     if (text.startsWith("[")) return; 
                     if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
+                    // ★ 核心拦截：只要缓存里有（不管是翻译后的还是被静默的原句），绝对不碰！
                     String cached = AITranslator.getCached(mid);
                     if (cached != null) {
                         try { XposedHelpers.callMethod(bean, "setText", cached); } catch (Exception ignored) {}
@@ -229,7 +228,6 @@ public class ChatHook {
                     final String finalMid = mid;
                     final Object finalBean = bean;
 
-                    // ★ Debounce Buffer 智能防抖池系统：拦截碎嘴连发
                     synchronized (pendingIncomingMap) {
                         List<PendingMsg> queue = pendingIncomingMap.get(thisChatId);
                         if (queue == null) {
@@ -251,7 +249,7 @@ public class ChatHook {
                             public void run() {
                                 processDebouncedMessages(thisChatId);
                             }
-                        }, 2500); // 2.5 秒黄金判定时间
+                        }, 2500);
                     }
 
                 } catch (Throwable ignored) {}
@@ -259,7 +257,7 @@ public class ChatHook {
         });
     }
 
-    // ★ 智能合并引擎处理函数 (极简单句防呆 + 连发双语挂载版)
+    // ★ 智能合并引擎处理函数
     private static void processDebouncedMessages(String chatId) {
         List<PendingMsg> msgs;
         synchronized (pendingIncomingMap) {
@@ -268,11 +266,10 @@ public class ChatHook {
         }
         if (msgs == null || msgs.isEmpty()) return;
 
-        // ★ 情况1：单句无断连（正常聊天），追求 100% 沉浸感，无缝覆盖。
+        // ★ 情况1：单句无断连（正常聊天）
         if (msgs.size() == 1) {
             PendingMsg m = msgs.get(0);
             try {
-                // 此时传入 chatId 激活 AITranslator 底层的上下文雷达
                 String t = AITranslator.toChinese(m.text, chatId);
                 if (t != null && !t.trim().isEmpty() && !t.equals(m.text)) {
                     AITranslator.cacheResult(m.mid, t);
@@ -285,25 +282,30 @@ public class ChatHook {
             return;
         }
 
-        // ★ 情况2：碎嘴连发，智能拼凑并做双语挂载防御。
+        // ★ 情况2：碎嘴连发
         StringBuilder combinedOriginal = new StringBuilder();
         for (int i = 0; i < msgs.size(); i++) {
             combinedOriginal.append(msgs.get(i).text);
-            if (i < msgs.size() - 1) combinedOriginal.append("\n"); // 用换行符拼凑
+            if (i < msgs.size() - 1) combinedOriginal.append("\n");
         }
         String finalTextToTranslate = combinedOriginal.toString().trim();
 
         try {
-            // 一次性把拼凑好的段落交给 AI（同样传入 chatId 以获取历史）
             String t = AITranslator.toChinese(finalTextToTranslate, chatId);
             if (t != null && !t.trim().isEmpty() && !t.equals(finalTextToTranslate)) {
                 
-                // 终极 UI 交互：大段翻译结果挂载到最后一条气泡上，前文静默保留防止引用死角
+                // 将大段翻译结果挂载到最后一条气泡上
                 PendingMsg lastMsg = msgs.get(msgs.size() - 1);
                 String displayResult = lastMsg.text + "\n---\n[合并译]: " + t;
                 
                 AITranslator.cacheResult(lastMsg.mid, displayResult);
                 try { XposedHelpers.callMethod(lastMsg.bean, "setText", displayResult); } catch (Exception ignored) {}
+
+                // ★ 修复案发现场二：把前面静默保留的句子也存进缓存库里，彻底斩断滑屏无限触发的死循环！
+                for (int i = 0; i < msgs.size() - 1; i++) {
+                    PendingMsg m = msgs.get(i);
+                    AITranslator.cacheResult(m.mid, m.text); // 静默打上“已处理”标签，存入原外语
+                }
             }
         } catch (Exception ignored) {
         } finally {
