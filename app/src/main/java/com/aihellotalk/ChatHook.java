@@ -45,11 +45,25 @@ public class ChatHook {
     private static final Map<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
 
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
-
     private static volatile boolean isTranslatingAPI = false;
 
+    // ★ 智能合并连发防抖池：应对连发消息的缓存系统
+    private static final Map<String, List<PendingMsg>> pendingIncomingMap = new ConcurrentHashMap<>();
+    private static final Map<String, java.util.Timer> debounceTimers = new ConcurrentHashMap<>();
+
+    static class PendingMsg {
+        String mid;
+        String text;
+        Object bean;
+        public PendingMsg(String mid, String text, Object bean) {
+            this.mid = mid;
+            this.text = text;
+            this.bean = bean;
+        }
+    }
+
     public static void install(ClassLoader cl) {
-        log("=== Hook v10.5 (全域时间轴排序 + 对方Quote捕获版) ===");
+        log("=== Hook v10.6 (智能防抖合并缓冲版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -124,7 +138,8 @@ public class ChatHook {
 
                     int cidInt = 0;
                     try { cidInt = (Integer) XposedHelpers.callMethod(msg, "getChatId"); } catch (Exception ignored) {}
-                    currentChatId = String.valueOf(cidInt);
+                    final String thisChatId = String.valueOf(cidInt);
+                    currentChatId = thisChatId;
 
                     String senderName = null;
                     try { senderName = (String) XposedHelpers.callMethod(msg, "getSenderName"); } catch (Exception ignored) {}
@@ -167,17 +182,13 @@ public class ChatHook {
                     try { mid = (String) XposedHelpers.callMethod(msg, "getMsgId"); } catch (Exception ignored) {}
                     if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
 
-                    // ★ 雷达 1 号：精准抓取真实发送时间戳
                     long sendTime = System.currentTimeMillis();
-                    try {
-                        sendTime = (Long) XposedHelpers.callMethod(msg, "getSendTime");
-                    } catch (Exception ignored) {}
+                    try { sendTime = (Long) XposedHelpers.callMethod(msg, "getSendTime"); } catch (Exception ignored) {}
 
-                    // ★ 雷达 2 号：如果对方长按引用了你的话，把那句话强行揪出来！
                     String quotedText = null;
                     try {
                         Object replyInfo = XposedHelpers.callMethod(msg, "getReplyInfo");
-                        if (replyInfo != null && !isMine) { // 只有对方引用你时，我们才需要标注
+                        if (replyInfo != null && !isMine) { 
                             String rMsgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
                             if ("text".equals(rMsgType)) {
                                 Class<?> jsonBeanClass = XposedHelpers.findClass("com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
@@ -191,14 +202,13 @@ public class ChatHook {
                         }
                     } catch (Exception ignored) {}
 
-                    boolean isNewMessage = recordedMsgIds.add(currentChatId + "_" + mid);
+                    boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
                     
                     if (isNewMessage) {
-                        // 将时间和对方的引用内容一并送入引擎
                         if (isMine) {
-                            AITranslator.appendHistory(currentChatId, mid, "assistant", text, sendTime, null);
+                            AITranslator.appendHistory(thisChatId, mid, "assistant", text, sendTime, null);
                         } else {
-                            AITranslator.appendHistory(currentChatId, mid, "user", text, sendTime, quotedText);
+                            AITranslator.appendHistory(thisChatId, mid, "user", text, sendTime, quotedText);
                         }
                     }
 
@@ -213,27 +223,97 @@ public class ChatHook {
                         return;
                     }
 
+                    // 避免重复投递
                     if (!translating.add(mid)) return;
 
-                    Object finalBean = bean;
-                    String finalText = text;
-                    String finalMid = mid;
-                    new Thread(() -> {
-                        try {
-                            String t = AITranslator.toChinese(finalText);
-                            if (t != null && !t.equals(finalText)) {
-                                AITranslator.cacheResult(finalMid, t);
-                                try { XposedHelpers.callMethod(finalBean, "setText", t); } catch (Exception ignored) {}
-                            }
-                        } catch (Exception ignored) {
-                        } finally {
-                            translating.remove(finalMid);
+                    final String finalText = text;
+                    final String finalMid = mid;
+                    final Object finalBean = bean;
+
+                    // ★ Debounce Buffer 智能防抖池系统：拦截碎嘴连发
+                    synchronized (pendingIncomingMap) {
+                        List<PendingMsg> queue = pendingIncomingMap.get(thisChatId);
+                        if (queue == null) {
+                            queue = new ArrayList<>();
+                            pendingIncomingMap.put(thisChatId, queue);
                         }
-                    }).start();
+                        queue.add(new PendingMsg(finalMid, finalText, finalBean));
+
+                        java.util.Timer oldTimer = debounceTimers.get(thisChatId);
+                        if (oldTimer != null) {
+                            oldTimer.cancel();
+                        }
+
+                        java.util.Timer newTimer = new java.util.Timer();
+                        debounceTimers.put(thisChatId, newTimer);
+
+                        newTimer.schedule(new java.util.TimerTask() {
+                            @Override
+                            public void run() {
+                                processDebouncedMessages(thisChatId);
+                            }
+                        }, 2500); // 让子弹飞 2.5 秒，拼凑断句
+                    }
 
                 } catch (Throwable ignored) {}
             }
         });
+    }
+
+    // ★ 智能合并引擎处理函数
+    private static void processDebouncedMessages(String chatId) {
+        List<PendingMsg> msgs;
+        synchronized (pendingIncomingMap) {
+            msgs = pendingIncomingMap.remove(chatId);
+            debounceTimers.remove(chatId);
+        }
+        if (msgs == null || msgs.isEmpty()) return;
+
+        // 情况1：如果只有单句，直接照旧处理
+        if (msgs.size() == 1) {
+            PendingMsg m = msgs.get(0);
+            try {
+                String t = AITranslator.toChinese(m.text);
+                if (t != null && !t.trim().isEmpty() && !t.equals(m.text)) {
+                    AITranslator.cacheResult(m.mid, t);
+                    try { XposedHelpers.callMethod(m.bean, "setText", t); } catch (Exception ignored) {}
+                }
+            } catch (Exception ignored) {
+            } finally {
+                translating.remove(m.mid);
+            }
+            return;
+        }
+
+        // 情况2：连发轰炸，智能拼凑上下文
+        StringBuilder combinedOriginal = new StringBuilder();
+        for (int i = 0; i < msgs.size(); i++) {
+            combinedOriginal.append(msgs.get(i).text);
+            if (i < msgs.size() - 1) combinedOriginal.append("\n"); // 用换行符拼凑
+        }
+        String finalTextToTranslate = combinedOriginal.toString().trim();
+
+        try {
+            // 一次性把拼凑好的段落交给 AI
+            String t = AITranslator.toChinese(finalTextToTranslate);
+            if (t != null && !t.trim().isEmpty() && !t.equals(finalTextToTranslate)) {
+                
+                // 将大段翻译结果挂载到最后一条气泡上
+                PendingMsg lastMsg = msgs.get(msgs.size() - 1);
+                AITranslator.cacheResult(lastMsg.mid, t);
+                try { XposedHelpers.callMethod(lastMsg.bean, "setText", t); } catch (Exception ignored) {}
+
+                // 前面的碎片气泡，优雅地标注为已被合并
+                for (int i = 0; i < msgs.size() - 1; i++) {
+                    try { XposedHelpers.callMethod(msgs.get(i).bean, "setText", "[⏬与下方合并翻译]"); } catch (Exception ignored) {}
+                }
+            }
+        } catch (Exception ignored) {
+        } finally {
+            for (PendingMsg m : msgs) {
+                translating.remove(m.mid); // 释放锁
+            }
+        }
     }
 
     private static void hookLang(ClassLoader cl) throws Exception {
