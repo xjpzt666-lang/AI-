@@ -5,10 +5,12 @@ import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.lang.reflect.Field;
@@ -47,7 +49,7 @@ public class ChatHook {
     private static volatile boolean isTranslatingAPI = false;
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v14.0 (内嵌真实按钮 ClickableSpan 霸道抢占版) ===");
+        log("=== Hook v15.0 (TextView.onTouchEvent 系统级暴力接管版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -64,7 +66,7 @@ public class ChatHook {
         try { hookBtnNew(cl); } catch (Throwable e) {}
     }
 
-    // ★ 剪贴板拦截：系统新旧两代 API 绝对防御
+    // ★ 剪贴板双层防御：系统新旧两代 API 绝对防御
     private static void hookClipboard(ClassLoader cl) {
         XC_MethodHook clipHook = new XC_MethodHook() {
             @Override
@@ -98,57 +100,35 @@ public class ChatHook {
         } catch (Throwable t) {}
     }
 
-    // ★ 放弃手势，启用 ClickableSpan 霸道抢占点击权！(既然你不在乎破坏双击放大)
+    // ★ 核心绝杀：直接拦截 Android 系统框架层 TextView 的 onTouchEvent 事件！
     private static void hookTextViewForFlip() {
-        XposedBridge.hookAllMethods(android.widget.TextView.class, "setText", new XC_MethodHook() {
+        XposedBridge.hookAllMethods(TextView.class, "onTouchEvent", new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                if (param.args.length < 1 || param.args[0] == null) return;
-                Object arg0 = param.args[0];
-                if (!(arg0 instanceof CharSequence)) return;
+                TextView tv = (TextView) param.thisObject;
+                MotionEvent event = (MotionEvent) param.args[0];
                 
-                CharSequence text = (CharSequence) arg0;
-                
-                // 防止无限死循环：如果已经套了我们的 Span，直接放行
-                if (text instanceof android.text.SpannableString) {
-                    android.text.style.ClickableSpan[] spans = ((android.text.SpannableString)text).getSpans(0, text.length(), android.text.style.ClickableSpan.class);
-                    if (spans.length > 0) return; 
+                // 只处理按下的瞬间事件 (ACTION_DOWN)
+                if (event.getAction() != MotionEvent.ACTION_DOWN) return;
+
+                CharSequence cs = tv.getText();
+                if (cs == null) return;
+                String s = cs.toString();
+
+                if (!s.endsWith(" 🔄") && !s.endsWith(" 🌐")) return;
+
+                // ★ 暴力拦截：清除后缀，直接翻转文本！
+                String clean = s.substring(0, s.length() - 2);
+                if (s.endsWith(" 🔄")) {
+                    String orig = AITranslator.getForeignByChinese(clean);
+                    if (orig != null) tv.setText(orig + " 🌐");
+                } else {
+                    String zh = AITranslator.getChineseByForeign(clean);
+                    if (zh != null) tv.setText(zh + " 🔄");
                 }
 
-                String s = text.toString();
-                if (s.endsWith(" 🔄") || s.endsWith(" 🌐")) {
-                    android.text.SpannableString ss = new android.text.SpannableString(s);
-                    android.text.style.ClickableSpan clickSpan = new android.text.style.ClickableSpan() {
-                        @Override
-                        public void onClick(View widget) {
-                            android.widget.TextView tv = (android.widget.TextView) widget;
-                            String current = tv.getText().toString();
-                            if (current.endsWith(" 🔄")) { // 当前中文，切回外语
-                                String clean = current.substring(0, current.length() - 2);
-                                String foreign = AITranslator.getForeignByChinese(clean);
-                                if (foreign != null) tv.setText(foreign + " 🌐");
-                            } else if (current.endsWith(" 🌐")) { // 当前外语，切回中文
-                                String clean = current.substring(0, current.length() - 2);
-                                String chinese = AITranslator.getChineseByForeign(clean);
-                                if (chinese != null) tv.setText(chinese + " 🔄");
-                            }
-                        }
-                        @Override
-                        public void updateDrawState(android.text.TextPaint ds) {
-                            // 给小图标染上系统高亮蓝，表示这是一个真正的物理按钮！
-                            ds.setColor(Color.parseColor("#1DA1F2"));
-                            ds.setUnderlineText(false);
-                        }
-                    };
-                    
-                    // 只把最后这两个字符（空格 + 图标）变成按钮
-                    ss.setSpan(clickSpan, s.length() - 2, s.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                    param.args[0] = ss; // 修改入参！
-                    
-                    // ★ 尚方宝剑：强行接管 TextView 的点击拦截权
-                    android.widget.TextView tv = (android.widget.TextView) param.thisObject;
-                    tv.setMovementMethod(android.text.method.LinkMovementMethod.getInstance());
-                }
+                // ★ 终极断绝：设置 return true，彻底阻断 HelloTalk 原生的单击翻译和双击放大！
+                param.setResult(true);
             }
         });
     }
@@ -278,17 +258,15 @@ public class ChatHook {
                     if (text.startsWith("[")) return; 
                     if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
-                    // ★ 我发出的消息拦截：使用极其宽容的模糊匹配搜索草稿
+                    // ★ 我发出的消息拦截：使用模糊匹配搜索草稿
                     if (isMine) {
                         String myChineseDraft = AITranslator.getDraftFuzzy(text);
                         if (myChineseDraft != null) {
-                            // 配对成功，将外语和草稿绑定到缓存库
                             AITranslator.cacheResult(mid, text, myChineseDraft); 
                         }
                         
                         String[] cached = AITranslator.getCached(mid);
                         if (cached != null) {
-                            // 渲染带图标的外语原文
                             try { XposedHelpers.callMethod(bean, "setText", cached[0] + " 🌐"); } catch (Exception ignored) {}
                         }
                         return;
@@ -491,7 +469,6 @@ public class ChatHook {
 
             String textToTranslate = text;
             
-            // ★ 回复清洗逻辑：只要点击回复，自动从引用框反推出原生外语
             if (quoteText != null && !quoteText.trim().isEmpty()) {
                 String orig = AITranslator.getForeignFuzzy(quoteText);
                 if (orig != null) {
@@ -502,7 +479,7 @@ public class ChatHook {
             }
 
             final String finalTextToTranslate = textToTranslate;
-            final String rawChineseInput = text; // 记录原始中文输入，用于绑定发送后的气泡
+            final String rawChineseInput = text;
 
             new Thread(() -> {
                 try {
@@ -537,7 +514,6 @@ public class ChatHook {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.92f);
-                        // 把原始中文传给 Picker，用于我方气泡的原文记忆
                         showPicker(edit, result, rawChineseInput);
                     });
                 } catch (Exception e) {
@@ -709,7 +685,6 @@ public class ChatHook {
             }
 
             card.setOnClickListener(v -> {
-                // ★ 记录草稿映射：当这句外语发出去后，瞬间挂上我的中文草稿记忆！
                 AITranslator.mySentDrafts.put(foreign.trim(), originalChineseInput.trim());
                 edit.setText(foreign);
                 edit.setSelection(foreign.length());
