@@ -55,7 +55,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v16.0 (dispatchTouchEvent 最终版) ===");
+        log("=== Hook v17.0 (UP/DOWN全拦截版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -118,7 +118,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 翻转按钮（最终版：dispatchTouchEvent）
+    // 翻转按钮（v17.0：DOWN做翻转 + UP也拦截）
     // ═══════════════════════════════════════════
 
     private static void hookTextViewForFlip() {
@@ -128,19 +128,21 @@ public class ChatHook {
                 TextView tv = (TextView) param.thisObject;
                 MotionEvent event = (MotionEvent) param.args[0];
 
-                if (event.getAction() != MotionEvent.ACTION_DOWN) return;
-
                 String s = tv.getText().toString();
                 if (!s.endsWith(" 🔄") && !s.endsWith(" 🌐")) return;
 
-                String clean = s.substring(0, s.length() - 2);
-                if (s.endsWith(" 🔄")) {
-                    String orig = AITranslator.getForeignByChinese(clean);
-                    if (orig != null) tv.setText(orig + " 🌐");
-                } else {
-                    String zh = AITranslator.getChineseByForeign(clean);
-                    if (zh != null) tv.setText(zh + " 🔄");
+                // ★ 只在按下时翻转一次
+                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    String clean = s.substring(0, s.length() - 2);
+                    if (s.endsWith(" 🔄")) {
+                        String orig = AITranslator.getForeignByChinese(clean);
+                        if (orig != null) tv.setText(orig + " 🌐");
+                    } else {
+                        String zh = AITranslator.getChineseByForeign(clean);
+                        if (zh != null) tv.setText(zh + " 🔄");
+                    }
                 }
+                // ★★★ DOWN/UP/MOVE 全部拦截，官方翻译永远不会触发 ★★★
                 param.setResult(true);
             }
         });
@@ -588,7 +590,7 @@ public class ChatHook {
         String friendLang = AITranslator.getFriendLang(currentChatId);
         if (friendLang != null && !friendLang.isEmpty()) {
             if (friendLang.equalsIgnoreCase("zh") || friendLang.equalsIgnoreCase("cn")
-                || friendLang.startsWith("zh")) {
+                    || friendLang.startsWith("zh")) {
                 return DEFAULT_REPLY_LANG;
             }
             return friendLang;
