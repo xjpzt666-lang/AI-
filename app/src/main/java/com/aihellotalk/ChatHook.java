@@ -5,6 +5,7 @@ import android.content.ClipData;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
+import android.text.Layout;
 import android.text.TextWatcher;
 import android.view.MotionEvent;
 import android.view.View;
@@ -55,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v18.0 (精准 HTCompatTextView.onTouchEvent 终极版) ===");
+        log("=== Hook v19.0 (图标区域精准拦截 + 长按恢复版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -130,8 +131,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 核心修复：直接 Hook HelloTalk 的 HTCompatTextView
-    // 官方翻译、官方放大、官方点击全部在这里截断
+    // 核心修复：精准拦截图标区域，不吞掉整条气泡
     // ═══════════════════════════════════════════
 
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
@@ -153,27 +153,44 @@ public class ChatHook {
                         String s = cs.toString();
                         if (!s.endsWith(" 🔄") && !s.endsWith(" 🌐")) return;
 
-                        // 只在按下瞬间翻转一次
+                        Layout layout = tv.getLayout();
+                        if (layout == null) return;
+
+                        int line = layout.getLineForVertical((int) ev.getY());
+                        int offset = layout.getOffsetForHorizontal(line, ev.getX());
+
+                        // 图标区 = 最后两个字符（空格 + emoji）
+                        int iconStart = s.length() - 2;
+
+                        // ★ 如果点的是正文，不拦截，让 HelloTalk 保留长按菜单
+                        if (offset < iconStart) {
+                            return;
+                        }
+
+                        // 只有点中图标区域才拦截
                         if (ev.getAction() == MotionEvent.ACTION_DOWN) {
-                            String clean = s.substring(0, s.length() - 2);
+                            String clean = s.substring(0, iconStart);
 
                             if (s.endsWith(" 🔄")) {
                                 String orig = AITranslator.getForeignByChinese(clean);
                                 if (orig != null && !orig.equals(clean)) {
                                     tv.setText(orig + " 🌐");
                                     log("翻转：中文 → 外语");
+                                } else {
+                                    log("翻转失败：未找到中文对应外语: " + clean);
                                 }
                             } else if (s.endsWith(" 🌐")) {
                                 String zh = AITranslator.getChineseByForeign(clean);
                                 if (zh != null && !zh.equals(clean)) {
                                     tv.setText(zh + " 🔄");
                                     log("翻转：外语 → 中文");
+                                } else {
+                                    log("翻转失败：未找到外语对应中文: " + clean);
                                 }
                             }
                         }
 
-                        // ★ 关键：不论 DOWN / UP / MOVE / CANCEL，全吞掉
-                        // 这样官方单击翻译、官方双击放大都不会再触发
+                        // 图标区的事件全部吞掉，避免官方翻译 / 放大
                         param.setResult(true);
                     }
                 }
