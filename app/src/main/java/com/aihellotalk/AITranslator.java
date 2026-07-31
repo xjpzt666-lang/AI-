@@ -191,12 +191,64 @@ public class AITranslator {
         return true;
     }
 
+    // ★ 重载：兼容老测试调用的无上下文版本
     public static String toChinese(String text) throws IOException {
+        return toChinese(text, "0");
+    }
+
+    // ★ 核心引擎升级：自动捕获并缝合最近上下文剧本
+    public static String toChinese(String text, String chatId) throws IOException {
         text = text.trim();
         if (text.isEmpty()) return text;
         if (!needTranslateToChinese(text)) return text;
-        String prompt = receivePrompt + "\n\n需要翻译的外语消息：\n" + text;
-        return callChatSimple(prompt);
+
+        try {
+            JSONArray messages = new JSONArray();
+
+            String sysPrompt = receivePrompt + "\n\n【系统隐性指令】：\n" +
+                    "这是一段连续对话。请结合下方提供的【最近上下文剧本】判断话题走向，准确翻译出最后这条【最新外语消息】。如果上下文与最新消息无关，请以最新消息语境为准。";
+            
+            messages.put(createMessageObj("system", sysPrompt));
+
+            JSONArray fullHistory = loadHistory(chatId);
+            StringBuilder scriptBuilder = new StringBuilder();
+            scriptBuilder.append("【最近上下文剧本】\n");
+
+            // ★ 提取最近 15 条消息，赋予 AI "跨越分钟级的记忆"
+            int maxChatMessages = 15;
+            int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
+            boolean hasContext = false;
+            
+            for (int i = startIdx; i < fullHistory.length(); i++) {
+                JSONObject msg = fullHistory.getJSONObject(i);
+                String role = msg.optString("role", "");
+                String content = msg.optString("content", "");
+                
+                // ★ 防止把当前正要翻译的这句话也算进上下文里造成重复
+                if (content != null && content.equals(text)) continue;
+
+                if ("user".equals(role)) {
+                    scriptBuilder.append("对方: ").append(content).append("\n");
+                    hasContext = true;
+                } else if ("assistant".equals(role)) {
+                    scriptBuilder.append("我: ").append(content).append("\n");
+                    hasContext = true;
+                }
+            }
+
+            if (!hasContext) {
+                scriptBuilder.append("（暂无有效上下文）\n");
+            }
+
+            scriptBuilder.append("\n【请翻译以下最新外语消息】\n").append(text);
+            messages.put(createMessageObj("user", scriptBuilder.toString()));
+
+            return callChatMessages(messages);
+        } catch (JSONException e) {
+            // 防御机制：万一 JSON 构造失败，降级回单句直译模式
+            String prompt = receivePrompt + "\n\n需要翻译的外语消息：\n" + text;
+            return callChatSimple(prompt);
+        }
     }
 
     public static String fromChinese(String text, String lang) throws IOException {
@@ -210,7 +262,7 @@ public class AITranslator {
         if (isChineseOnly(text)) {
             return callChatSimple("把以下中文翻译成" + lang + "：" + text);
         } else {
-            return toChinese(text);
+            return toChinese(text, "0");
         }
     }
 
@@ -419,7 +471,7 @@ public class AITranslator {
             }
         } catch (Exception ignored) {}
 
-        // ★ 核心：注入全新定稿的出厂强控制接收指令，确保无上下文时也能极致还原个人体感
+        // ★ 出厂硬编码定稿的终极极简克隆骨架指令
         if (receivePrompt.isEmpty()) receivePrompt = "你是我的专属社交情报传译员。你的任务是代入对方（外国女性）的身份，将接下来需要翻译的单句或多句外语，转化为最贴合她真实人设的现代中文口语。\n" +
                 "\n" +
                 "【翻译核心准则】\n" +
