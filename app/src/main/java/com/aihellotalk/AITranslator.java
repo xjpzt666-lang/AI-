@@ -36,7 +36,11 @@ public class AITranslator {
     private static String model;
     private static OkHttpClient client;
 
-    public static final Map<String, String> cache = new ConcurrentHashMap<>();
+    // ★ 缓存升级：保存 [原文, 译文] 数组，用于剪贴板和双击翻转的反向查找
+    public static final Map<String, String[]> cache = new ConcurrentHashMap<>();
+    public static final Map<String, String> translatedToOriginal = new ConcurrentHashMap<>();
+    public static final Map<String, String> originalToTranslated = new ConcurrentHashMap<>();
+    
     private static File cacheFile;
     private static File promptFile;
 
@@ -195,7 +199,6 @@ public class AITranslator {
         return toChinese(text, "0");
     }
 
-    // ★ 核心引擎升级：严厉打断 AI 的幻觉扩写
     public static String toChinese(String text, String chatId) throws IOException {
         text = text.trim();
         if (text.isEmpty()) return text;
@@ -204,7 +207,6 @@ public class AITranslator {
         try {
             JSONArray messages = new JSONArray();
 
-            // ★ 修复案发现场一：注入最严厉的防加戏系统级指令
             String sysPrompt = receivePrompt + "\n\n【系统隐性防加戏指令】（最高优先级）：\n" +
                     "1. 下方的【最近上下文剧本】仅用于辅助你理解语境（如代词指代、情绪连贯性），绝不允许将上下文的剧情总结或扩写到当前的翻译中！\n" +
                     "2. 你的唯一任务是【直译】最后那条【最新外语消息】。原文有多短，翻译就必须有多短！\n" +
@@ -427,8 +429,15 @@ public class AITranslator {
         try (BufferedReader r = new BufferedReader(new FileReader(cacheFile))) {
             String line;
             while ((line = r.readLine()) != null) {
-                int idx = line.indexOf("|||");
-                if (idx > 0) cache.put(line.substring(0, idx), line.substring(idx + 3));
+                String[] parts = line.split("\\|\\|\\|");
+                if (parts.length >= 3) {
+                    cache.put(parts[0], new String[]{parts[1], parts[2]});
+                    translatedToOriginal.put(parts[2], parts[1]);
+                    originalToTranslated.put(parts[1], parts[2]);
+                } else if (parts.length == 2) {
+                    // 兼容老版本缓存结构
+                    cache.put(parts[0], new String[]{parts[1], parts[1]});
+                }
             }
         } catch (Exception ignored) {}
     }
@@ -437,16 +446,27 @@ public class AITranslator {
         try {
             cacheFile.getParentFile().mkdirs();
             try (BufferedWriter w = new BufferedWriter(new FileWriter(cacheFile))) {
-                for (Map.Entry<String, String> e : cache.entrySet()) {
-                    w.write(e.getKey() + "|||" + e.getValue());
+                for (Map.Entry<String, String[]> e : cache.entrySet()) {
+                    w.write(e.getKey() + "|||" + e.getValue()[0] + "|||" + e.getValue()[1]);
                     w.newLine();
                 }
             }
         } catch (Exception ignored) {}
     }
 
-    public static String getCached(String key) { return cache.get(key); }
-    public static void cacheResult(String key, String value) { cache.put(key, value); saveCache(); }
+    public static String[] getCached(String key) { return cache.get(key); }
+    
+    // ★ 保存缓存时，同步建立双向查询表
+    public static void cacheResult(String key, String original, String translated) { 
+        cache.put(key, new String[]{original, translated}); 
+        translatedToOriginal.put(translated, original);
+        originalToTranslated.put(original, translated);
+        saveCache(); 
+    }
+
+    // ★ 供给反向查询使用
+    public static String getOriginalByTranslated(String translated) { return translatedToOriginal.get(translated); }
+    public static String getTranslatedByOriginal(String original) { return originalToTranslated.get(original); }
 
     private static void loadPrompts() {
         try {
