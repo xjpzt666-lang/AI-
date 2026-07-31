@@ -13,6 +13,7 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -256,7 +257,6 @@ public class AITranslator {
                 default:   sysPrompt = promptEN; break;
             }
 
-            // ★ 完美融合：剧本杀模式 + 越狱反审查金牌
             String universalProtocol = sysPrompt + "\n\n【系统最高强制协议】：\n" +
                     "1. 接下来我会给你一份我和对方的【历史聊天剧本】。剧本中“对方”代表外籍网友，“我”代表我自己。\n" +
                     "2. 在剧本之后，我会用 <translate> 和 </translate> 标签包裹我最新的【中文草稿】。\n" +
@@ -454,12 +454,19 @@ public class AITranslator {
         }
     }
 
+    // ★ 重载方法：兼容老代码和 MainActivity 的调用
     public static void appendHistory(String chatId, String msgId, String role, String content) {
+        appendHistory(chatId, msgId, role, content, System.currentTimeMillis(), null);
+    }
+
+    // ★ 核心引擎升级：接收时间戳和对方引用文本，并执行硬盘级重排
+    public static void appendHistory(String chatId, String msgId, String role, String content, long timestamp, String quotedText) {
         if (content == null || content.isEmpty()) return;
         synchronized (fileLock) { 
             try {
                 JSONArray history = loadHistory(chatId);
 
+                // 硬盘防重
                 if (msgId != null && !msgId.isEmpty()) {
                     for (int i = 0; i < history.length(); i++) {
                         JSONObject obj = history.getJSONObject(i);
@@ -469,15 +476,34 @@ public class AITranslator {
                     }
                 }
 
+                // ★ 如果带有引用信息，把引用的话强行缝合进文本里
+                if (quotedText != null && !quotedText.isEmpty()) {
+                    content = "（针对我的原话：\"" + quotedText + "\" 进行了专门回复）\n" + content;
+                }
+
                 JSONObject entry = new JSONObject();
                 if (msgId != null) {
                     entry.put("msgId", msgId);
                 }
                 entry.put("role", role);
+                entry.put("timestamp", timestamp); // ★ 烙印绝对时间戳
                 
                 String display = content.length() > 1000 ? content.substring(0, 1000) : content;
                 entry.put("content", display);
                 history.put(entry);
+
+                // ★ 时间轴引擎：提取所有记录，按 timestamp 从旧到新强制重排，消灭一切乱序！
+                List<JSONObject> list = new ArrayList<>();
+                for (int i = 0; i < history.length(); i++) {
+                    list.add(history.getJSONObject(i));
+                }
+                Collections.sort(list, (a, b) -> Long.compare(a.optLong("timestamp", 0), b.optLong("timestamp", 0)));
+
+                JSONArray sortedHistory = new JSONArray();
+                for (JSONObject obj : list) {
+                    sortedHistory.put(obj);
+                }
+                history = sortedHistory;
 
                 if (history.length() > 100) {
                     JSONArray trimmed = new JSONArray();
