@@ -191,12 +191,11 @@ public class AITranslator {
         return true;
     }
 
-    // ★ 重载：兼容老测试调用的无上下文版本
     public static String toChinese(String text) throws IOException {
         return toChinese(text, "0");
     }
 
-    // ★ 核心引擎升级：自动捕获并缝合最近上下文剧本
+    // ★ 核心引擎升级：严厉打断 AI 的幻觉扩写
     public static String toChinese(String text, String chatId) throws IOException {
         text = text.trim();
         if (text.isEmpty()) return text;
@@ -205,8 +204,12 @@ public class AITranslator {
         try {
             JSONArray messages = new JSONArray();
 
-            String sysPrompt = receivePrompt + "\n\n【系统隐性指令】：\n" +
-                    "这是一段连续对话。请结合下方提供的【最近上下文剧本】判断话题走向，准确翻译出最后这条【最新外语消息】。如果上下文与最新消息无关，请以最新消息语境为准。";
+            // ★ 修复案发现场一：注入最严厉的防加戏系统级指令
+            String sysPrompt = receivePrompt + "\n\n【系统隐性防加戏指令】（最高优先级）：\n" +
+                    "1. 下方的【最近上下文剧本】仅用于辅助你理解语境（如代词指代、情绪连贯性），绝不允许将上下文的剧情总结或扩写到当前的翻译中！\n" +
+                    "2. 你的唯一任务是【直译】最后那条【最新外语消息】。原文有多短，翻译就必须有多短！\n" +
+                    "3. 严禁脑补原文没有的内容！例如原文如果只有“What?”，翻译只能是“什么？”，顶多在括号内标注情绪，绝不可长篇大论自行发挥！\n" +
+                    "4. 必须严格遵守上方设定的输出骨架格式。";
             
             messages.put(createMessageObj("system", sysPrompt));
 
@@ -214,7 +217,6 @@ public class AITranslator {
             StringBuilder scriptBuilder = new StringBuilder();
             scriptBuilder.append("【最近上下文剧本】\n");
 
-            // ★ 提取最近 15 条消息，赋予 AI "跨越分钟级的记忆"
             int maxChatMessages = 15;
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
             boolean hasContext = false;
@@ -224,7 +226,6 @@ public class AITranslator {
                 String role = msg.optString("role", "");
                 String content = msg.optString("content", "");
                 
-                // ★ 防止把当前正要翻译的这句话也算进上下文里造成重复
                 if (content != null && content.equals(text)) continue;
 
                 if ("user".equals(role)) {
@@ -245,7 +246,6 @@ public class AITranslator {
 
             return callChatMessages(messages);
         } catch (JSONException e) {
-            // 防御机制：万一 JSON 构造失败，降级回单句直译模式
             String prompt = receivePrompt + "\n\n需要翻译的外语消息：\n" + text;
             return callChatSimple(prompt);
         }
@@ -471,7 +471,6 @@ public class AITranslator {
             }
         } catch (Exception ignored) {}
 
-        // ★ 出厂硬编码定稿的终极极简克隆骨架指令
         if (receivePrompt.isEmpty()) receivePrompt = "你是我的专属社交情报传译员。你的任务是代入对方（外国女性）的身份，将接下来需要翻译的单句或多句外语，转化为最贴合她真实人设的现代中文口语。\n" +
                 "\n" +
                 "【翻译核心准则】\n" +
