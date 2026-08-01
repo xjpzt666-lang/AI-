@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v25.0 (双重复制解禁 + 一键重试版) ===");
+        log("=== Hook v26.0 (终极零容错+剪贴板全面修复版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -74,7 +74,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 剪贴板拦截：防误伤纯英文复制
+    // 剪贴板拦截：保安白名单放行机制
     // ═══════════════════════════════════════════
 
     private static void hookClipboard(ClassLoader cl) {
@@ -85,9 +85,26 @@ public class ChatHook {
                 if (clip != null && clip.getItemCount() > 0) {
                     CharSequence text = clip.getItemAt(0).getText();
                     if (text != null) {
+                        String textStr = text.toString();
+
+                        // 1. 绝对放行：如果是我们在卡片上长按生成的特殊标签，绝不拦截！
+                        if (clip.getDescription() != null && "HT_AI_Copy".equals(clip.getDescription().getLabel())) {
+                            return;
+                        }
+
+                        // 2. 识别特征：是否带有翻转图标？是否包含中文？
+                        boolean hasIcon = textStr.endsWith(" 🌐") || textStr.endsWith(" 🔄");
+                        boolean hasChinese = textStr.matches(".*[\\u4e00-\\u9fa5]+.*");
+
+                        // 3. 输入框保护：如果没有图标，也没有中文，极大可能是你在输入框手选的纯外文。绝对放行！
+                        if (!hasIcon && !hasChinese) {
+                            return;
+                        }
+
                         try {
-                            String orig = AITranslator.getForeignFuzzy(text.toString());
-                            if (orig != null && !orig.trim().isEmpty()) {
+                            String orig = AITranslator.getForeignFuzzy(textStr);
+                            // 只有确认原文被成功提取，且和现在的文本不同，才进行替换
+                            if (orig != null && !orig.trim().isEmpty() && !orig.equals(textStr)) {
                                 param.args[0] = ClipData.newPlainText(
                                         clip.getDescription() != null ? clip.getDescription().getLabel() : "HT_AI",
                                         orig
@@ -121,9 +138,14 @@ public class ChatHook {
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                             CharSequence text = (CharSequence) param.args[0];
                             if (text != null) {
+                                String textStr = text.toString();
+                                boolean hasIcon = textStr.endsWith(" 🌐") || textStr.endsWith(" 🔄");
+                                boolean hasChinese = textStr.matches(".*[\\u4e00-\\u9fa5]+.*");
+                                if (!hasIcon && !hasChinese) return; // 放行输入框纯净复制
+
                                 try {
-                                    String orig = AITranslator.getForeignFuzzy(text.toString());
-                                    if (orig != null && !orig.trim().isEmpty()) {
+                                    String orig = AITranslator.getForeignFuzzy(textStr);
+                                    if (orig != null && !orig.trim().isEmpty() && !orig.equals(textStr)) {
                                         param.args[0] = orig;
                                     }
                                 } catch (Throwable ignored) {}
@@ -642,7 +664,6 @@ public class ChatHook {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.92f);
-                        // 把 btn 传进 showPicker，这样弹窗里的“重试”按钮就能点击它了
                         showPicker(edit, btn, result, rawChineseInput);
                     });
                 } catch (Exception e) {
@@ -765,7 +786,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 版本选择器 (V25 双重复制解禁 + 一键重试版)
+    // 版本选择器 (V26 终极零容错+物理隔离版)
     // ═══════════════════════════════════════════
 
     private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput) {
@@ -774,28 +795,58 @@ public class ChatHook {
             return;
         }
 
-        // 1. 绝对防御切割逻辑：逐行扫描，不认分隔符，只认特征！
-        StringBuilder analysisBuilder = new StringBuilder();
+        // 1. 物理防御切割逻辑：优先寻找 =====，一刀两断，绝对隔离！
+        String analysisText = "";
+        String optionsText = "";
+
+        String[] splitData = result.split("={3,}");
+        if (splitData.length >= 2) {
+            analysisText = splitData[0].trim();
+            optionsText = splitData[splitData.length - 1].trim();
+        } else {
+            // 兜底：万一大模型连等号都忘了写，逐行扫描
+            StringBuilder anBuilder = new StringBuilder();
+            StringBuilder opBuilder = new StringBuilder();
+            boolean inOptions = false;
+            for (String line : result.split("\n")) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty()) continue;
+
+                if (trimmed.contains("下半部分") || trimmed.contains("机器读取区") || trimmed.matches("^[=+\\-]{3,}.*$")) {
+                    inOptions = true;
+                    continue;
+                }
+
+                if (inOptions) {
+                    opBuilder.append(trimmed).append("\n");
+                } else {
+                    // 如果还未进入选项区，但这一行极度像卡片（包含竖线且英文字母开头）
+                    if (trimmed.contains("|") && trimmed.matches("^[a-zA-Z\\d\\s\\p{Punct}\"“‘'].*\\|.*")) {
+                        inOptions = true;
+                        opBuilder.append(trimmed).append("\n");
+                    } else {
+                        anBuilder.append(trimmed).append("\n\n");
+                    }
+                }
+            }
+            analysisText = anBuilder.toString().trim();
+            optionsText = opBuilder.toString().trim();
+        }
+
+        analysisText = analysisText.replace("*", "");
+        
         List<String[]> parsedItems = new ArrayList<>();
-
-        String[] lines = result.split("\n");
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.isEmpty()) continue;
-
-            // 全局彻底屏蔽星号
-            String cleanLine = trimmed.replace("*", "");
-
-            // 过滤无意义的分割线和表头指令
-            if (cleanLine.matches("^[=+\\-]{3,}.*$") ||
-                cleanLine.contains("【下半部分") ||
-                cleanLine.contains("机器读取区") ||
-                cleanLine.contains("英文文本|符合Ren人设") ||
-                cleanLine.contains("=====")) {
+        
+        // 2. 只从被划分为“下半部分”的文本中提取带 | 的内容
+        for (String line : optionsText.split("\n")) {
+            String cleanLine = line.trim().replace("*", "");
+            
+            if (cleanLine.isEmpty() || cleanLine.matches("^[=+\\-]{3,}.*$") ||
+                cleanLine.contains("【下半部分") || cleanLine.contains("机器读取区") ||
+                cleanLine.contains("英文文本|符合Ren人设")) {
                 continue;
             }
 
-            // 判定：只要这行严格包含 "|"，就认定它是我们要的卡片！
             if (cleanLine.contains("|")) {
                 cleanLine = cleanLine.replaceFirst("^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\-\\d一二三四五]+[\\.\\)、：:\\s]*)", "").trim();
                 
@@ -807,12 +858,8 @@ public class ChatHook {
                 if (!foreignText.isEmpty()) {
                     parsedItems.add(new String[]{foreignText, chineseMean, labelText});
                 }
-            } else {
-                analysisBuilder.append(cleanLine).append("\n\n");
             }
         }
-
-        String analysisText = analysisBuilder.toString().trim();
 
         if (parsedItems.isEmpty()) {
             Toast.makeText(edit.getContext(), "🛑 翻译格式异常，请点“译”字重试", Toast.LENGTH_SHORT).show();
@@ -839,7 +886,7 @@ public class ChatHook {
             tvAnalysis.setTextColor(Color.parseColor("#6C757D")); 
             tvAnalysis.setTextSize(13f);
             tvAnalysis.setLineSpacing(0, 1.2f);
-            tvAnalysis.setTextIsSelectable(true); // 顶部分析允许长按复制
+            tvAnalysis.setTextIsSelectable(true); 
             
             topScroll.addView(tvAnalysis);
 
@@ -869,7 +916,6 @@ public class ChatHook {
 
         String displayName = !latestPartnerName.isEmpty() ? latestPartnerName : currentPartnerName;
 
-        // 【新增：一键换一批按钮】
         final AlertDialog dialog = new AlertDialog.Builder(ctx)
                 .setTitle("选版本 - " + displayName)
                 .setView(rootLayout)
@@ -877,7 +923,6 @@ public class ChatHook {
                     edit.post(() -> edit.setText(edit.getText().toString()));
                 })
                 .setPositiveButton("🔄 换一批", (d, w) -> {
-                    // 点击后自动帮用户再次点击输入框旁边的“译”按钮触发重试逻辑
                     edit.post(() -> translateBtn.performClick());
                 })
                 .create();
@@ -930,7 +975,6 @@ public class ChatHook {
                 edit.setText(foreign);
                 edit.setSelection(foreign.length());
                 
-                // 确保填入后可以被双击选中、剪切、复制
                 try {
                     edit.setLongClickable(true);
                     edit.setTextIsSelectable(true);
@@ -942,7 +986,7 @@ public class ChatHook {
                 dialog.dismiss();
             });
 
-            // 长按：在卡片弹窗里就能直接复制外文
+            // 长按：在卡片弹窗里就能直接复制外文（使用带有特殊标签的 ClipData 突破保安拦截）
             card.setOnLongClickListener(v -> {
                 android.content.ClipboardManager clipboard = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
                 if (clipboard != null) {
