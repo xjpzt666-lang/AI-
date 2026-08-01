@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v22.0 (绝对防御零容错版) ===");
+        log("=== Hook v25.0 (双重复制解禁 + 一键重试版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -74,7 +74,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 剪贴板拦截：永远复制外语原文
+    // 剪贴板拦截：防误伤纯英文复制
     // ═══════════════════════════════════════════
 
     private static void hookClipboard(ClassLoader cl) {
@@ -85,14 +85,16 @@ public class ChatHook {
                 if (clip != null && clip.getItemCount() > 0) {
                     CharSequence text = clip.getItemAt(0).getText();
                     if (text != null) {
-                        String orig = AITranslator.getForeignFuzzy(text.toString());
-                        if (orig != null) {
-                            param.args[0] = ClipData.newPlainText(
-                                    clip.getDescription() != null ? clip.getDescription().getLabel() : "HT_AI",
-                                    orig
-                            );
-                            log("【剪贴板拦截】已替换为纯外语原文");
-                        }
+                        try {
+                            String orig = AITranslator.getForeignFuzzy(text.toString());
+                            if (orig != null && !orig.trim().isEmpty()) {
+                                param.args[0] = ClipData.newPlainText(
+                                        clip.getDescription() != null ? clip.getDescription().getLabel() : "HT_AI",
+                                        orig
+                                );
+                                log("【剪贴板拦截】已替换为纯外语原文");
+                            }
+                        } catch (Throwable ignored) {}
                     }
                 }
             }
@@ -119,10 +121,12 @@ public class ChatHook {
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                             CharSequence text = (CharSequence) param.args[0];
                             if (text != null) {
-                                String orig = AITranslator.getForeignFuzzy(text.toString());
-                                if (orig != null) {
-                                    param.args[0] = orig;
-                                }
+                                try {
+                                    String orig = AITranslator.getForeignFuzzy(text.toString());
+                                    if (orig != null && !orig.trim().isEmpty()) {
+                                        param.args[0] = orig;
+                                    }
+                                } catch (Throwable ignored) {}
                             }
                         }
                     }
@@ -172,18 +176,12 @@ public class ChatHook {
                                 String orig = AITranslator.getForeignByChinese(clean);
                                 if (orig != null && !orig.equals(clean)) {
                                     tv.setText(orig + " 🌐");
-                                    log("翻转：中文 → 外语");
-                                } else {
-                                    log("翻转失败：未找到中文对应外语: " + clean);
-                                }
+                                } 
                             } else if (s.endsWith(" 🌐")) {
                                 String zh = AITranslator.getChineseByForeign(clean);
                                 if (zh != null && !zh.equals(clean)) {
                                     tv.setText(zh + " 🔄");
-                                    log("翻转：外语 → 中文");
-                                } else {
-                                    log("翻转失败：未找到外语对应中文: " + clean);
-                                }
+                                } 
                             }
                         }
                         param.setResult(true);
@@ -459,7 +457,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 输入框按钮注入
+    // 输入框按钮注入与权限解禁
     // ═══════════════════════════════════════════
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
@@ -518,6 +516,14 @@ public class ChatHook {
     }
 
     private static void addTranslateBtn(ViewGroup layout, EditText edit) {
+        // 核心解禁：确保输入框随时允许长按选中与复制
+        try {
+            edit.setLongClickable(true);
+            edit.setTextIsSelectable(true);
+            edit.setFocusable(true);
+            edit.setFocusableInTouchMode(true);
+        } catch (Throwable ignored) {}
+
         Object tag = layout.getTag();
         if (tag != null && "HT_AI_BTN".equals(tag.toString())) return;
 
@@ -636,7 +642,8 @@ public class ChatHook {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.92f);
-                        showPicker(edit, result, rawChineseInput);
+                        // 把 btn 传进 showPicker，这样弹窗里的“重试”按钮就能点击它了
+                        showPicker(edit, btn, result, rawChineseInput);
                     });
                 } catch (Exception e) {
                     isTranslatingAPI = false;
@@ -758,10 +765,10 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 版本选择器 (V22 绝对防御零容错版)
+    // 版本选择器 (V25 双重复制解禁 + 一键重试版)
     // ═══════════════════════════════════════════
 
-    private static void showPicker(EditText edit, String result, String originalChineseInput) {
+    private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput) {
         if (result == null || result.trim().isEmpty()) {
             Toast.makeText(edit.getContext(), "⚠️ API返回了空数据", Toast.LENGTH_LONG).show();
             return;
@@ -790,7 +797,6 @@ public class ChatHook {
 
             // 判定：只要这行严格包含 "|"，就认定它是我们要的卡片！
             if (cleanLine.contains("|")) {
-                // 清理掉可能的列表序号 (如 "1. " 或 "- ")
                 cleanLine = cleanLine.replaceFirst("^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\-\\d一二三四五]+[\\.\\)、：:\\s]*)", "").trim();
                 
                 String[] parts = cleanLine.split("\\|");
@@ -802,14 +808,12 @@ public class ChatHook {
                     parsedItems.add(new String[]{foreignText, chineseMean, labelText});
                 }
             } else {
-                // 没有 "|" 的，100% 都是 AI 的废话或思考过程，全部塞进上半部！
                 analysisBuilder.append(cleanLine).append("\n\n");
             }
         }
 
         String analysisText = analysisBuilder.toString().trim();
 
-        // 兜底防御：如果连一条带 "|" 的卡片都没生成，直接中断，防止弹窗崩溃
         if (parsedItems.isEmpty()) {
             Toast.makeText(edit.getContext(), "🛑 翻译格式异常，请点“译”字重试", Toast.LENGTH_SHORT).show();
             return;
@@ -835,6 +839,8 @@ public class ChatHook {
             tvAnalysis.setTextColor(Color.parseColor("#6C757D")); 
             tvAnalysis.setTextSize(13f);
             tvAnalysis.setLineSpacing(0, 1.2f);
+            tvAnalysis.setTextIsSelectable(true); // 顶部分析允许长按复制
+            
             topScroll.addView(tvAnalysis);
 
             rootLayout.addView(topScroll);
@@ -863,11 +869,16 @@ public class ChatHook {
 
         String displayName = !latestPartnerName.isEmpty() ? latestPartnerName : currentPartnerName;
 
+        // 【新增：一键换一批按钮】
         final AlertDialog dialog = new AlertDialog.Builder(ctx)
                 .setTitle("选版本 - " + displayName)
                 .setView(rootLayout)
                 .setNegativeButton("取消", (d, w) -> {
                     edit.post(() -> edit.setText(edit.getText().toString()));
+                })
+                .setPositiveButton("🔄 换一批", (d, w) -> {
+                    // 点击后自动帮用户再次点击输入框旁边的“译”按钮触发重试逻辑
+                    edit.post(() -> translateBtn.performClick());
                 })
                 .create();
 
@@ -913,11 +924,33 @@ public class ChatHook {
                 card.addView(tvChinese);
             }
 
+            // 短按：填入输入框，并彻底激活输入框的选中与剪切权限
             card.setOnClickListener(v -> {
                 AITranslator.mySentDrafts.put(foreign.trim(), originalChineseInput.trim());
                 edit.setText(foreign);
                 edit.setSelection(foreign.length());
+                
+                // 确保填入后可以被双击选中、剪切、复制
+                try {
+                    edit.setLongClickable(true);
+                    edit.setTextIsSelectable(true);
+                    edit.setFocusable(true);
+                    edit.setFocusableInTouchMode(true);
+                    edit.requestFocus();
+                } catch (Throwable ignored) {}
+
                 dialog.dismiss();
+            });
+
+            // 长按：在卡片弹窗里就能直接复制外文
+            card.setOnLongClickListener(v -> {
+                android.content.ClipboardManager clipboard = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                if (clipboard != null) {
+                    android.content.ClipData clip = android.content.ClipData.newPlainText("HT_AI_Copy", foreign.trim());
+                    clipboard.setPrimaryClip(clip);
+                    Toast.makeText(ctx, "✅ 已复制英文，可随时去其他 App 验证", Toast.LENGTH_SHORT).show();
+                }
+                return true;
             });
 
             container.addView(card);
