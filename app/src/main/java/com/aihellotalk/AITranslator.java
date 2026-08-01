@@ -29,7 +29,8 @@ import okhttp3.Response;
 public class AITranslator {
 
     private static final String TAG = "HT_AI";
-    private static final MediaType JSON_TYPE = MediaType.get("application/json; charset=utf-8");
+    private static final MediaType JSON_TYPE =
+            MediaType.get("application/json; charset=utf-8");
 
     private static String apiKey;
     private static String apiUrl;
@@ -41,7 +42,7 @@ public class AITranslator {
     public static final Map<String, String> foreignToChinese = new ConcurrentHashMap<>();
     public static final Map<String, String> chineseToForeign = new ConcurrentHashMap<>();
 
-    // 我发送出去时，用外语文本反查中文草稿
+    // 我自己发送时：外语 → 中文草稿
     public static final Map<String, String> mySentDrafts = new ConcurrentHashMap<>();
 
     private static File cacheFile;
@@ -54,7 +55,8 @@ public class AITranslator {
     public static String promptKO = "";
     public static String promptES = "";
 
-    private static final File friendsFile = new File("/data/data/com.hellotalk/files/htai_friends.json");
+    private static final File friendsFile =
+            new File("/data/data/com.hellotalk/files/htai_friends.json");
     private static JSONObject friendsData = new JSONObject();
 
     private static final Object fileLock = new Object();
@@ -106,6 +108,15 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
+    // 文本清洗：去掉混入正文的 🌐 / 🔄
+    // ═══════════════════════════════════════════
+
+    private static String stripFlipMarks(String s) {
+        if (s == null) return null;
+        return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
+    }
+
+    // ═══════════════════════════════════════════
     // 好友信息
     // ═══════════════════════════════════════════
 
@@ -150,7 +161,9 @@ public class AITranslator {
 
     public static String getFriendLang(String chatId) {
         try {
-            if (friendsData.has(chatId)) return friendsData.getJSONObject(chatId).optString("lang", "en");
+            if (friendsData.has(chatId)) {
+                return friendsData.getJSONObject(chatId).optString("lang", "en");
+            }
         } catch (JSONException ignored) {
         }
         return "en";
@@ -158,7 +171,9 @@ public class AITranslator {
 
     public static String getFriendName(String chatId) {
         try {
-            if (friendsData.has(chatId)) return friendsData.getJSONObject(chatId).optString("name", chatId);
+            if (friendsData.has(chatId)) {
+                return friendsData.getJSONObject(chatId).optString("name", chatId);
+            }
         } catch (JSONException ignored) {
         }
         return chatId;
@@ -215,15 +230,6 @@ public class AITranslator {
         if (containsJapanese(text)) return false;
         if (isChineseOnly(text)) return false;
         return true;
-    }
-
-    // ═══════════════════════════════════════════
-    // 文本清洗（核心止血）
-    // ═══════════════════════════════════════════
-
-    private static String stripFlipMarks(String s) {
-        if (s == null) return null;
-        return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
     }
 
     // ═══════════════════════════════════════════
@@ -304,7 +310,7 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // 构造消息对象（支持 Vision）
+    // 组装 Vision 请求
     // ═══════════════════════════════════════════
 
     private static JSONObject createMessageObj(String role, String content) throws JSONException {
@@ -552,7 +558,7 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // 双向查询（止血增强版）
+    // 双向翻转/复制查询
     // ═══════════════════════════════════════════
 
     public static String getForeignByChinese(String chinese) {
