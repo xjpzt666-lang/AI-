@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v20.1 (上下分屏UI重构版 + 屏蔽星号) ===");
+        log("=== Hook v22.0 (绝对防御零容错版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -159,15 +159,12 @@ public class ChatHook {
                         int line = layout.getLineForVertical((int) ev.getY());
                         int offset = layout.getOffsetForHorizontal(line, ev.getX());
 
-                        // 图标区 = 最后两个字符（空格 + emoji）
                         int iconStart = s.length() - 2;
 
-                        // 点正文，放行，保留原生长按菜单
                         if (offset < iconStart) {
                             return;
                         }
 
-                        // 只有点图标区域才拦截
                         if (ev.getAction() == MotionEvent.ACTION_DOWN) {
                             String clean = s.substring(0, iconStart).trim();
 
@@ -189,8 +186,6 @@ public class ChatHook {
                                 }
                             }
                         }
-
-                        // 图标区的事件全部吞掉，避免官方翻译 / 放大
                         param.setResult(true);
                     }
                 }
@@ -715,7 +710,7 @@ public class ChatHook {
             case "vietnam":
                 return "vi";
             case "thailand":
-                return "fr"; // 保留你原来的写法
+                return "fr";
             case "france":
                 return "fr";
             case "germany":
@@ -763,7 +758,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 版本选择器 (全新上下分屏架构 + 屏蔽星号)
+    // 版本选择器 (V22 绝对防御零容错版)
     // ═══════════════════════════════════════════
 
     private static void showPicker(EditText edit, String result, String originalChineseInput) {
@@ -772,33 +767,33 @@ public class ChatHook {
             return;
         }
 
-        // 1. 核心切割逻辑：用 "=====" 分离分析区和选项区
-        String analysisText = "";
-        String optionsText = result;
-        if (result.contains("=====")) {
-            String[] splitData = result.split("=====");
-            // 在这里直接将上半部分解析文本中的所有星号 * 替换为空白，确保 UI 纯净
-            analysisText = splitData[0].replace("*", "").trim();
-            optionsText = splitData.length > 1 ? splitData[1].trim() : "";
-        }
-
-        // 2. 解析底部的卡片数据
+        // 1. 绝对防御切割逻辑：逐行扫描，不认分隔符，只认特征！
+        StringBuilder analysisBuilder = new StringBuilder();
         List<String[]> parsedItems = new ArrayList<>();
-        String[] lines = optionsText.split("\n");
 
+        String[] lines = result.split("\n");
         for (String line : lines) {
-            line = line.trim();
-            if (line.isEmpty()) continue;
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
 
-            line = line.replaceFirst(
-                    "^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\*\\-\\d一二三四五]+[\\.\\)、：:\\s]*)",
-                    ""
-            ).trim();
-            line = line.replace("**", "");
-            if (line.isEmpty()) continue;
+            // 全局彻底屏蔽星号
+            String cleanLine = trimmed.replace("*", "");
 
-            if (line.contains("|")) {
-                String[] parts = line.split("\\|");
+            // 过滤无意义的分割线和表头指令
+            if (cleanLine.matches("^[=+\\-]{3,}.*$") ||
+                cleanLine.contains("【下半部分") ||
+                cleanLine.contains("机器读取区") ||
+                cleanLine.contains("英文文本|符合Ren人设") ||
+                cleanLine.contains("=====")) {
+                continue;
+            }
+
+            // 判定：只要这行严格包含 "|"，就认定它是我们要的卡片！
+            if (cleanLine.contains("|")) {
+                // 清理掉可能的列表序号 (如 "1. " 或 "- ")
+                cleanLine = cleanLine.replaceFirst("^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\-\\d一二三四五]+[\\.\\)、：:\\s]*)", "").trim();
+                
+                String[] parts = cleanLine.split("\\|");
                 String foreignText = parts[0].trim().replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
                 String chineseMean = parts.length > 1 ? parts[1].trim() : "";
                 String labelText = parts.length > 2 ? parts[2].trim() : "";
@@ -807,15 +802,16 @@ public class ChatHook {
                     parsedItems.add(new String[]{foreignText, chineseMean, labelText});
                 }
             } else {
-                String foreignText = line.replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
-                if (!foreignText.isEmpty()) {
-                    parsedItems.add(new String[]{foreignText, "", ""});
-                }
+                // 没有 "|" 的，100% 都是 AI 的废话或思考过程，全部塞进上半部！
+                analysisBuilder.append(cleanLine).append("\n\n");
             }
         }
 
+        String analysisText = analysisBuilder.toString().trim();
+
+        // 兜底防御：如果连一条带 "|" 的卡片都没生成，直接中断，防止弹窗崩溃
         if (parsedItems.isEmpty()) {
-            Toast.makeText(edit.getContext(), "🛑 未解析到有效卡片选项", Toast.LENGTH_SHORT).show();
+            Toast.makeText(edit.getContext(), "🛑 翻译格式异常，请点“译”字重试", Toast.LENGTH_SHORT).show();
             return;
         }
 
@@ -825,7 +821,7 @@ public class ChatHook {
         android.widget.LinearLayout rootLayout = new android.widget.LinearLayout(ctx);
         rootLayout.setOrientation(android.widget.LinearLayout.VERTICAL);
 
-        // --- 上半截：AI 分析展示区 (如果有内容) ---
+        // --- 上半截：AI 分析展示区 ---
         if (!analysisText.isEmpty()) {
             android.widget.ScrollView topScroll = new android.widget.ScrollView(ctx);
             android.widget.LinearLayout.LayoutParams topParams = new android.widget.LinearLayout.LayoutParams(
