@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v19.0 (图标区域精准拦截 + 长按恢复版) ===");
+        log("=== Hook v20.0 (上下分屏UI重构版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -715,7 +715,7 @@ public class ChatHook {
             case "vietnam":
                 return "vi";
             case "thailand":
-                return "th";
+                return "fr"; // 保留你原来的写法
             case "france":
                 return "fr";
             case "germany":
@@ -763,7 +763,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 版本选择器
+    // 版本选择器 (全新上下分屏架构)
     // ═══════════════════════════════════════════
 
     private static void showPicker(EditText edit, String result, String originalChineseInput) {
@@ -772,8 +772,18 @@ public class ChatHook {
             return;
         }
 
+        // 1. 核心切割逻辑：用 "=====" 分离分析区和选项区
+        String analysisText = "";
+        String optionsText = result;
+        if (result.contains("=====")) {
+            String[] splitData = result.split("=====");
+            analysisText = splitData[0].trim();
+            optionsText = splitData.length > 1 ? splitData[1].trim() : "";
+        }
+
+        // 2. 解析底部的卡片数据
         List<String[]> parsedItems = new ArrayList<>();
-        String[] lines = result.split("\n");
+        String[] lines = optionsText.split("\n");
 
         for (String line : lines) {
             line = line.trim();
@@ -788,9 +798,7 @@ public class ChatHook {
 
             if (line.contains("|")) {
                 String[] parts = line.split("\\|");
-                String foreignText = parts[0].trim()
-                        .replaceAll("^[\"“'‘]+|[\"”'’]+$", "")
-                        .trim();
+                String foreignText = parts[0].trim().replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
                 String chineseMean = parts.length > 1 ? parts[1].trim() : "";
                 String labelText = parts.length > 2 ? parts[2].trim() : "";
 
@@ -806,32 +814,67 @@ public class ChatHook {
         }
 
         if (parsedItems.isEmpty()) {
-            String fallbackText = result.replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
-            if (!fallbackText.isEmpty()) {
-                parsedItems.add(new String[]{fallbackText, "", ""});
-            } else {
-                Toast.makeText(edit.getContext(), "🛑 已拦截无效字符", Toast.LENGTH_SHORT).show();
-                return;
-            }
+            Toast.makeText(edit.getContext(), "🛑 未解析到有效卡片选项", Toast.LENGTH_SHORT).show();
+            return;
         }
 
         android.content.Context ctx = edit.getContext();
-        android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+        
+        // 3. 搭建全新外层布局
+        android.widget.LinearLayout rootLayout = new android.widget.LinearLayout(ctx);
+        rootLayout.setOrientation(android.widget.LinearLayout.VERTICAL);
+
+        // --- 上半截：AI 分析展示区 (如果有内容) ---
+        if (!analysisText.isEmpty()) {
+            android.widget.ScrollView topScroll = new android.widget.ScrollView(ctx);
+            android.widget.LinearLayout.LayoutParams topParams = new android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
+            topParams.setMargins(0, 10, 0, 10);
+            topScroll.setLayoutParams(topParams);
+            topScroll.setPadding(40, 20, 40, 10);
+
+            TextView tvAnalysis = new TextView(ctx);
+            tvAnalysis.setText(analysisText);
+            tvAnalysis.setTextColor(Color.parseColor("#6C757D")); 
+            tvAnalysis.setTextSize(13f);
+            tvAnalysis.setLineSpacing(0, 1.2f);
+            topScroll.addView(tvAnalysis);
+
+            rootLayout.addView(topScroll);
+
+            View divider = new View(ctx);
+            divider.setBackgroundColor(Color.parseColor("#DEE2E6"));
+            android.widget.LinearLayout.LayoutParams divParams = new android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 2);
+            divParams.setMargins(40, 0, 40, 10);
+            divider.setLayoutParams(divParams);
+            rootLayout.addView(divider);
+        }
+
+        // --- 下半截：选项卡片滑动区 ---
+        android.widget.ScrollView bottomScroll = new android.widget.ScrollView(ctx);
+        android.widget.LinearLayout.LayoutParams bottomParams = new android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 2.0f);
+        bottomScroll.setLayoutParams(bottomParams);
+
         android.widget.LinearLayout container = new android.widget.LinearLayout(ctx);
         container.setOrientation(android.widget.LinearLayout.VERTICAL);
-        container.setPadding(40, 20, 40, 20);
-        sv.addView(container);
+        container.setPadding(40, 10, 40, 20);
+        bottomScroll.addView(container);
+
+        rootLayout.addView(bottomScroll);
 
         String displayName = !latestPartnerName.isEmpty() ? latestPartnerName : currentPartnerName;
 
         final AlertDialog dialog = new AlertDialog.Builder(ctx)
                 .setTitle("选版本 - " + displayName)
-                .setView(sv)
+                .setView(rootLayout)
                 .setNegativeButton("取消", (d, w) -> {
                     edit.post(() -> edit.setText(edit.getText().toString()));
                 })
                 .create();
 
+        // 4. 渲染干净的卡片
         for (String[] item : parsedItems) {
             final String foreign = item[0];
             String chinese = item[1];
