@@ -6,11 +6,12 @@ import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
 import android.text.TextWatcher;
-import android.view.MotionEvent;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -50,30 +51,35 @@ public class ChatHook {
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
 
+    // 外置按钮去重：msgId
+    private static final Set<String> attachedFlipBtns = ConcurrentHashMap.newKeySet();
+
     // ═══════════════════════════════════════════
     // 安装入口
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v21.0 (极简稳定版) ===");
+        log("=== Hook v30.0 (完整版-外置独立按钮版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
             langCodeMethod = avClass.getMethod("a", int.class);
             langNameMethod = avClass.getMethod("b", int.class);
-        } catch (Throwable ignored) {}
+        } catch (Throwable e) {
+            log("加载 av.a 失败: " + e.getMessage());
+        }
 
-        try { hookClipboard(cl); } catch (Throwable ignored) {}
-        try { hookBubbleFlip(cl); } catch (Throwable ignored) {}
-        try { hookStartChat(cl); } catch (Throwable ignored) {}
-        try { hookRecv(cl); } catch (Throwable ignored) {}
-        try { hookLang(cl); } catch (Throwable ignored) {}
-        try { hookBtnOld(cl); } catch (Throwable ignored) {}
-        try { hookBtnNew(cl); } catch (Throwable ignored) {}
+        try { hookClipboard(cl); } catch (Throwable e) { log("hookClipboard失败: " + e.getMessage()); }
+        try { hookAdapterBind(cl); } catch (Throwable e) { log("hookAdapterBind失败: " + e.getMessage()); }
+        try { hookStartChat(cl); } catch (Throwable e) { log("hookStartChat失败: " + e.getMessage()); }
+        try { hookRecv(cl); } catch (Throwable e) { log("hookRecv失败: " + e.getMessage()); }
+        try { hookLang(cl); } catch (Throwable e) { log("hookLang失败: " + e.getMessage()); }
+        try { hookBtnOld(cl); } catch (Throwable e) { log("hookBtnOld失败: " + e.getMessage()); }
+        try { hookBtnNew(cl); } catch (Throwable e) { log("hookBtnNew失败: " + e.getMessage()); }
     }
 
     // ═══════════════════════════════════════════
-    // 剪贴板拦截：永远复制外语原文
+    // 剪贴板拦截：复制永远变纯外语
     // ═══════════════════════════════════════════
 
     private static void hookClipboard(ClassLoader cl) {
@@ -90,7 +96,7 @@ public class ChatHook {
                                     clip.getDescription() != null ? clip.getDescription().getLabel() : "HT_AI",
                                     orig
                             );
-                            log("【剪贴板拦截】已替换为纯外语原文");
+                            log("【剪贴板拦截】替换为纯外语: " + orig);
                         }
                     }
                 }
@@ -130,66 +136,290 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 气泡点击翻转（文本末尾图标版）
-    // 仅在点中图标位置时拦截，长按正文菜单仍可恢复
+    // Adapter 绑定后注入外置独立按钮
     // ═══════════════════════════════════════════
 
-    private static void hookBubbleFlip(ClassLoader cl) throws Exception {
-        XposedHelpers.findAndHookMethod(
-                "com.hellotalk.lib.ui.text.view.HTCompatTextView",
-                cl,
-                "onTouchEvent",
-                MotionEvent.class,
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        TextView tv = (TextView) param.thisObject;
-                        MotionEvent ev = (MotionEvent) param.args[0];
-                        if (ev == null) return;
+    private static void hookAdapterBind(ClassLoader cl) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "co0.a",
+                    cl,
+                    "G",
+                    XposedHelpers.findClass("oq0.a", cl),
+                    int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                            Object holder = param.args[0];
+                            attachExternalFlipButton(holder);
+                        }
+                    }
+            );
+        } catch (Throwable e) {
+            log("hookAdapterBind 异常: " + e.getMessage());
+        }
+    }
 
-                        CharSequence cs = tv.getText();
-                        if (cs == null) return;
+    private static void attachExternalFlipButton(Object holder) {
+        try {
+            if (holder == null) return;
 
-                        String s = cs.toString();
-                        if (!s.endsWith(" 🔄") && !s.endsWith(" 🌐")) return;
+            // 1. 从 holder → delegate → msg
+            Field delegateField = holder.getClass().getSuperclass().getDeclaredField("b"); // Loq0/a.b
+            delegateField.setAccessible(true);
+            Object delegate = delegateField.get(holder);
+            if (delegate == null) return;
 
-                        android.text.Layout layout = tv.getLayout();
-                        if (layout == null) return;
+            Field msgField = delegate.getClass().getDeclaredField("a"); // oo0/f.a
+            msgField.setAccessible(true);
+            Object msg = msgField.get(delegate);
+            if (msg == null) return;
 
-                        int line = layout.getLineForVertical((int) ev.getY());
-                        int offset = layout.getOffsetForHorizontal(line, ev.getX());
+            String msgId = null;
+            try {
+                msgId = (String) XposedHelpers.callMethod(msg, "getMsgId");
+            } catch (Throwable ignored) {}
+            if (msgId == null || msgId.isEmpty()) return;
 
-                        int iconStart = s.length() - 2;
+            String msgType = null;
+            try {
+                msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
+            } catch (Throwable ignored) {}
+            if (!"text".equals(msgType)) return;
 
-                        // 只拦截图标区域，正文区域不拦
-                        if (offset < iconStart) return;
+            boolean isMine = false;
+            try {
+                isMine = (Boolean) XposedHelpers.callMethod(msg, "isSender");
+            } catch (Throwable ignored) {}
 
-                        if (ev.getAction() == MotionEvent.ACTION_DOWN) {
-                            String clean = s.substring(0, iconStart).trim();
+            // 接收气泡必须有缓存才能翻；发送气泡可 fallback
+            String[] pair = AITranslator.getCached(msgId);
+            if (pair == null && !isMine) return;
 
-                            if (s.endsWith(" 🔄")) {
-                                String orig = AITranslator.getForeignByChinese(clean);
-                                if (orig != null && !orig.equals(clean)) {
-                                    tv.setText(orig + " 🌐");
-                                    log("翻转：中文 → 外语");
-                                }
-                            } else if (s.endsWith(" 🌐")) {
-                                String zh = AITranslator.getChineseByForeign(clean);
-                                if (zh != null && !zh.equals(clean)) {
-                                    tv.setText(zh + " 🔄");
-                                    log("翻转：外语 → 中文");
-                                }
-                            }
+            FrameLayout flContent = tryGetFrameLayoutFromBinding(holder);
+            if (flContent == null) {
+                log("未找到 flContent，msgId=" + msgId);
+                return;
+            }
+
+            String btnTag = "HT_AI_FLIP_BTN_" + msgId;
+            View old = flContent.findViewWithTag(btnTag);
+            if (old != null) return;
+
+            TextView flipBtn = new TextView(flContent.getContext());
+            flipBtn.setTag(btnTag);
+            flipBtn.setText(isMine ? "🌐" : "🔄");
+            flipBtn.setTextSize(14f);
+            flipBtn.setTextColor(Color.parseColor("#1DA1F2"));
+            flipBtn.setGravity(Gravity.CENTER);
+            flipBtn.setClickable(true);
+            flipBtn.setFocusable(false);
+
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(Color.parseColor("#CCFFFFFF"));
+            bg.setCornerRadius(22f);
+            bg.setStroke(1, Color.parseColor("#1DA1F2"));
+            flipBtn.setBackground(bg);
+            flipBtn.setPadding(10, 6, 10, 6);
+            flipBtn.setElevation(8f);
+
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+            );
+            if (isMine) {
+                lp.gravity = Gravity.START | Gravity.CENTER_VERTICAL;
+                lp.leftMargin = -70;
+            } else {
+                lp.gravity = Gravity.END | Gravity.CENTER_VERTICAL;
+                lp.rightMargin = -70;
+            }
+            flipBtn.setLayoutParams(lp);
+
+            final boolean finalIsMine = isMine;
+            final String finalMsgId = msgId;
+            flipBtn.setOnClickListener(v -> {
+                try {
+                    toggleBubbleText(holder, finalMsgId, finalIsMine, flipBtn);
+                } catch (Throwable e) {
+                    log("toggleBubbleText失败: " + e.getMessage());
+                }
+            });
+
+            flContent.addView(flipBtn);
+            attachedFlipBtns.add(msgId);
+            log("已挂外置按钮 msgId=" + msgId + " isMine=" + isMine);
+        } catch (Throwable e) {
+            log("attachExternalFlipButton 失败: " + e.getMessage());
+        }
+    }
+
+    private static FrameLayout tryGetFrameLayoutFromBinding(Object holder) {
+        try {
+            for (Field f : holder.getClass().getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(holder);
+                if (val == null) continue;
+
+                String cn = val.getClass().getName();
+
+                // 接收简单文本
+                if ("com.hellotalk.talk.databinding.TalkItemMessageSimpleRecBinding".equals(cn)) {
+                    Field fl = val.getClass().getDeclaredField("flContent");
+                    fl.setAccessible(true);
+                    Object flObj = fl.get(val);
+                    if (flObj instanceof FrameLayout) return (FrameLayout) flObj;
+                }
+
+                // 发送简单文本
+                if ("com.hellotalk.talk.databinding.TalkItemMessageSimpleSendBinding".equals(cn)) {
+                    Field fl = val.getClass().getDeclaredField("flContent");
+                    fl.setAccessible(true);
+                    Object flObj = fl.get(val);
+                    if (flObj instanceof FrameLayout) return (FrameLayout) flObj;
+                }
+
+                // 普通接收
+                if ("com.hellotalk.talk.databinding.TalkHolderChatReceiverBinding".equals(cn)) {
+                    Field fl = val.getClass().getDeclaredField("flChildContainer");
+                    fl.setAccessible(true);
+                    Object flObj = fl.get(val);
+                    if (flObj instanceof FrameLayout) return (FrameLayout) flObj;
+                }
+
+                // 普通发送
+                if ("com.hellotalk.talk.databinding.TalkHolderChatSenderBinding".equals(cn)) {
+                    Field fl = val.getClass().getDeclaredField("flChildContainer");
+                    fl.setAccessible(true);
+                    Object flObj = fl.get(val);
+                    if (flObj instanceof FrameLayout) return (FrameLayout) flObj;
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static TextView findBubbleTextView(Object holder) {
+        try {
+            // 先找 holder 自己的字段
+            for (Field f : holder.getClass().getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(holder);
+                if (val == null) continue;
+
+                if (val instanceof TextView &&
+                        "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(val.getClass().getName())) {
+                    return (TextView) val;
+                }
+
+                if (val instanceof ViewGroup) {
+                    TextView found = findTextViewRecursively((ViewGroup) val);
+                    if (found != null) return found;
+                }
+            }
+
+            // 再找 binding 字段里的子 View
+            for (Field f : holder.getClass().getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(holder);
+                if (val == null) continue;
+
+                String cn = val.getClass().getName();
+                if (cn.startsWith("com.hellotalk.talk.databinding.")) {
+                    for (Field bf : val.getClass().getDeclaredFields()) {
+                        bf.setAccessible(true);
+                        Object bv = bf.get(val);
+
+                        if (bv instanceof TextView &&
+                                "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(bv.getClass().getName())) {
+                            return (TextView) bv;
                         }
 
-                        param.setResult(true);
+                        if (bv instanceof ViewGroup) {
+                            TextView found = findTextViewRecursively((ViewGroup) bv);
+                            if (found != null) return found;
+                        }
                     }
                 }
-        );
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
+    }
+
+    private static TextView findTextViewRecursively(ViewGroup group) {
+        for (int i = 0; i < group.getChildCount(); i++) {
+            View child = group.getChildAt(i);
+            if (child instanceof TextView &&
+                    "com.hellotalk.lib.ui.text.view.HTCompatTextView".equals(child.getClass().getName())) {
+                return (TextView) child;
+            }
+            if (child instanceof ViewGroup) {
+                TextView found = findTextViewRecursively((ViewGroup) child);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static void toggleBubbleText(Object holder, String msgId, boolean isMine, TextView flipBtn) {
+        try {
+            TextView bubble = findBubbleTextView(holder);
+            if (bubble == null) {
+                log("找不到 bubble TextView");
+                return;
+            }
+
+            String current = bubble.getText() != null ? bubble.getText().toString() : "";
+            String[] pair = AITranslator.getCached(msgId);
+
+            if (pair != null) {
+                String foreign = pair[0];
+                String chinese = pair[1];
+
+                if (isMine) {
+                    if (current.equals(foreign) || current.contains(foreign)) {
+                        bubble.setText(chinese);
+                        flipBtn.setText("🔄");
+                        log("发送气泡：外语 → 中文");
+                    } else {
+                        bubble.setText(foreign);
+                        flipBtn.setText("🌐");
+                        log("发送气泡：中文 → 外语");
+                    }
+                } else {
+                    if (current.equals(chinese) || current.contains(chinese)) {
+                        bubble.setText(foreign);
+                        flipBtn.setText("🌐");
+                        log("接收气泡：中文 → 外语");
+                    } else {
+                        bubble.setText(chinese);
+                        flipBtn.setText("🔄");
+                        log("接收气泡：外语 → 中文");
+                    }
+                }
+                return;
+            }
+
+            // 发送侧 fallback：如果还没命中 cache，就从 draft 里补
+            if (isMine) {
+                String draft = AITranslator.getDraftFuzzy(current);
+                if (draft != null) {
+                    bubble.setText(draft);
+                    flipBtn.setText("🔄");
+                    log("发送气泡 fallback 成功");
+                } else {
+                    log("发送气泡 fallback 失败");
+                }
+            }
+        } catch (Throwable e) {
+            log("toggleBubbleText 异常: " + e.getMessage());
+        }
     }
 
     // ═══════════════════════════════════════════
-    // 聊天打开时记录 chatId / 用户资料
+    // 聊天打开时，记录当前 chatId / 用户资料
     // ═══════════════════════════════════════════
 
     private static void hookStartChat(ClassLoader cl) throws Exception {
@@ -218,7 +448,8 @@ public class ChatHook {
                                     }
                                     Thread.sleep(500);
                                 }
-                            } catch (Exception ignored) {}
+                            } catch (Exception ignored) {
+                            }
                         }).start();
                     }
                 }
@@ -238,8 +469,11 @@ public class ChatHook {
                     ? nickName
                     : (userName != null ? userName : "");
 
-            if (!latestPartnerName.isEmpty()) currentPartnerName = latestPartnerName;
-        } catch (Throwable ignored) {}
+            if (!latestPartnerName.isEmpty()) {
+                currentPartnerName = latestPartnerName;
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     // ═══════════════════════════════════════════
@@ -258,21 +492,33 @@ public class ChatHook {
                     if (bean == null) return;
 
                     int cidInt = 0;
-                    try { cidInt = (Integer) XposedHelpers.callMethod(msg, "getChatId"); } catch (Exception ignored) {}
+                    try {
+                        cidInt = (Integer) XposedHelpers.callMethod(msg, "getChatId");
+                    } catch (Exception ignored) {
+                    }
                     final String thisChatId = String.valueOf(cidInt);
                     currentChatId = thisChatId;
 
                     String senderName = null;
-                    try { senderName = (String) XposedHelpers.callMethod(msg, "getSenderName"); } catch (Exception ignored) {}
+                    try {
+                        senderName = (String) XposedHelpers.callMethod(msg, "getSenderName");
+                    } catch (Exception ignored) {
+                    }
                     if (senderName != null && !senderName.isEmpty() && !isMine) {
                         currentPartnerName = senderName;
                     }
 
                     String text = null;
-                    try { text = (String) XposedHelpers.callMethod(bean, "getText"); } catch (Exception ignored) {}
+                    try {
+                        text = (String) XposedHelpers.callMethod(bean, "getText");
+                    } catch (Exception ignored) {
+                    }
 
                     String msgType = null;
-                    try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Exception ignored) {}
+                    try {
+                        msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
+                    } catch (Exception ignored) {
+                    }
 
                     if (text == null || text.isEmpty()) {
                         if ("image".equals(msgType) || "photo".equals(msgType)) {
@@ -289,11 +535,17 @@ public class ChatHook {
                     }
 
                     String mid = null;
-                    try { mid = (String) XposedHelpers.callMethod(msg, "getMsgId"); } catch (Exception ignored) {}
+                    try {
+                        mid = (String) XposedHelpers.callMethod(msg, "getMsgId");
+                    } catch (Exception ignored) {
+                    }
                     if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
 
                     long sendTime = System.currentTimeMillis();
-                    try { sendTime = (Long) XposedHelpers.callMethod(msg, "getSendTime"); } catch (Exception ignored) {}
+                    try {
+                        sendTime = (Long) XposedHelpers.callMethod(msg, "getSendTime");
+                    } catch (Exception ignored) {
+                    }
 
                     String quotedText = null;
                     try {
@@ -314,7 +566,8 @@ public class ChatHook {
                                 quotedText = "[" + rMsgType + "]";
                             }
                         }
-                    } catch (Exception ignored) {}
+                    } catch (Exception ignored) {
+                    }
 
                     boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
                     if (isNewMessage) {
@@ -328,24 +581,22 @@ public class ChatHook {
                     if (text.startsWith("[")) return;
                     if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
-                    // 我发出的消息：外语 + 🌐
+                    // 我发出的消息：正文保持纯外语，不追加图标
                     if (isMine) {
                         String myChineseDraft = AITranslator.getDraftFuzzy(text);
                         if (myChineseDraft != null) {
                             AITranslator.cacheResult(mid, text, myChineseDraft);
                         }
-
-                        String[] cached = AITranslator.getCached(mid);
-                        if (cached != null) {
-                            try { XposedHelpers.callMethod(bean, "setText", cached[0] + " 🌐"); } catch (Exception ignored) {}
-                        }
                         return;
                     }
 
-                    // 对方发来的消息：中文 + 🔄
+                    // 对方发来的消息：正文保持纯中文，不追加图标
                     String[] cached = AITranslator.getCached(mid);
                     if (cached != null) {
-                        try { XposedHelpers.callMethod(bean, "setText", cached[1] + " 🔄"); } catch (Exception ignored) {}
+                        try {
+                            XposedHelpers.callMethod(bean, "setText", cached[1]);
+                        } catch (Exception ignored) {
+                        }
                         return;
                     }
 
@@ -360,14 +611,19 @@ public class ChatHook {
                             String t = AITranslator.toChinese(finalText, thisChatId);
                             if (t != null && !t.trim().isEmpty() && !t.equals(finalText)) {
                                 AITranslator.cacheResult(finalMid, finalText, t);
-                                try { XposedHelpers.callMethod(finalBean, "setText", t + " 🔄"); } catch (Exception ignored) {}
+                                try {
+                                    XposedHelpers.callMethod(finalBean, "setText", t);
+                                } catch (Exception ignored) {
+                                }
                             }
                         } catch (Exception ignored) {
                         } finally {
                             translating.remove(finalMid);
                         }
                     }).start();
-                } catch (Throwable ignored) {}
+
+                } catch (Throwable ignored) {
+                }
             }
         });
     }
@@ -383,7 +639,11 @@ public class ChatHook {
         uf.setAccessible(true);
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
 
-        XposedHelpers.findAndHookMethod(vm, "generateChatMessage", hm, boolean.class,
+        XposedHelpers.findAndHookMethod(
+                vm,
+                "generateChatMessage",
+                hm,
+                boolean.class,
                 new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam p) {
@@ -392,9 +652,11 @@ public class ChatHook {
                             if (u != null) {
                                 partnerLang = (Integer) XposedHelpers.callMethod(u, "getNativeLang");
                             }
-                        } catch (Throwable ignored) {}
+                        } catch (Throwable ignored) {
+                        }
                     }
-                });
+                }
+        );
     }
 
     // ═══════════════════════════════════════════
@@ -413,7 +675,8 @@ public class ChatHook {
                         return tv.getText().toString();
                     }
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
 
         if (rootView instanceof ViewGroup) {
@@ -471,7 +734,8 @@ public class ChatHook {
                 Object val = field.get(view);
                 if (val instanceof EditText) return (EditText) val;
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
@@ -553,7 +817,8 @@ public class ChatHook {
             String quoteText = null;
             try {
                 quoteText = getQuoteReplyText(edit.getRootView());
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
 
             String textToTranslate = text;
 
@@ -671,6 +936,7 @@ public class ChatHook {
             case "poland":
                 return "pl";
             case "japan":
+                return "ja";
             case "korea":
             case "south korea":
                 return "ko";
@@ -732,7 +998,8 @@ public class ChatHook {
         if (langCodeMethod != null) {
             try {
                 return ((String) langCodeMethod.invoke(null, langId)).toLowerCase();
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
         return "en";
     }
@@ -741,7 +1008,8 @@ public class ChatHook {
         if (langNameMethod != null) {
             try {
                 return (String) langNameMethod.invoke(null, langId);
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
         return "Unknown";
     }
