@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v20.0 (上下分屏UI重构版) ===");
+        log("=== Hook v20.1 (上下分屏UI重构版 + 屏蔽星号) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -763,7 +763,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 版本选择器 (全新上下分屏架构)
+    // 版本选择器 (全新上下分屏架构 + 屏蔽星号)
     // ═══════════════════════════════════════════
 
     private static void showPicker(EditText edit, String result, String originalChineseInput) {
@@ -777,7 +777,8 @@ public class ChatHook {
         String optionsText = result;
         if (result.contains("=====")) {
             String[] splitData = result.split("=====");
-            analysisText = splitData[0].trim();
+            // 在这里直接将上半部分解析文本中的所有星号 * 替换为空白，确保 UI 纯净
+            analysisText = splitData[0].replace("*", "").trim();
             optionsText = splitData.length > 1 ? splitData[1].trim() : "";
         }
 
