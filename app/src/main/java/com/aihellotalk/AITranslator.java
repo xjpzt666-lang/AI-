@@ -310,7 +310,7 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // 组装 Vision 请求
+    // Vision 请求组装
     // ═══════════════════════════════════════════
 
     private static JSONObject createMessageObj(String role, String content) throws JSONException {
@@ -558,7 +558,7 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // 双向翻转/复制查询
+    // 查询：翻转 / 复制 / draft fallback
     // ═══════════════════════════════════════════
 
     public static String getForeignByChinese(String chinese) {
