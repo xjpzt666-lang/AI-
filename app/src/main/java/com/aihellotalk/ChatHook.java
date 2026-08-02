@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v27.0 (防误触发送 + 剪贴板完全解禁终极版) ===");
+        log("=== Hook v28.0 (防误触加强草稿扫荡版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -103,7 +103,6 @@ public class ChatHook {
 
                         try {
                             String orig = AITranslator.getForeignFuzzy(textStr);
-                            // 只有确认原文被成功提取，且和现在的文本不同，才进行替换
                             if (orig != null && !orig.trim().isEmpty() && !orig.equals(textStr)) {
                                 param.args[0] = ClipData.newPlainText(
                                         clip.getDescription() != null ? clip.getDescription().getLabel() : "HT_AI",
@@ -141,7 +140,7 @@ public class ChatHook {
                                 String textStr = text.toString();
                                 boolean hasIcon = textStr.endsWith(" 🌐") || textStr.endsWith(" 🔄");
                                 boolean hasChinese = textStr.matches(".*[\\u4e00-\\u9fa5]+.*");
-                                if (!hasIcon && !hasChinese) return; // 放行输入框纯净复制
+                                if (!hasIcon && !hasChinese) return; 
 
                                 try {
                                     String orig = AITranslator.getForeignFuzzy(textStr);
@@ -567,7 +566,6 @@ public class ChatHook {
     }
 
     private static void addTranslateBtn(ViewGroup layout, EditText edit) {
-        // 核心解禁：确保输入框随时允许长按选中与复制
         try {
             edit.setLongClickable(true);
             edit.setTextIsSelectable(true);
@@ -596,11 +594,46 @@ public class ChatHook {
         layout.setTag("HT_AI_BTN");
 
         final View[] cachedNativeSendBtn = new View[1];
-        final boolean[] hasSearchedSendBtn = new boolean[1];
+
+        // ★ 核心修复：独立出来的强制刷新逻辑
+        Runnable enforceVisibility = new Runnable() {
+            @Override
+            public void run() {
+                if (cachedNativeSendBtn[0] == null) {
+                    cachedNativeSendBtn[0] = findNativeSendButtonSafely(layout);
+                }
+
+                String currentText = edit.getText().toString();
+                String textWithoutAt = currentText.replace("@", "");
+
+                if (!currentText.trim().isEmpty() && AITranslator.isChineseOnly(textWithoutAt)) {
+                    if (!isTranslatingAPI) {
+                        btn.setVisibility(View.VISIBLE);
+                        btn.setEnabled(true);
+                        btn.setText("译");
+                        btn.setAlpha(0.93f);
+                    }
+                    if (cachedNativeSendBtn[0] != null) {
+                        cachedNativeSendBtn[0].setVisibility(View.GONE);
+                    }
+                } else {
+                    if (!isTranslatingAPI) {
+                        btn.setVisibility(View.GONE);
+                    }
+                    if (cachedNativeSendBtn[0] != null && !currentText.trim().isEmpty()) {
+                        cachedNativeSendBtn[0].setVisibility(View.VISIBLE);
+                    }
+                }
+            }
+        };
 
         edit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
-            @Override public void afterTextChanged(Editable s) {}
+            
+            @Override public void afterTextChanged(Editable s) {
+                // 每次打字改变，强制将压制逻辑推入队列执行
+                edit.post(enforceVisibility);
+            }
 
             @Override
             public void onTextChanged(CharSequence s, int st, int b, int c) {
@@ -616,33 +649,12 @@ public class ChatHook {
                     edit.addTextChangedListener(this);
                     return;
                 }
-
-                if (!hasSearchedSendBtn[0]) {
-                    hasSearchedSendBtn[0] = true;
-                    cachedNativeSendBtn[0] = findNativeSendButtonSafely(layout);
-                }
-
-                String textWithoutAt = currentText.replace("@", "");
-                if (!currentText.trim().isEmpty() && AITranslator.isChineseOnly(textWithoutAt)) {
-                    if (!isTranslatingAPI) {
-                        btn.setVisibility(View.VISIBLE);
-                        btn.setEnabled(true);
-                        btn.setText("译");
-                        btn.setAlpha(0.93f);
-                    }
-                    if (cachedNativeSendBtn[0] != null) {
-                        cachedNativeSendBtn[0].post(() -> cachedNativeSendBtn[0].setVisibility(View.GONE));
-                    }
-                } else {
-                    if (!isTranslatingAPI) {
-                        btn.setVisibility(View.GONE);
-                    }
-                    if (cachedNativeSendBtn[0] != null && !currentText.trim().isEmpty()) {
-                        cachedNativeSendBtn[0].post(() -> cachedNativeSendBtn[0].setVisibility(View.VISIBLE));
-                    }
-                }
             }
         });
+
+        // 🔥 主动防御机制：当插件加载完成时（处理你带中文草稿重进聊天页面的情况），主动扫荡一次显示状态！
+        edit.postDelayed(enforceVisibility, 100);
+        edit.postDelayed(enforceVisibility, 500);
 
         btn.setOnClickListener(v -> {
             String text = edit.getText().toString().trim();
