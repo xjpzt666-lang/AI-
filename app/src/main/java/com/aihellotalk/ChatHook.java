@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v44.0 (Socket 协议层核弹版 大结局) ===");
+        log("=== Hook v46.0 (V28原味底座 + 终极隐身回归版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,17 +72,29 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心：物理级截断长连接中的 Typing 与 Read 协议包！
-        try { hookSocketCommandBus(cl); } catch (Throwable ignored) {}
+        // ★ 核心注入：基于逆向成果的终极隐身防御机制（完美融入V28）
+        try { hookUltimateStealth(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // 【核弹级拦截】直接在 Socket 总线掐死特定命令包
+    // 【究极防漏水】业务层切断输入 + 协议层切断已读
     // ═══════════════════════════════════════════
-    private static void hookSocketCommandBus(ClassLoader cl) {
-        // ----------------------------------------------------
-        // 第一道防线：总线级拦截 b20.e.z(...)
-        // ----------------------------------------------------
+    private static void hookUltimateStealth(ClassLoader cl) {
+        // 1. 业务层死掐“正在输入”
+        try {
+            Class<?> titleControllerClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
+            if (titleControllerClass != null) {
+                XposedBridge.hookAllMethods(titleControllerClass, "s0", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(null); // 强制不发送 typing
+                        log("【隐身防御】成功拦截 TalkSingleTitleController.s0 (截断正在输入)");
+                    }
+                });
+            }
+        } catch (Throwable ignored) {}
+
+        // 2. Socket 层死掐“已读回执”和“输入兜底”
         try {
             Class<?> b20eClass = XposedHelpers.findClassIfExists("b20.e", cl);
             if (b20eClass != null) {
@@ -92,39 +104,34 @@ public class ChatHook {
                         if (param.args != null && param.args.length > 0 && param.args[0] != null) {
                             String packetClassName = param.args[0].getClass().getName();
                             
-                            // 1. 狙击 "正在输入" 协议包 (tm.a)
+                            // 拦 Typing 包 (兜底)
                             if (packetClassName.equals("tm.a")) {
-                                param.setResult(null); // 丢弃该帧
-                                log("【总线核弹】拦截长连接发包: tm.a (截断正在输入 - 命令 0x4017)");
+                                param.setResult(null); 
+                                log("【底层防御】拦截长连接发包: tm.a (截断正在输入兜底)");
                                 return;
                             }
                             
-                            // 2. 狙击 "单条已读 ACK" 协议包 (e20.c)
+                            // 拦 Read 包 (绝对有效)
                             if (packetClassName.equals("e20.c")) {
-                                param.setResult(null); // 丢弃该帧
-                                log("【总线核弹】拦截长连接发包: e20.c (截断已读回执 - 命令 0x4015)");
+                                param.setResult(null); 
+                                log("【底层防御】拦截长连接发包: e20.c (截断已读回执)");
                                 return;
                             }
                         }
                     }
                 });
             }
-        } catch (Throwable e) {
-            log("总线拦截部署异常: " + e.getMessage());
-        }
+        } catch (Throwable ignored) {}
 
-        // ----------------------------------------------------
-        // 第二道防线：包体级拦截 e20.c.f() (直接破坏已读包的生成)
-        // ----------------------------------------------------
+        // 3. 包体级破坏 (已读回执的最终保险)
         try {
             Class<?> e20cClass = XposedHelpers.findClassIfExists("e20.c", cl);
             if (e20cClass != null) {
                 XposedBridge.hookAllMethods(e20cClass, "f", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        // 强制返回空字节流，让协议彻底失效
-                        param.setResult(new byte[0]);
-                        log("【包体核弹】破坏 e20.c.f() 的组包逻辑 (让已读包变成废包)");
+                        param.setResult(new byte[0]); // 让已读包变成空壳
+                        log("【底层防御】破坏 e20.c.f() 的组包逻辑 (彻底瘫痪已读)");
                     }
                 });
             }
@@ -145,13 +152,16 @@ public class ChatHook {
                     if (text != null) {
                         String textStr = text.toString();
 
+                        // 1. 绝对放行：如果是我们在卡片上长按生成的特殊标签，绝不拦截！
                         if (clip.getDescription() != null && "HT_AI_Copy".equals(clip.getDescription().getLabel())) {
                             return;
                         }
 
+                        // 2. 识别特征：是否带有翻转图标？是否包含中文？
                         boolean hasIcon = textStr.endsWith(" 🌐") || textStr.endsWith(" 🔄");
                         boolean hasChinese = textStr.matches(".*[\\u4e00-\\u9fa5]+.*");
 
+                        // 3. 输入框保护：如果没有图标，也没有中文，极大可能是你在输入框手选的纯外文。绝对放行！
                         if (!hasIcon && !hasChinese) {
                             return;
                         }
@@ -650,6 +660,7 @@ public class ChatHook {
 
         final View[] cachedNativeSendBtn = new View[1];
 
+        // ★ 核心修复：独立出来的强制刷新逻辑
         Runnable enforceVisibility = new Runnable() {
             @Override
             public void run() {
@@ -685,6 +696,7 @@ public class ChatHook {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
             
             @Override public void afterTextChanged(Editable s) {
+                // 每次打字改变，强制将压制逻辑推入队列执行
                 edit.post(enforceVisibility);
             }
 
@@ -705,6 +717,7 @@ public class ChatHook {
             }
         });
 
+        // 🔥 主动防御机制：当插件加载完成时（处理你带中文草稿重进聊天页面的情况），主动扫荡一次显示状态！
         edit.postDelayed(enforceVisibility, 100);
         edit.postDelayed(enforceVisibility, 500);
 
