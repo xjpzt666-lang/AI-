@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v42.0 (源码级精准爆头版) ===");
+        log("=== Hook v43.0 (三维封印 终极隐身版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,33 +72,30 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心：根据逆向报告，精确狙击！
+        // ★ 核心：根据顶级逆向报告，精确封死输入与已读通道！
         try { hookExactStateMethods(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // 【终极绝杀】源码级精确定位拦截
+    // 【终极绝杀】源码级精确定位拦截 (Typing + Read)
     // ═══════════════════════════════════════════
     private static void hookExactStateMethods(ClassLoader cl) {
-        // 1. 精确狙击“正在输入” (Typing)
-        // 目标：TalkSingleTitleController.s0(byte, boolean)
+        // ----------------------------------------------------
+        // 1. 精确狙击“正在输入” (Typing) - 已验证成功
+        // ----------------------------------------------------
         try {
             Class<?> titleControllerClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
             if (titleControllerClass != null) {
                 XposedBridge.hookAllMethods(titleControllerClass, "s0", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        param.setResult(null); // 强制结束方法，不向下发送 typing
-                        log("【精确狙击】成功拦截 TalkSingleTitleController.s0 (截断正在输入上报)");
+                        param.setResult(null); 
+                        log("【隐身封印】成功拦截 TalkSingleTitleController.s0 (截断正在输入上报)");
                     }
                 });
             }
-        } catch (Throwable e) {
-            log("Typing 狙击异常: " + e.getMessage());
-        }
+        } catch (Throwable ignored) {}
 
-        // 1.5 底层备用狙击 (Typing)
-        // 目标：b20.e.z(...) 且参数类型为 tm.a
         try {
             Class<?> b20eClass = XposedHelpers.findClassIfExists("b20.e", cl);
             if (b20eClass != null) {
@@ -108,7 +105,7 @@ public class ChatHook {
                         if (param.args != null && param.args.length > 0 && param.args[0] != null) {
                             if (param.args[0].getClass().getName().equals("tm.a")) {
                                 param.setResult(null);
-                                log("【底层狙击】成功拦截 b20.e.z 接收到的 tm.a 对象 (截断底层 Typing)");
+                                log("【隐身封印】成功拦截 b20.e.z 接收到的 tm.a 对象 (截断底层 Typing)");
                             }
                         }
                     }
@@ -116,30 +113,38 @@ public class ChatHook {
             }
         } catch (Throwable ignored) {}
 
-        // 2. 精确狙击“已读回执” (Read Receipt)
-        // 目标：z10.a / y10.b 的 f0(int, String, g10.a, boolean)
-        XC_MethodHook readReceiptHook = new XC_MethodHook() {
+        // ----------------------------------------------------
+        // 2. 终极狙击“已读回执” (Read Receipt) - 三维立体封杀
+        // ----------------------------------------------------
+        XC_MethodHook killReadHook = new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                // 如果参数符合 (int, String, ... , boolean) 的特征
-                if (param.args.length == 4 && param.args[0] instanceof Integer && param.args[1] instanceof String && param.args[3] instanceof Boolean) {
-                    param.setResult(null); // 强制结束方法，不发送已读标志
-                    log("【精确狙击】成功拦截 " + param.method.getDeclaringClass().getSimpleName() + ".f0 (截断已读回执)");
-                }
+                // 统一强制结束方法执行，不抛异常，静默拦截
+                param.setResult(null);
+                log("【隐身封印】已切断已读泄露通道: " + param.method.getDeclaringClass().getSimpleName() + "." + param.method.getName());
             }
         };
 
         try {
             Class<?> z10aClass = XposedHelpers.findClassIfExists("z10.a", cl);
             if (z10aClass != null) {
-                XposedBridge.hookAllMethods(z10aClass, "f0", readReceiptHook);
+                // 通道 1：全局会话未读清零 (最核心的泄露源) -> m(int, callback)
+                XposedBridge.hookAllMethods(z10aClass, "m", killReadHook);
+                // 通道 2：可见焦点列表拉取 (防链式触发) -> c0(int, callback)
+                XposedBridge.hookAllMethods(z10aClass, "c0", killReadHook);
+                // 通道 3：单条消息标已读 (防补充同步) -> f0(int, string, callback, boolean)
+                XposedBridge.hookAllMethods(z10aClass, "f0", killReadHook);
             }
+            
+            // y10.b 是 z10.a 的实现类，为了双保险，一并封死
             Class<?> y10bClass = XposedHelpers.findClassIfExists("y10.b", cl);
             if (y10bClass != null) {
-                XposedBridge.hookAllMethods(y10bClass, "f0", readReceiptHook);
+                XposedBridge.hookAllMethods(y10bClass, "m", killReadHook);
+                XposedBridge.hookAllMethods(y10bClass, "c0", killReadHook);
+                XposedBridge.hookAllMethods(y10bClass, "f0", killReadHook);
             }
         } catch (Throwable e) {
-            log("Read Receipt 狙击异常: " + e.getMessage());
+            log("Read Receipt 狙击部署异常: " + e.getMessage());
         }
     }
 
