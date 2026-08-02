@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v41.0 (业务层反射霰弹枪版 - 零闪退) ===");
+        log("=== Hook v42.0 (源码级精准爆头版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,82 +72,75 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心：反射霰弹枪，无差别击杀所有状态上报方法！
-        try { hookBusinessShotgun(cl); } catch (Throwable ignored) {}
+        // ★ 核心：根据逆向报告，精确狙击！
+        try { hookExactStateMethods(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // 【反射霰弹枪】无差别击杀所有 typing 和 read 方法
+    // 【终极绝杀】源码级精确定位拦截
     // ═══════════════════════════════════════════
-    private static void hookBusinessShotgun(ClassLoader cl) {
-        XC_MethodHook killHook = new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                // 直接掐断执行，如果是 void 方法返回 null，如果是 boolean 返回 true (骗过系统)
-                if (param.method instanceof Method) {
-                    Class<?> returnType = ((Method) param.method).getReturnType();
-                    if (returnType == boolean.class || returnType == Boolean.class) {
-                        param.setResult(true);
-                    } else {
-                        param.setResult(null);
-                    }
-                    log("【霰弹枪击杀】已成功掐断危险方法: " + param.method.getName());
-                }
-            }
-        };
-
-        // 目标 1：聊天室核心控制器
+    private static void hookExactStateMethods(ClassLoader cl) {
+        // 1. 精确狙击“正在输入” (Typing)
+        // 目标：TalkSingleTitleController.s0(byte, boolean)
         try {
-            Class<?> vmClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
-            if (vmClass != null) {
-                for (Method m : vmClass.getDeclaredMethods()) {
-                    String name = m.getName().toLowerCase();
-                    // 只要方法名带有发送输入状态、已读状态的特征，全部击杀
-                    if (name.contains("sendtyping") || name.contains("updatetyping") || name.equals("settyping") ||
-                        name.contains("sendread") || name.contains("markread") || name.contains("markasread") ||
-                        name.contains("requestonlinestatus")) {
-                        XposedBridge.hookMethod(m, killHook);
+            Class<?> titleControllerClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
+            if (titleControllerClass != null) {
+                XposedBridge.hookAllMethods(titleControllerClass, "s0", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(null); // 强制结束方法，不向下发送 typing
+                        log("【精确狙击】成功拦截 TalkSingleTitleController.s0 (截断正在输入上报)");
                     }
-                }
+                });
             }
         } catch (Throwable e) {
-            log("ViewModel 霰弹枪部署异常: " + e.getMessage());
+            log("Typing 狙击异常: " + e.getMessage());
         }
 
-        // 目标 2：底层 IM 通讯管理器（如果有的话）
+        // 1.5 底层备用狙击 (Typing)
+        // 目标：b20.e.z(...) 且参数类型为 tm.a
         try {
-            Class<?> imManagerClass = XposedHelpers.findClassIfExists("com.hellotalk.lib.im.HTIMManager", cl);
-            if (imManagerClass == null) imManagerClass = XposedHelpers.findClassIfExists("com.hellotalk.lib.im.HTIMClient", cl);
-            
-            if (imManagerClass != null) {
-                for (Method m : imManagerClass.getDeclaredMethods()) {
-                    String name = m.getName().toLowerCase();
-                    if (name.contains("sendtyping") || name.contains("updatetyping") ||
-                        name.contains("sendread") || name.contains("markread") || name.contains("markasread")) {
-                        XposedBridge.hookMethod(m, killHook);
-                    }
-                }
-            }
-        } catch (Throwable ignored) {}
-
-        // 目标 3：第三方 WebSocket 备用击杀
-        try {
-            Class<?> wsClass = XposedHelpers.findClassIfExists("org.java_websocket.client.WebSocketClient", cl);
-            if (wsClass != null) {
-                XposedBridge.hookAllMethods(wsClass, "send", new XC_MethodHook() {
+            Class<?> b20eClass = XposedHelpers.findClassIfExists("b20.e", cl);
+            if (b20eClass != null) {
+                XposedBridge.hookAllMethods(b20eClass, "z", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (param.args != null && param.args.length > 0 && param.args[0] != null) {
-                            String payload = param.args[0].toString().toLowerCase();
-                            if (payload.contains("typing") || payload.contains("read_status") || payload.contains("receipt")) {
-                                param.setResult(null); // 丢弃该帧
-                                log("【底层核弹】已在 Java-WebSocket 层拦截状态发包！");
+                            if (param.args[0].getClass().getName().equals("tm.a")) {
+                                param.setResult(null);
+                                log("【底层狙击】成功拦截 b20.e.z 接收到的 tm.a 对象 (截断底层 Typing)");
                             }
                         }
                     }
                 });
             }
         } catch (Throwable ignored) {}
+
+        // 2. 精确狙击“已读回执” (Read Receipt)
+        // 目标：z10.a / y10.b 的 f0(int, String, g10.a, boolean)
+        XC_MethodHook readReceiptHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                // 如果参数符合 (int, String, ... , boolean) 的特征
+                if (param.args.length == 4 && param.args[0] instanceof Integer && param.args[1] instanceof String && param.args[3] instanceof Boolean) {
+                    param.setResult(null); // 强制结束方法，不发送已读标志
+                    log("【精确狙击】成功拦截 " + param.method.getDeclaringClass().getSimpleName() + ".f0 (截断已读回执)");
+                }
+            }
+        };
+
+        try {
+            Class<?> z10aClass = XposedHelpers.findClassIfExists("z10.a", cl);
+            if (z10aClass != null) {
+                XposedBridge.hookAllMethods(z10aClass, "f0", readReceiptHook);
+            }
+            Class<?> y10bClass = XposedHelpers.findClassIfExists("y10.b", cl);
+            if (y10bClass != null) {
+                XposedBridge.hookAllMethods(y10bClass, "f0", readReceiptHook);
+            }
+        } catch (Throwable e) {
+            log("Read Receipt 狙击异常: " + e.getMessage());
+        }
     }
 
     // ═══════════════════════════════════════════
