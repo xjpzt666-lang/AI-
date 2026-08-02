@@ -56,12 +56,12 @@ public class ChatHook {
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
 
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
     // 安装入口
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v29.0 (发送按钮setVisibility拦截 + AI看图版) ===");
+        log("=== Hook v30.0 (发送按钮实例级拦截 + AI看图版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -78,9 +78,9 @@ public class ChatHook {
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
     }
 
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
     // 剪贴板拦截
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
 
     private static void hookClipboard(ClassLoader cl) {
         XC_MethodHook clipHook = new XC_MethodHook() {
@@ -128,9 +128,9 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
     // 气泡翻转
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
 
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
         XposedHelpers.findAndHookMethod(
@@ -167,9 +167,9 @@ public class ChatHook {
                 });
     }
 
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
     // 聊天打开
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
 
     private static void hookStartChat(ClassLoader cl) throws Exception {
         XposedHelpers.findAndHookMethod(
@@ -209,9 +209,9 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
     // 接收/发送消息拦截（含图片自动抓取）
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
 
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
@@ -235,7 +235,6 @@ public class ChatHook {
                     String msgType = null;
                     try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Exception ignored) {}
 
-                    // ★ 图片消息：自动下载 → Base64 → 送 Vision
                     if ((text == null || text.isEmpty())
                             && ("image".equals(msgType) || "photo".equals(msgType))) {
                         text = handleImageMessage(msg, cl);
@@ -308,7 +307,6 @@ public class ChatHook {
         });
     }
 
-    // ★ 自动下载对方图片 → Base64
     private static String handleImageMessage(Object msg, ClassLoader cl) {
         try {
             Class<?> imageBeanClass = XposedHelpers.findClass(
@@ -341,9 +339,9 @@ public class ChatHook {
         }
     }
 
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
     // 语言检测
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
 
     private static void hookLang(ClassLoader cl) throws Exception {
         Class<?> vm = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
@@ -362,9 +360,9 @@ public class ChatHook {
                 });
     }
 
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
     // 引用回复提取
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
 
     private static String getQuoteReplyText(View rootView) {
         if (rootView == null) return null;
@@ -387,9 +385,9 @@ public class ChatHook {
         return null;
     }
 
-    // ────────────────────────────────────────────
-    // 按资源名查找 View（旧版发送按钮用）
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
+    // 按资源名查找 View
+    // ═══════════════════════════════════════════
 
     private static View findViewByEntryName(View root, String keyword) {
         if (root == null) return null;
@@ -407,9 +405,9 @@ public class ChatHook {
         return null;
     }
 
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
     // 输入框按钮注入
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
         Class<?> boxClass = XposedHelpers.findClass("com.hellotalk.chat.ui.ChatInputBoxView", cl);
@@ -435,10 +433,9 @@ public class ChatHook {
     }
 
     private static void tryAddBtn_New(View box) {
-        EditText edit = findEditTextInView(box);
+        final EditText edit = findEditTextInView(box);
         if (edit != null) addTranslateBtn((ViewGroup) box, edit);
 
-        // ★ 捕获 ivSend 并 Hook setVisibility
         try {
             Field bf = box.getClass().getDeclaredField("binding");
             bf.setAccessible(true);
@@ -447,29 +444,22 @@ public class ChatHook {
             sf.setAccessible(true);
             final View ivSend = (View) sf.get(binding);
 
-            // 打标签，防止重复 Hook
             if (ivSend.getTag() != null && "HT_SEND_HOOKED".equals(ivSend.getTag().toString())) return;
             ivSend.setTag("HT_SEND_HOOKED");
 
             log("已捕获 HelloTalk 发送按钮 (新版)，正在 Hook setVisibility...");
 
             XposedHelpers.findAndHookMethod(
-                    ivSend.getClass(),
-                    "setVisibility",
-                    int.class,
+                    ivSend.getClass(), "setVisibility", int.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            if (param.thisObject != ivSend) return;
                             int visibility = (int) param.args[0];
                             if (visibility == View.VISIBLE) {
-                                // 找到输入框检查是否有中文
-                                EditText et = findEditTextInView((View) ivSend.getParent());
-                                if (et != null) {
-                                    String txt = et.getText().toString();
-                                    if (!txt.trim().isEmpty() && AITranslator.isChineseOnly(txt.replace("@", ""))) {
-                                        param.args[0] = View.GONE;
-                                        return;
-                                    }
+                                String txt = edit.getText().toString();
+                                if (!txt.trim().isEmpty() && AITranslator.isChineseOnly(txt.replace("@", ""))) {
+                                    param.args[0] = View.GONE;
                                 }
                             }
                         }
@@ -480,10 +470,9 @@ public class ChatHook {
     }
 
     private static void tryAddBtn_Old(View box) {
-        EditText edit = findEditTextInView(box);
+        final EditText edit = findEditTextInView(box);
         if (edit != null) addTranslateBtn((ViewGroup) box, edit);
 
-        // ★ 旧版：查找发送按钮并 Hook setVisibility
         try {
             final View sendBtn = findViewByEntryName(box, "send");
             if (sendBtn == null) return;
@@ -494,20 +483,16 @@ public class ChatHook {
             log("已捕获 HelloTalk 发送按钮 (旧版)，正在 Hook setVisibility...");
 
             XposedHelpers.findAndHookMethod(
-                    sendBtn.getClass(),
-                    "setVisibility",
-                    int.class,
+                    sendBtn.getClass(), "setVisibility", int.class,
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            if (param.thisObject != sendBtn) return;
                             int visibility = (int) param.args[0];
                             if (visibility == View.VISIBLE) {
-                                EditText et = findEditTextInView(box);
-                                if (et != null) {
-                                    String txt = et.getText().toString();
-                                    if (!txt.trim().isEmpty() && AITranslator.isChineseOnly(txt.replace("@", ""))) {
-                                        param.args[0] = View.GONE;
-                                    }
+                                String txt = edit.getText().toString();
+                                if (!txt.trim().isEmpty() && AITranslator.isChineseOnly(txt.replace("@", ""))) {
+                                    param.args[0] = View.GONE;
                                 }
                             }
                         }
@@ -660,9 +645,9 @@ public class ChatHook {
         });
     }
 
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
     // 智能目标语言
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
 
     private static String determineSmartTargetLang() {
         String nationality = latestNationality.toLowerCase();
@@ -713,9 +698,9 @@ public class ChatHook {
         }
     }
 
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
     // 版本选择器
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
 
     private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput) {
         if (result == null || result.trim().isEmpty()) {
@@ -869,9 +854,9 @@ public class ChatHook {
         dialog.show();
     }
 
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
     // 动态语言工具
-    // ────────────────────────────────────────────
+    // ═══════════════════════════════════════════
 
     private static String getDynamicLangCode(int langId) {
         if (langCodeMethod != null) {
