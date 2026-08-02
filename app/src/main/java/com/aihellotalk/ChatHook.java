@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -56,7 +58,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v46.0 (V28原味底座 + 终极隐身回归版) ===");
+        log("=== Hook v47.0 (V28底座 + 隐身防御 + 多模态视觉觉醒) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,7 +74,7 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心注入：基于逆向成果的终极隐身防御机制（完美融入V28）
+        // ★ 核心注入：终极隐身防御机制
         try { hookUltimateStealth(cl); } catch (Throwable ignored) {}
     }
 
@@ -104,14 +106,14 @@ public class ChatHook {
                         if (param.args != null && param.args.length > 0 && param.args[0] != null) {
                             String packetClassName = param.args[0].getClass().getName();
                             
-                            // 拦 Typing 包 (兜底)
+                            // 拦 Typing 包
                             if (packetClassName.equals("tm.a")) {
                                 param.setResult(null); 
                                 log("【底层防御】拦截长连接发包: tm.a (截断正在输入兜底)");
                                 return;
                             }
                             
-                            // 拦 Read 包 (绝对有效)
+                            // 拦 Read 包
                             if (packetClassName.equals("e20.c")) {
                                 param.setResult(null); 
                                 log("【底层防御】拦截长连接发包: e20.c (截断已读回执)");
@@ -131,11 +133,41 @@ public class ChatHook {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         param.setResult(new byte[0]); // 让已读包变成空壳
-                        log("【底层防御】破坏 e20.c.f() 的组包逻辑 (彻底瘫痪已读)");
                     }
                 });
             }
         } catch (Throwable ignored) {}
+    }
+
+    // ═══════════════════════════════════════════
+    // 【新增】利用原始 JSON 提取图片 URL
+    // ═══════════════════════════════════════════
+    private static String extractMediaUrlFromJson(Object msg) {
+        try {
+            String json = null;
+            // 优先尝试 Kotlin 包装的 Getter
+            try {
+                json = (String) XposedHelpers.callMethod(msg, "getMsgContentJson$lib_im_release");
+            } catch (Throwable t1) {
+                // 失败则直接反射读字段
+                try {
+                    json = (String) XposedHelpers.getObjectField(msg, "msgContentJson");
+                } catch (Throwable t2) {}
+            }
+
+            if (json != null && !json.trim().isEmpty()) {
+                // 用正则暴力提取所有的主流 URL/Path 字段，命中就返回
+                Pattern pattern = Pattern.compile("\"(?:originalUrl|originUrl|url|imageUrl|thumbUrl|localPath|localpath)\"\\s*:\\s*\"([^\"]+)\"");
+                Matcher matcher = pattern.matcher(json);
+                if (matcher.find()) {
+                    String url = matcher.group(1);
+                    if (url != null) {
+                        return url.replace("\\/", "/"); // 修复 JSON 转义符
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+        return null;
     }
 
     // ═══════════════════════════════════════════
@@ -152,16 +184,13 @@ public class ChatHook {
                     if (text != null) {
                         String textStr = text.toString();
 
-                        // 1. 绝对放行：如果是我们在卡片上长按生成的特殊标签，绝不拦截！
                         if (clip.getDescription() != null && "HT_AI_Copy".equals(clip.getDescription().getLabel())) {
                             return;
                         }
 
-                        // 2. 识别特征：是否带有翻转图标？是否包含中文？
                         boolean hasIcon = textStr.endsWith(" 🌐") || textStr.endsWith(" 🔄");
                         boolean hasChinese = textStr.matches(".*[\\u4e00-\\u9fa5]+.*");
 
-                        // 3. 输入框保护：如果没有图标，也没有中文，极大可能是你在输入框手选的纯外文。绝对放行！
                         if (!hasIcon && !hasChinese) {
                             return;
                         }
@@ -173,7 +202,6 @@ public class ChatHook {
                                         clip.getDescription() != null ? clip.getDescription().getLabel() : "HT_AI",
                                         orig
                                 );
-                                log("【剪贴板拦截】已替换为纯外语原文");
                             }
                         } catch (Throwable ignored) {}
                     }
@@ -221,7 +249,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 核心修复：精准拦截图标区域，不吞掉整条气泡
+    // 核心修复：精准拦截图标区域
     // ═══════════════════════════════════════════
 
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
@@ -333,7 +361,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 接收/发送消息文本拦截
+    // 接收/发送消息文本拦截 (融合多模态解析)
     // ═══════════════════════════════════════════
 
     private static void hookRecv(ClassLoader cl) throws Exception {
@@ -372,9 +400,17 @@ public class ChatHook {
                         msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
                     } catch (Exception ignored) {}
 
+                    // ★ 核心改动：解析图片URL，塞入隐藏上下文
                     if (text == null || text.isEmpty()) {
                         if ("image".equals(msgType) || "photo".equals(msgType)) {
-                            text = "[对方发送了一张图片]";
+                            String mediaUrl = extractMediaUrlFromJson(msg);
+                            if (mediaUrl != null) {
+                                // 隐式理解格式：不显示在屏幕，但告诉大模型这是一张图
+                                text = "[对方发送了一张图片 | URL: " + mediaUrl + " ]";
+                                log("【多模态】成功捕获图片链接: " + mediaUrl);
+                            } else {
+                                text = "[对方发送了一张图片]";
+                            }
                         } else if ("voice".equals(msgType) || "audio".equals(msgType)) {
                             text = "[对方发送了一条语音]";
                         } else if ("video".equals(msgType)) {
@@ -420,6 +456,7 @@ public class ChatHook {
                         }
                     } catch (Exception ignored) {}
 
+                    // 将带有 URL 的富文本存入我们本地的历史记录，喂给大模型
                     boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
                     if (isNewMessage) {
                         if (isMine) {
@@ -429,6 +466,7 @@ public class ChatHook {
                         }
                     }
 
+                    // 界面上如果是 [图片 xxx] 这种辅助标签，就不要在气泡里显示乱码
                     if (text.startsWith("[")) return;
                     if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
@@ -543,7 +581,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 安全查找原生发送按钮 (极速防卡死版)
+    // 安全查找原生发送按钮
     // ═══════════════════════════════════════════
     private static View findNativeSendButtonSafely(ViewGroup root) {
         if (root == null) return null;
@@ -572,7 +610,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 输入框按钮注入与权限解禁
+    // 输入框按钮注入
     // ═══════════════════════════════════════════
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
@@ -660,7 +698,6 @@ public class ChatHook {
 
         final View[] cachedNativeSendBtn = new View[1];
 
-        // ★ 核心修复：独立出来的强制刷新逻辑
         Runnable enforceVisibility = new Runnable() {
             @Override
             public void run() {
@@ -696,7 +733,6 @@ public class ChatHook {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
             
             @Override public void afterTextChanged(Editable s) {
-                // 每次打字改变，强制将压制逻辑推入队列执行
                 edit.post(enforceVisibility);
             }
 
@@ -717,7 +753,6 @@ public class ChatHook {
             }
         });
 
-        // 🔥 主动防御机制：当插件加载完成时（处理你带中文草稿重进聊天页面的情况），主动扫荡一次显示状态！
         edit.postDelayed(enforceVisibility, 100);
         edit.postDelayed(enforceVisibility, 500);
 
@@ -741,7 +776,6 @@ public class ChatHook {
                 String orig = AITranslator.getForeignFuzzy(quoteText);
                 if (orig != null) {
                     quoteText = orig;
-                    log("已成功锚定并还原出极净的原文 Quote 语境！");
                 }
                 textToTranslate = "【我要回复的对方原话】：" + quoteText.trim() + "\n【我的回复】：" + text;
             }
@@ -773,8 +807,8 @@ public class ChatHook {
                     String finalPromptText = finalTextToTranslate;
                     if (isRetry) {
                         finalPromptText = finalTextToTranslate
-                                + "\n\n【系统强制指令】：用户对刚才的翻译结果不满意，要求重新生成（重试第"
-                                + retryCount + "次）。请彻底抛弃你脑海中默认的第一反应，使用完全不同的表达方式、词汇或句式，给出4个全新的版本！严禁与上次翻译重复！";
+                                + "\n\n【系统强制指令】：用户要求重新生成（重试第"
+                                + retryCount + "次）。请给出完全不同的表达方式！";
                     }
 
                     String result = AITranslator.translateWithHistory(finalPromptText, targetLang, currentChatId);
@@ -794,7 +828,7 @@ public class ChatHook {
                         btn.setAlpha(0.88f);
                         String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
                         if (msg.contains("canceled") || msg.contains("socket closed")) {
-                            Toast.makeText(edit.getContext(), "🛑 翻译已急停，可重新编辑", Toast.LENGTH_SHORT).show();
+                            Toast.makeText(edit.getContext(), "🛑 翻译已急停", Toast.LENGTH_SHORT).show();
                         } else {
                             Toast.makeText(edit.getContext(), "翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
                         }
@@ -836,72 +870,17 @@ public class ChatHook {
     private static String mapNationalityToLang(String nationality) {
         if (nationality == null || nationality.isEmpty()) return null;
         switch (nationality) {
-            case "china":
-            case "taiwan":
-            case "hong kong":
-            case "macau":
-                return "zh";
-            case "russia":
-            case "belarus":
-            case "kazakhstan":
-            case "kyrgyzstan":
-                return "ru";
-            case "ukraine":
-                return "uk";
-            case "poland":
-                return "pl";
-            case "japan":
-                return "ja";
-            case "korea":
-            case "south korea":
-                return "ko";
-            case "vietnam":
-                return "vi";
-            case "thailand":
-                return "fr";
-            case "france":
-                return "fr";
-            case "germany":
-                return "de";
-            case "spain":
-                return "es";
-            case "italy":
-                return "it";
-            case "portugal":
-            case "brazil":
-                return "pt";
-            case "netherlands":
-                return "nl";
-            case "turkey":
-                return "tr";
-            case "indonesia":
-                return "id";
-            case "malaysia":
-                return "ms";
-            case "india":
-                return "hi";
-            case "arabia":
-            case "saudi arabia":
-            case "egypt":
-            case "uae":
-            case "qatar":
-            case "oman":
-            case "kuwait":
-            case "bahrain":
-            case "jordan":
-            case "lebanon":
-            case "iraq":
-            case "syria":
-            case "yemen":
-            case "libya":
-            case "tunisia":
-            case "algeria":
-            case "morocco":
-            case "sudan":
-            case "palestine":
-                return "ar";
-            default:
-                return null;
+            case "china": case "taiwan": case "hong kong": case "macau": return "zh";
+            case "russia": case "belarus": case "kazakhstan": case "kyrgyzstan": return "ru";
+            case "japan": return "ja";
+            case "korea": case "south korea": return "ko";
+            case "france": return "fr";
+            case "germany": return "de";
+            case "spain": return "es";
+            case "italy": return "it";
+            case "portugal": case "brazil": return "pt";
+            case "arabia": case "egypt": return "ar";
+            default: return null;
         }
     }
 
@@ -915,7 +894,6 @@ public class ChatHook {
             return;
         }
 
-        // 1. 物理防御切割逻辑：优先寻找 =====，一刀两断，绝对隔离！
         String analysisText = "";
         String optionsText = "";
 
@@ -930,12 +908,10 @@ public class ChatHook {
             for (String line : result.split("\n")) {
                 String trimmed = line.trim();
                 if (trimmed.isEmpty()) continue;
-
-                if (trimmed.contains("下半部分") || trimmed.contains("机器读取区") || trimmed.matches("^[=+\\-]{3,}.*$")) {
+                if (trimmed.contains("下半部分") || trimmed.matches("^[=+\\-]{3,}.*$")) {
                     inOptions = true;
                     continue;
                 }
-
                 if (inOptions) {
                     opBuilder.append(trimmed).append("\n");
                 } else {
@@ -952,27 +928,19 @@ public class ChatHook {
         }
 
         analysisText = analysisText.replace("*", "");
-        
         List<String[]> parsedItems = new ArrayList<>();
         
-        // 2. 只从被划分为“下半部分”的文本中提取带 | 的内容
         for (String line : optionsText.split("\n")) {
             String cleanLine = line.trim().replace("*", "");
-            
-            if (cleanLine.isEmpty() || cleanLine.matches("^[=+\\-]{3,}.*$") ||
-                cleanLine.contains("【下半部分") || cleanLine.contains("机器读取区") ||
-                cleanLine.contains("英文文本|符合Ren人设")) {
+            if (cleanLine.isEmpty() || cleanLine.matches("^[=+\\-]{3,}.*$") || cleanLine.contains("英文文本|符合Ren人设")) {
                 continue;
             }
-
             if (cleanLine.contains("|")) {
                 cleanLine = cleanLine.replaceFirst("^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\-\\d一二三四五]+[\\.\\)、：:\\s]*)", "").trim();
-                
                 String[] parts = cleanLine.split("\\|");
                 String foreignText = parts[0].trim().replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
                 String chineseMean = parts.length > 1 ? parts[1].trim() : "";
                 String labelText = parts.length > 2 ? parts[2].trim() : "";
-
                 if (!foreignText.isEmpty()) {
                     parsedItems.add(new String[]{foreignText, chineseMean, labelText});
                 }
@@ -985,12 +953,9 @@ public class ChatHook {
         }
 
         android.content.Context ctx = edit.getContext();
-        
-        // 3. 搭建全新外层布局
         android.widget.LinearLayout rootLayout = new android.widget.LinearLayout(ctx);
         rootLayout.setOrientation(android.widget.LinearLayout.VERTICAL);
 
-        // --- 上半截：AI 分析展示区 ---
         if (!analysisText.isEmpty()) {
             android.widget.ScrollView topScroll = new android.widget.ScrollView(ctx);
             android.widget.LinearLayout.LayoutParams topParams = new android.widget.LinearLayout.LayoutParams(
@@ -1005,9 +970,7 @@ public class ChatHook {
             tvAnalysis.setTextSize(13f);
             tvAnalysis.setLineSpacing(0, 1.2f);
             tvAnalysis.setTextIsSelectable(true); 
-            
             topScroll.addView(tvAnalysis);
-
             rootLayout.addView(topScroll);
 
             View divider = new View(ctx);
@@ -1019,7 +982,6 @@ public class ChatHook {
             rootLayout.addView(divider);
         }
 
-        // --- 下半截：选项卡片滑动区 ---
         android.widget.ScrollView bottomScroll = new android.widget.ScrollView(ctx);
         android.widget.LinearLayout.LayoutParams bottomParams = new android.widget.LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 2.0f);
@@ -1029,23 +991,16 @@ public class ChatHook {
         container.setOrientation(android.widget.LinearLayout.VERTICAL);
         container.setPadding(40, 10, 40, 20);
         bottomScroll.addView(container);
-
         rootLayout.addView(bottomScroll);
 
         String displayName = !latestPartnerName.isEmpty() ? latestPartnerName : currentPartnerName;
-
         final AlertDialog dialog = new AlertDialog.Builder(ctx)
                 .setTitle("选版本 - " + displayName)
                 .setView(rootLayout)
-                .setNegativeButton("取消", (d, w) -> {
-                    edit.post(() -> edit.setText(edit.getText().toString()));
-                })
-                .setPositiveButton("🔄 换一批", (d, w) -> {
-                    edit.post(() -> translateBtn.performClick());
-                })
+                .setNegativeButton("取消", (d, w) -> edit.post(() -> edit.setText(edit.getText().toString())))
+                .setPositiveButton("🔄 换一批", (d, w) -> edit.post(() -> translateBtn.performClick()))
                 .create();
 
-        // 4. 渲染干净的卡片
         for (String[] item : parsedItems) {
             final String foreign = item[0];
             String chinese = item[1];
@@ -1054,12 +1009,8 @@ public class ChatHook {
             android.widget.LinearLayout card = new android.widget.LinearLayout(ctx);
             card.setOrientation(android.widget.LinearLayout.VERTICAL);
             card.setPadding(35, 35, 35, 35);
-
-            android.widget.LinearLayout.LayoutParams params =
-                    new android.widget.LinearLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.WRAP_CONTENT
-                    );
+            android.widget.LinearLayout.LayoutParams params = new android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             params.setMargins(0, 10, 0, 15);
             card.setLayoutParams(params);
 
@@ -1087,65 +1038,40 @@ public class ChatHook {
                 card.addView(tvChinese);
             }
 
-            // 短按：填入输入框
             card.setOnClickListener(v -> {
                 AITranslator.mySentDrafts.put(foreign.trim(), originalChineseInput.trim());
                 edit.setText(foreign);
                 edit.setSelection(foreign.length());
-                
-                try {
-                    edit.setLongClickable(true);
-                    edit.setTextIsSelectable(true);
-                    edit.setFocusable(true);
-                    edit.setFocusableInTouchMode(true);
-                    edit.requestFocus();
-                } catch (Throwable ignored) {}
-
                 dialog.dismiss();
             });
 
-            // 长按：直接复制外文（特殊标签白名单放行）
             card.setOnLongClickListener(v -> {
                 android.content.ClipboardManager clipboard = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
                 if (clipboard != null) {
                     android.content.ClipData clip = android.content.ClipData.newPlainText("HT_AI_Copy", foreign.trim());
                     clipboard.setPrimaryClip(clip);
-                    Toast.makeText(ctx, "✅ 已复制英文，可随时去其他 App 验证", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(ctx, "✅ 已复制英文", Toast.LENGTH_SHORT).show();
                 }
                 return true;
             });
-
             container.addView(card);
         }
-
         dialog.show();
     }
 
-    // ═══════════════════════════════════════════
-    // 动态语言工具
-    // ═══════════════════════════════════════════
-
     private static String getDynamicLangCode(int langId) {
         if (langCodeMethod != null) {
-            try {
-                return ((String) langCodeMethod.invoke(null, langId)).toLowerCase();
-            } catch (Exception ignored) {}
+            try { return ((String) langCodeMethod.invoke(null, langId)).toLowerCase(); } catch (Exception ignored) {}
         }
         return "en";
     }
 
     private static String getDynamicLangName(int langId) {
         if (langNameMethod != null) {
-            try {
-                return (String) langNameMethod.invoke(null, langId);
-            } catch (Exception ignored) {}
+            try { return (String) langNameMethod.invoke(null, langId); } catch (Exception ignored) {}
         }
         return "Unknown";
     }
-
-    // ═══════════════════════════════════════════
-    // 日志
-    // ═══════════════════════════════════════════
 
     private static void log(String msg) {
         XposedBridge.log("HT_AI " + msg);
