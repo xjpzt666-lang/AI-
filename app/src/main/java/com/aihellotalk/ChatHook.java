@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v39.0 (网关底层拦截刺客版) ===");
+        log("=== Hook v41.0 (业务层反射霰弹枪版 - 零闪退) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,64 +72,82 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心：抛弃所有UI猜想，直接在网关层进行 JSON 数据包替换！
-        try { hookNetworkPayloads(cl); } catch (Throwable ignored) {}
+        // ★ 核心：反射霰弹枪，无差别击杀所有状态上报方法！
+        try { hookBusinessShotgun(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // ★ 终极防线：OkHttp / Okio 底层数据包拦截与替换 ★
+    // 【反射霰弹枪】无差别击杀所有 typing 和 read 方法
     // ═══════════════════════════════════════════
-    private static void hookNetworkPayloads(ClassLoader cl) {
-        // 1. 拦截 OkHttp 请求体构建
-        try {
-            Class<?> reqBodyClass = XposedHelpers.findClassIfExists("okhttp3.RequestBody", cl);
-            if (reqBodyClass != null) {
-                XposedBridge.hookAllMethods(reqBodyClass, "create", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        for (int i = 0; i < param.args.length; i++) {
-                            if (param.args[i] instanceof String) {
-                                String payload = (String) param.args[i];
-                                // 如果发现抓包中体现的特征码 "txt":"action"
-                                if (payload != null && payload.contains("\"txt\":\"action\"") && payload.contains("\"sign\"")) {
-                                    param.args[i] = "{}"; // 替换为空 JSON，切断状态上报！
-                                    log("【底层核弹】已在 OkHttp 层拦截并替换：正在输入状态 (String)！");
-                                }
-                            } else if (param.args[i] instanceof byte[]) {
-                                String payload = new String((byte[]) param.args[i]);
-                                if (payload != null && payload.contains("\"txt\":\"action\"") && payload.contains("\"sign\"")) {
-                                    param.args[i] = "{}".getBytes(); // 替换为空 JSON 的字节码
-                                    log("【底层核弹】已在 OkHttp 层拦截并替换：正在输入状态 (byte[])！");
-                                }
-                            }
-                        }
+    private static void hookBusinessShotgun(ClassLoader cl) {
+        XC_MethodHook killHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                // 直接掐断执行，如果是 void 方法返回 null，如果是 boolean 返回 true (骗过系统)
+                if (param.method instanceof Method) {
+                    Class<?> returnType = ((Method) param.method).getReturnType();
+                    if (returnType == boolean.class || returnType == Boolean.class) {
+                        param.setResult(true);
+                    } else {
+                        param.setResult(null);
                     }
-                });
+                    log("【霰弹枪击杀】已成功掐断危险方法: " + param.method.getName());
+                }
+            }
+        };
+
+        // 目标 1：聊天室核心控制器
+        try {
+            Class<?> vmClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+            if (vmClass != null) {
+                for (Method m : vmClass.getDeclaredMethods()) {
+                    String name = m.getName().toLowerCase();
+                    // 只要方法名带有发送输入状态、已读状态的特征，全部击杀
+                    if (name.contains("sendtyping") || name.contains("updatetyping") || name.equals("settyping") ||
+                        name.contains("sendread") || name.contains("markread") || name.contains("markasread") ||
+                        name.contains("requestonlinestatus")) {
+                        XposedBridge.hookMethod(m, killHook);
+                    }
+                }
             }
         } catch (Throwable e) {
-            log("【底层核弹】RequestBody 拦截部署异常: " + e.getMessage());
+            log("ViewModel 霰弹枪部署异常: " + e.getMessage());
         }
 
-        // 2. 拦截 Okio 底层流写入 (覆盖 WebSocket 和底层 Socket)
+        // 目标 2：底层 IM 通讯管理器（如果有的话）
         try {
-            Class<?> bufferClass = XposedHelpers.findClassIfExists("okio.Buffer", cl);
-            if (bufferClass != null) {
-                XposedBridge.hookAllMethods(bufferClass, "writeUtf8", new XC_MethodHook() {
+            Class<?> imManagerClass = XposedHelpers.findClassIfExists("com.hellotalk.lib.im.HTIMManager", cl);
+            if (imManagerClass == null) imManagerClass = XposedHelpers.findClassIfExists("com.hellotalk.lib.im.HTIMClient", cl);
+            
+            if (imManagerClass != null) {
+                for (Method m : imManagerClass.getDeclaredMethods()) {
+                    String name = m.getName().toLowerCase();
+                    if (name.contains("sendtyping") || name.contains("updatetyping") ||
+                        name.contains("sendread") || name.contains("markread") || name.contains("markasread")) {
+                        XposedBridge.hookMethod(m, killHook);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        // 目标 3：第三方 WebSocket 备用击杀
+        try {
+            Class<?> wsClass = XposedHelpers.findClassIfExists("org.java_websocket.client.WebSocketClient", cl);
+            if (wsClass != null) {
+                XposedBridge.hookAllMethods(wsClass, "send", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
-                            String payload = (String) param.args[0];
-                            if (payload != null && payload.contains("\"txt\":\"action\"") && payload.contains("\"sign\"")) {
-                                param.args[0] = "{}"; // 替换为空 JSON，服务器收到无效数据直接丢弃
-                                log("【底层核弹】已在 Okio 底层流中拦截并替换：正在输入状态！");
+                        if (param.args != null && param.args.length > 0 && param.args[0] != null) {
+                            String payload = param.args[0].toString().toLowerCase();
+                            if (payload.contains("typing") || payload.contains("read_status") || payload.contains("receipt")) {
+                                param.setResult(null); // 丢弃该帧
+                                log("【底层核弹】已在 Java-WebSocket 层拦截状态发包！");
                             }
                         }
                     }
                 });
             }
-        } catch (Throwable e) {
-            log("【底层核弹】Okio 拦截部署异常: " + e.getMessage());
-        }
+        } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
