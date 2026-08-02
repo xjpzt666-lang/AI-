@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v43.0 (三维封印 终极隐身版) ===");
+        log("=== Hook v44.0 (Socket 协议层核弹版 大结局) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,30 +72,17 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心：根据顶级逆向报告，精确封死输入与已读通道！
-        try { hookExactStateMethods(cl); } catch (Throwable ignored) {}
+        // ★ 核心：物理级截断长连接中的 Typing 与 Read 协议包！
+        try { hookSocketCommandBus(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // 【终极绝杀】源码级精确定位拦截 (Typing + Read)
+    // 【核弹级拦截】直接在 Socket 总线掐死特定命令包
     // ═══════════════════════════════════════════
-    private static void hookExactStateMethods(ClassLoader cl) {
+    private static void hookSocketCommandBus(ClassLoader cl) {
         // ----------------------------------------------------
-        // 1. 精确狙击“正在输入” (Typing) - 已验证成功
+        // 第一道防线：总线级拦截 b20.e.z(...)
         // ----------------------------------------------------
-        try {
-            Class<?> titleControllerClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
-            if (titleControllerClass != null) {
-                XposedBridge.hookAllMethods(titleControllerClass, "s0", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        param.setResult(null); 
-                        log("【隐身封印】成功拦截 TalkSingleTitleController.s0 (截断正在输入上报)");
-                    }
-                });
-            }
-        } catch (Throwable ignored) {}
-
         try {
             Class<?> b20eClass = XposedHelpers.findClassIfExists("b20.e", cl);
             if (b20eClass != null) {
@@ -103,49 +90,45 @@ public class ChatHook {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (param.args != null && param.args.length > 0 && param.args[0] != null) {
-                            if (param.args[0].getClass().getName().equals("tm.a")) {
-                                param.setResult(null);
-                                log("【隐身封印】成功拦截 b20.e.z 接收到的 tm.a 对象 (截断底层 Typing)");
+                            String packetClassName = param.args[0].getClass().getName();
+                            
+                            // 1. 狙击 "正在输入" 协议包 (tm.a)
+                            if (packetClassName.equals("tm.a")) {
+                                param.setResult(null); // 丢弃该帧
+                                log("【总线核弹】拦截长连接发包: tm.a (截断正在输入 - 命令 0x4017)");
+                                return;
+                            }
+                            
+                            // 2. 狙击 "单条已读 ACK" 协议包 (e20.c)
+                            if (packetClassName.equals("e20.c")) {
+                                param.setResult(null); // 丢弃该帧
+                                log("【总线核弹】拦截长连接发包: e20.c (截断已读回执 - 命令 0x4015)");
+                                return;
                             }
                         }
                     }
                 });
             }
-        } catch (Throwable ignored) {}
-
-        // ----------------------------------------------------
-        // 2. 终极狙击“已读回执” (Read Receipt) - 三维立体封杀
-        // ----------------------------------------------------
-        XC_MethodHook killReadHook = new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                // 统一强制结束方法执行，不抛异常，静默拦截
-                param.setResult(null);
-                log("【隐身封印】已切断已读泄露通道: " + param.method.getDeclaringClass().getSimpleName() + "." + param.method.getName());
-            }
-        };
-
-        try {
-            Class<?> z10aClass = XposedHelpers.findClassIfExists("z10.a", cl);
-            if (z10aClass != null) {
-                // 通道 1：全局会话未读清零 (最核心的泄露源) -> m(int, callback)
-                XposedBridge.hookAllMethods(z10aClass, "m", killReadHook);
-                // 通道 2：可见焦点列表拉取 (防链式触发) -> c0(int, callback)
-                XposedBridge.hookAllMethods(z10aClass, "c0", killReadHook);
-                // 通道 3：单条消息标已读 (防补充同步) -> f0(int, string, callback, boolean)
-                XposedBridge.hookAllMethods(z10aClass, "f0", killReadHook);
-            }
-            
-            // y10.b 是 z10.a 的实现类，为了双保险，一并封死
-            Class<?> y10bClass = XposedHelpers.findClassIfExists("y10.b", cl);
-            if (y10bClass != null) {
-                XposedBridge.hookAllMethods(y10bClass, "m", killReadHook);
-                XposedBridge.hookAllMethods(y10bClass, "c0", killReadHook);
-                XposedBridge.hookAllMethods(y10bClass, "f0", killReadHook);
-            }
         } catch (Throwable e) {
-            log("Read Receipt 狙击部署异常: " + e.getMessage());
+            log("总线拦截部署异常: " + e.getMessage());
         }
+
+        // ----------------------------------------------------
+        // 第二道防线：包体级拦截 e20.c.f() (直接破坏已读包的生成)
+        // ----------------------------------------------------
+        try {
+            Class<?> e20cClass = XposedHelpers.findClassIfExists("e20.c", cl);
+            if (e20cClass != null) {
+                XposedBridge.hookAllMethods(e20cClass, "f", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        // 强制返回空字节流，让协议彻底失效
+                        param.setResult(new byte[0]);
+                        log("【包体核弹】破坏 e20.c.f() 的组包逻辑 (让已读包变成废包)");
+                    }
+                });
+            }
+        } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
