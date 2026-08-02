@@ -50,13 +50,16 @@ public class ChatHook {
 
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
+    
+    // 用于记录已经打印过的开关，防止日志刷屏卡死手机
+    private static final Set<String> probeKeys = ConcurrentHashMap.newKeySet();
 
     // ═══════════════════════════════════════════
     // 安装入口
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v35.0 (全局VIP特权 + SDK底层断网版) ===");
+        log("=== Hook v36.0 (全量查水表探针版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,100 +75,93 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心 1：部署全局 VIP 特权与隐身设置
-        try { hookGodModePrivileges(cl); } catch (Throwable ignored) {}
-        
-        // ★ 核心 2：部署三大 IM SDK 底层静默狙击
-        try { hookGodModeIMSniper(cl); } catch (Throwable ignored) {}
+        // ★ 核心：撒下全量探针，抓出隐身开关的真名！
+        try { hookGodModeProbe(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // 神之手 1：拦截本地配置，强开 VIP 特权与全局隐身
+    // 神之手探针：找出隐身开关和底层大动脉的真名
     // ═══════════════════════════════════════════
-    private static void hookGodModePrivileges(ClassLoader cl) {
-        // 1. 拦截原生 SharedPreferences 缓存
-        try {
-            XposedHelpers.findAndHookMethod("android.app.SharedPreferencesImpl", cl, "getBoolean", String.class, boolean.class, new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    String key = (String) param.args[0];
-                    if (key != null) {
-                        String k = key.toLowerCase();
-                        
-                        // 强开官方的“隐藏已读”、“隐藏在线”、“隐藏正在输入”等 VIP 隐私特权
-                        if (k.contains("read_receipt") || k.contains("stealth") || k.contains("invisible") || k.contains("hide_online") || k.contains("typing") || k.contains("vip") || k.contains("privilege")) {
-                            param.setResult(true); 
-                            log("【VIP特权】SP拦截成功，已强行开启官方隐身配置: " + key);
-                        }
-                    }
-                }
-            });
-        } catch (Throwable e) {
-            log("【神之手】SP特权注入异常: " + e.getMessage());
-        }
-
-        // 2. 拦截腾讯 MMKV 高速缓存 (HelloTalk 极有可能用这个)
+    private static void hookGodModeProbe(ClassLoader cl) {
+        // 1. 监控 MMKV 高速缓存（重点怀疑对象）
         try {
             Class<?> mmkvClass = XposedHelpers.findClassIfExists("com.tencent.mmkv.MMKV", cl);
             if (mmkvClass != null) {
-                XposedBridge.hookAllMethods(mmkvClass, "decodeBool", new XC_MethodHook() {
+                XC_MethodHook mmkvHook = new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
                             String key = (String) param.args[0];
-                            if (key != null) {
-                                String k = key.toLowerCase();
-                                // 暴力破解 MMKV 里的 VIP 隐私开关
-                                if (k.contains("read_receipt") || k.contains("stealth") || k.contains("invisible") || k.contains("hide_online") || k.contains("typing") || k.contains("vip") || k.contains("privilege")) {
-                                    param.setResult(true);
-                                    log("【VIP特权】MMKV拦截成功，已强行开启官方隐身配置: " + key);
-                                }
+                            // 如果这个开关还没被记录过，就打印出来
+                            if (key != null && probeKeys.add("MMKV_" + key)) {
+                                log("【查水表-MMKV】App刚刚查询了开关: " + key);
                             }
                         }
                     }
-                });
+                };
+                // 监听它获取布尔值、整数、字符串的所有动作
+                XposedBridge.hookAllMethods(mmkvClass, "decodeBool", mmkvHook);
+                XposedBridge.hookAllMethods(mmkvClass, "decodeInt", mmkvHook);
+                XposedBridge.hookAllMethods(mmkvClass, "decodeString", mmkvHook);
+                XposedBridge.hookAllMethods(mmkvClass, "getBoolean", mmkvHook);
             }
         } catch (Throwable e) {
-            log("【神之手】MMKV特权注入异常: " + e.getMessage());
+            log("【查水表】MMKV探针部署失败: " + e.getMessage());
         }
-    }
 
-    // ═══════════════════════════════════════════
-    // 神之手 2：盲狙三大商业 IM SDK 发包接口 (定向断网)
-    // ═══════════════════════════════════════════
-    private static void hookGodModeIMSniper(ClassLoader cl) {
-        // 1. 强力切断 HelloTalk 业务层的 Online 状态上报
+        // 2. 监控 原生 SharedPreferences
         try {
-            Class<?> vmClass = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
-            XposedBridge.hookAllMethods(vmClass, "requestOnlineStatus", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    param.setResult(null); // 切断在线状态汇报
-                    log("【社交隐身】已物理切断业务层 Online 状态上报网线！");
+            Class<?> spClass = XposedHelpers.findClassIfExists("android.app.SharedPreferencesImpl", cl);
+            if (spClass != null) {
+                XC_MethodHook spHook = new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
+                            String key = (String) param.args[0];
+                            if (key != null && probeKeys.add("SP_" + key)) {
+                                log("【查水表-SP】App刚刚查询了开关: " + key);
+                            }
+                        }
+                    }
+                };
+                XposedBridge.hookAllMethods(spClass, "getBoolean", spHook);
+                XposedBridge.hookAllMethods(spClass, "getInt", spHook);
+                XposedBridge.hookAllMethods(spClass, "getString", spHook);
+            }
+        } catch (Throwable e) {}
+        
+        // 3. 监控 之前的疑似 IM 底层类 (y10.c 和 z10.a)
+        try {
+            Class<?> y10c = XposedHelpers.findClassIfExists("y10.c", cl);
+            if (y10c != null) {
+                for(Method m : y10c.getDeclaredMethods()){
+                    if(!java.lang.reflect.Modifier.isAbstract(m.getModifiers())) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook(){
+                            protected void beforeHookedMethod(MethodHookParam param) {
+                                if(probeKeys.add("y10_" + m.getName())) {
+                                    log("【查水表-输入法疑犯】y10.c 正在执行方法: " + m.getName());
+                                }
+                            }
+                        });
+                    }
                 }
-            });
-        } catch (Throwable ignored) {}
-
-        // 2. 狙击 融云 SDK (RongCloud)
-        try {
-            Class<?> rongClient = XposedHelpers.findClassIfExists("io.rong.imlib.RongIMClient", cl);
-            if (rongClient != null) {
-                XposedBridge.hookAllMethods(rongClient, "sendTypingStatus", new XC_MethodHook() {
-                    protected void beforeHookedMethod(MethodHookParam param) { param.setResult(null); }
-                });
-                XposedBridge.hookAllMethods(rongClient, "sendReadReceiptMessage", new XC_MethodHook() {
-                    protected void beforeHookedMethod(MethodHookParam param) { param.setResult(null); }
-                });
             }
         } catch (Throwable ignored) {}
-
-        // 3. 狙击 腾讯云 SDK (Tencent IM)
+        
         try {
-            Class<?> timManager = XposedHelpers.findClassIfExists("com.tencent.imsdk.v2.V2TIMMessageManager", cl);
-            if (timManager != null) {
-                XposedBridge.hookAllMethods(timManager, "markC2CMessageAsRead", new XC_MethodHook() {
-                    protected void beforeHookedMethod(MethodHookParam param) { param.setResult(null); }
-                });
+            Class<?> z10a = XposedHelpers.findClassIfExists("z10.a", cl);
+            if (z10a != null) {
+                for(Method m : z10a.getDeclaredMethods()){
+                    if(!java.lang.reflect.Modifier.isAbstract(m.getModifiers())) {
+                        XposedBridge.hookMethod(m, new XC_MethodHook(){
+                            protected void beforeHookedMethod(MethodHookParam param) {
+                                if(probeKeys.add("z10_" + m.getName())) {
+                                    log("【查水表-已读疑犯】z10.a 正在执行方法: " + m.getName());
+                                }
+                            }
+                        });
+                    }
+                }
             }
         } catch (Throwable ignored) {}
     }
