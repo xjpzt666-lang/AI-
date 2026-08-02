@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v28.0 (防误触加强草稿扫荡版) ===");
+        log("=== Hook v29.0 (全面隐身防社死终极版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -71,6 +71,50 @@ public class ChatHook {
         try { hookLang(cl); } catch (Throwable ignored) {}
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
+        
+        // ★ 新增：社交隐身拦截（套上防崩装甲）
+        try { hookPrivacy(cl); } catch (Throwable ignored) {}
+    }
+
+    // ═══════════════════════════════════════════
+    // 隐私保护：拦截已读回执 + 正在输入 (带防闪退装甲)
+    // ═══════════════════════════════════════════
+
+    private static void hookPrivacy(ClassLoader cl) {
+        // 1. 拦截已读回执
+        try {
+            // 尝试寻找混淆后的类，如果找不到会抛出异常被 catch 捕获，绝不闪退
+            Class<?> msgManagerClass = XposedHelpers.findClass("z10.a", cl);
+            XposedHelpers.findAndHookMethod(msgManagerClass, "b",
+                    int.class, String.class, "g10.a", boolean.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            // 强行阻断方法向下执行，对方将收不到已读回执
+                            param.setResult(null); 
+                            log("【社交隐身】成功拦截“已读”发送指令");
+                        }
+                    });
+        } catch (Throwable e) {
+            log("未找到已读回执类 (可能因HT版本更新): " + e.getMessage());
+        }
+
+        // 2. 拦截正在输入状态
+        try {
+            Class<?> convManagerClass = XposedHelpers.findClass("y10.c", cl);
+            XposedHelpers.findAndHookMethod(convManagerClass, "b",
+                    int.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            // 强行阻断方法向下执行，对方将看不到“正在输入...”
+                            param.setResult(null);
+                            log("【社交隐身】成功拦截“正在输入...”状态");
+                        }
+                    });
+        } catch (Throwable e) {
+            log("未找到状态汇报类 (可能因HT版本更新): " + e.getMessage());
+        }
     }
 
     // ═══════════════════════════════════════════
@@ -87,16 +131,13 @@ public class ChatHook {
                     if (text != null) {
                         String textStr = text.toString();
 
-                        // 1. 绝对放行：如果是我们在卡片上长按生成的特殊标签，绝不拦截！
                         if (clip.getDescription() != null && "HT_AI_Copy".equals(clip.getDescription().getLabel())) {
                             return;
                         }
 
-                        // 2. 识别特征：是否带有翻转图标？是否包含中文？
                         boolean hasIcon = textStr.endsWith(" 🌐") || textStr.endsWith(" 🔄");
                         boolean hasChinese = textStr.matches(".*[\\u4e00-\\u9fa5]+.*");
 
-                        // 3. 输入框保护：如果没有图标，也没有中文，极大可能是你在输入框手选的纯外文。绝对放行！
                         if (!hasIcon && !hasChinese) {
                             return;
                         }
@@ -595,7 +636,6 @@ public class ChatHook {
 
         final View[] cachedNativeSendBtn = new View[1];
 
-        // ★ 核心修复：独立出来的强制刷新逻辑
         Runnable enforceVisibility = new Runnable() {
             @Override
             public void run() {
@@ -631,7 +671,6 @@ public class ChatHook {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
             
             @Override public void afterTextChanged(Editable s) {
-                // 每次打字改变，强制将压制逻辑推入队列执行
                 edit.post(enforceVisibility);
             }
 
@@ -652,7 +691,6 @@ public class ChatHook {
             }
         });
 
-        // 🔥 主动防御机制：当插件加载完成时（处理你带中文草稿重进聊天页面的情况），主动扫荡一次显示状态！
         edit.postDelayed(enforceVisibility, 100);
         edit.postDelayed(enforceVisibility, 500);
 
