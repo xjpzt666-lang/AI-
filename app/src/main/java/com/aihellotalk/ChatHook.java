@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v29.0 (全面隐身防社死终极版) ===");
+        log("=== Hook v30.0 (黑洞代理隐身防社死版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,48 +72,77 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 新增：社交隐身拦截（套上防崩装甲）
+        // ★ 核心：部署社交隐身黑洞防线
         try { hookPrivacy(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // 隐私保护：拦截已读回执 + 正在输入 (带防闪退装甲)
+    // 隐私保护：拦截已读回执 + 正在输入 (动态黑洞代理法)
     // ═══════════════════════════════════════════
 
     private static void hookPrivacy(ClassLoader cl) {
-        // 1. 拦截已读回执
+        // ── 1. 终极拦截：已读回执 (ViewModel 黑洞替换法) ──
         try {
-            // 尝试寻找混淆后的类，如果找不到会抛出异常被 catch 捕获，绝不闪退
-            Class<?> msgManagerClass = XposedHelpers.findClass("z10.a", cl);
-            XposedHelpers.findAndHookMethod(msgManagerClass, "b",
-                    int.class, String.class, "g10.a", boolean.class, int.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            // 强行阻断方法向下执行，对方将收不到已读回执
-                            param.setResult(null); 
-                            log("【社交隐身】成功拦截“已读”发送指令");
+            Class<?> vmClass = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+            
+            // 使用 hookAllMethods 避开对混淆参数的硬匹配，确保绝对不会因版本更新而闪退
+            XposedBridge.hookAllMethods(vmClass, "registerMessageObserver", new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                    try {
+                        Object vm = param.thisObject;
+                        // 精准锁定控制“已读”的监听器字段
+                        Field f = vm.getClass().getDeclaredField("markMessageReadObserver");
+                        f.setAccessible(true);
+                        
+                        Object originalObserver = f.get(vm);
+                        if (originalObserver != null) {
+                            Class<?> observerInterface = f.getType();
+                            
+                            // 核心魔法：凭空捏造一个假的监听器（黑洞）
+                            Object blackHoleObserver = java.lang.reflect.Proxy.newProxyInstance(
+                                    cl,
+                                    new Class<?>[]{observerInterface},
+                                    (proxy, method, args) -> {
+                                        // 无论它调什么方法（onChanged 等），全部吞掉返回 null，彻底截断“已读”信号！
+                                        if (method.getName().equals("hashCode")) return System.identityHashCode(proxy);
+                                        if (method.getName().equals("equals")) return proxy == args[0];
+                                        if (method.getName().equals("toString")) return "HT_AI_BlackHole";
+                                        
+                                        log("【社交隐身】成功将一条[已读回执]吸入黑洞");
+                                        return null; 
+                                    }
+                            );
+                            
+                            // 把假的监听器替换进去，狸猫换太子
+                            f.set(vm, blackHoleObserver);
+                            log("【社交隐身】已读回执黑洞部署成功！");
                         }
-                    });
+                    } catch (Throwable e) {
+                        log("【社交隐身】替换已读监听器失败: " + e.getMessage());
+                    }
+                }
+            });
         } catch (Throwable e) {
-            log("未找到已读回执类 (可能因HT版本更新): " + e.getMessage());
+            log("【社交隐身】未找到 ViewModel 类: " + e.getMessage());
         }
 
-        // 2. 拦截正在输入状态
+        // ── 2. 广撒网拦截：正在输入状态 ──
         try {
             Class<?> convManagerClass = XposedHelpers.findClass("y10.c", cl);
-            XposedHelpers.findAndHookMethod(convManagerClass, "b",
-                    int.class, int.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            // 强行阻断方法向下执行，对方将看不到“正在输入...”
-                            param.setResult(null);
-                            log("【社交隐身】成功拦截“正在输入...”状态");
-                        }
-                    });
+            // 模糊匹配状态汇报方法
+            XposedBridge.hookAllMethods(convManagerClass, "b", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    // 如果传入的参数看着像 (chatId, status)，强行打断
+                    if (param.args.length == 2 && param.args[0] instanceof Integer && param.args[1] instanceof Integer) {
+                        param.setResult(null);
+                        log("【社交隐身】成功拦截“正在输入...”状态");
+                    }
+                }
+            });
         } catch (Throwable e) {
-            log("未找到状态汇报类 (可能因HT版本更新): " + e.getMessage());
+            log("【社交隐身】状态拦截预备失败 (正常现象，视HT版本而定)");
         }
     }
 
