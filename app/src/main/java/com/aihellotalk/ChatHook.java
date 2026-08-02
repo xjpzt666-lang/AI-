@@ -17,6 +17,7 @@ import android.widget.Toast;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -56,7 +57,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v31.0 (底层断网降维打击版) ===");
+        log("=== Hook v32.0 (X光显影寻踪版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,47 +73,55 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心：部署底层社交隐身防线
-        try { hookPrivacy(cl); } catch (Throwable ignored) {}
+        // ★ 核心：部署 X 光底层探测网
+        try { hookXRay(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // 隐私保护：无视参数类型，强制拦截已读与输入状态
+    // X光探测网：全量监听 ViewModel 和 InputUI，寻找真身
     // ═══════════════════════════════════════════
 
-    private static void hookPrivacy(ClassLoader cl) {
-        // ── 1. 强力绞杀：已读回执 ──
+    private static void hookXRay(ClassLoader cl) {
+        log("=== 正在部署底层 X 光探测网 ===");
+        
+        // 1. 监控 ChatDetailViewModel (负责聊天逻辑、已读回执)
         try {
-            Class<?> msgManagerClass = XposedHelpers.findClass("z10.a", cl);
-            // 无视 exact 参数匹配，只要叫 "b" 的方法全部拦截
-            XposedBridge.hookAllMethods(msgManagerClass, "b", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    // 已读请求的特征：参数大于等于 3 个
-                    if (param.args != null && param.args.length >= 3) {
-                        param.setResult(null); // 直接截断，不发网络请求
-                        log("【社交隐身】已成功拦截并销毁“已读”信号！");
-                    }
+            Class<?> vmClass = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+            for (Method m : vmClass.getDeclaredMethods()) {
+                // 排除系统抽象方法和原生方法，防止崩溃
+                if (Modifier.isAbstract(m.getModifiers()) || Modifier.isNative(m.getModifiers())) {
+                    continue;
                 }
-            });
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        // 过滤掉疯狂刷新的垃圾方法
+                        if (m.getName().equals("toString") || m.getName().equals("hashCode") || m.getName().equals("equals")) return;
+                        log("【X光-查已读】ViewModel 触发了: " + m.getName());
+                    }
+                });
+            }
         } catch (Throwable e) {
-            log("【社交隐身】已读回执拦截部署异常: " + e.getMessage());
+            log("X光部署失败VM: " + e.getMessage());
         }
 
-        // ── 2. 强力绞杀：正在输入状态 ──
+        // 2. 监控 ChatInputUIOperate (负责输入框行为、正在输入)
         try {
-            Class<?> convManagerClass = XposedHelpers.findClass("y10.c", cl);
-            // 无视 exact 参数匹配，只要叫 "b" 的方法全部拦截
-            XposedBridge.hookAllMethods(convManagerClass, "b", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    // 只要是调用状态更新的，一律截断
-                    param.setResult(null);
-                    log("【社交隐身】已成功拦截并销毁“正在输入...”信号！");
+            Class<?> inputClass = XposedHelpers.findClass("com.hellotalk.talk.detail.widget.input.ChatInputUIOperate", cl);
+            for (Method m : inputClass.getDeclaredMethods()) {
+                if (Modifier.isAbstract(m.getModifiers()) || Modifier.isNative(m.getModifiers())) {
+                    continue;
                 }
-            });
+                XposedBridge.hookMethod(m, new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        if (m.getName().equals("toString") || m.getName().equals("hashCode") || m.getName().equals("equals")) return;
+                        log("【X光-查输入】InputUI 触发了: " + m.getName());
+                    }
+                });
+            }
         } catch (Throwable e) {
-            log("【社交隐身】正在输入拦截部署异常: " + e.getMessage());
+            log("X光部署失败Input: " + e.getMessage());
         }
     }
 
