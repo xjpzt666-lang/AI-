@@ -17,7 +17,6 @@ import android.widget.Toast;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -57,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v32.0 (X光显影寻踪版) ===");
+        log("=== Hook v33.0 (身份欺骗绝对隐身版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -73,55 +72,74 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心：部署 X 光底层探测网
-        try { hookXRay(cl); } catch (Throwable ignored) {}
+        // ★ 核心：部署最新的“身份欺骗与监控掐断”防线
+        try { hookPrivacy(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // X光探测网：全量监听 ViewModel 和 InputUI，寻找真身
+    // 隐私保护：拦截已读回执 + 正在输入 (根据 X 光日志精确定制)
     // ═══════════════════════════════════════════
 
-    private static void hookXRay(ClassLoader cl) {
-        log("=== 正在部署底层 X 光探测网 ===");
-        
-        // 1. 监控 ChatDetailViewModel (负责聊天逻辑、已读回执)
+    private static void hookPrivacy(ClassLoader cl) {
+        // ── 1. 拦截正在输入状态 (身份欺骗法) ──
         try {
             Class<?> vmClass = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
-            for (Method m : vmClass.getDeclaredMethods()) {
-                // 排除系统抽象方法和原生方法，防止崩溃
-                if (Modifier.isAbstract(m.getModifiers()) || Modifier.isNative(m.getModifiers())) {
-                    continue;
-                }
-                XposedBridge.hookMethod(m, new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        // 过滤掉疯狂刷新的垃圾方法
-                        if (m.getName().equals("toString") || m.getName().equals("hashCode") || m.getName().equals("equals")) return;
-                        log("【X光-查已读】ViewModel 触发了: " + m.getName());
+            
+            // 只要输入框问“这是官方团队吗？”，我们一律回答“是！”
+            XposedBridge.hookAllMethods(vmClass, "isHelloTalkTeam", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+                    for (StackTraceElement element : stackTrace) {
+                        // 如果是输入框监听器调用的
+                        if (element.getClassName().contains("TextWatcher") || 
+                            element.getMethodName().contains("onTextChanged") ||
+                            element.getMethodName().contains("afterTextChanged") ||
+                            element.getMethodName().contains("showViewIfCan")) {
+                            
+                            param.setResult(true); // 强行设为 true
+                            log("【社交隐身】已拦截输入状态检测，成功伪装为官方团队！");
+                            return;
+                        }
                     }
-                });
-            }
+                }
+            });
+
+            // 只要输入框问“这是公众号吗？”，我们一律回答“是！”
+            XposedBridge.hookAllMethods(vmClass, "isPublicAccount", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
+                    for (StackTraceElement element : stackTrace) {
+                        if (element.getClassName().contains("TextWatcher") || 
+                            element.getMethodName().contains("onTextChanged") ||
+                            element.getMethodName().contains("afterTextChanged") ||
+                            element.getMethodName().contains("showViewIfCan")) {
+                            
+                            param.setResult(true); 
+                            return;
+                        }
+                    }
+                }
+            });
         } catch (Throwable e) {
-            log("X光部署失败VM: " + e.getMessage());
+            log("【社交隐身】输入状态欺骗部署异常: " + e.getMessage());
         }
 
-        // 2. 监控 ChatInputUIOperate (负责输入框行为、正在输入)
+        // ── 2. 拦截已读回执 (监听器源头掐断法) ──
         try {
-            Class<?> inputClass = XposedHelpers.findClass("com.hellotalk.talk.detail.widget.input.ChatInputUIOperate", cl);
-            for (Method m : inputClass.getDeclaredMethods()) {
-                if (Modifier.isAbstract(m.getModifiers()) || Modifier.isNative(m.getModifiers())) {
-                    continue;
+            Class<?> vmClass = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+            
+            // 直接掐断监控已读状态的注册器
+            XposedBridge.hookAllMethods(vmClass, "registerMessageObserver", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(null); // 强行阻断挂载
+                    log("【社交隐身】已成功切断“已读监控器”的挂载！");
                 }
-                XposedBridge.hookMethod(m, new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        if (m.getName().equals("toString") || m.getName().equals("hashCode") || m.getName().equals("equals")) return;
-                        log("【X光-查输入】InputUI 触发了: " + m.getName());
-                    }
-                });
-            }
+            });
         } catch (Throwable e) {
-            log("X光部署失败Input: " + e.getMessage());
+            log("【社交隐身】已读回执拦截部署异常: " + e.getMessage());
         }
     }
 
