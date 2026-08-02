@@ -56,15 +56,12 @@ public class ChatHook {
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
 
-    // HelloTalk 发送按钮引用
-    private static View helloTalkSendBtn = null;
-
     // ────────────────────────────────────────────
     // 安装入口
     // ────────────────────────────────────────────
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v28.0 (发送按钮隐藏 + AI自动看图版) ===");
+        log("=== Hook v29.0 (发送按钮setVisibility拦截 + AI看图版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -103,7 +100,6 @@ public class ChatHook {
                             if (orig != null && !orig.trim().isEmpty() && !orig.equals(textStr)) {
                                 param.args[0] = ClipData.newPlainText(
                                         clip.getDescription() != null ? clip.getDescription().getLabel() : "HT_AI", orig);
-                                log("【剪贴板拦截】已替换为纯外语原文");
                             }
                         } catch (Throwable ignored) {}
                     }
@@ -312,20 +308,20 @@ public class ChatHook {
         });
     }
 
-    // ★ 新增：自动下载对方图片 → Base64
+    // ★ 自动下载对方图片 → Base64
     private static String handleImageMessage(Object msg, ClassLoader cl) {
         try {
             Class<?> imageBeanClass = XposedHelpers.findClass(
                     "com.hellotalk.talk.detail.delegate.image.IMImageBean", cl);
             Object imageBean = XposedHelpers.callMethod(msg, "getMessageContent", imageBeanClass, true);
-            if (imageBean == null) { log("IMImageBean 为空"); return "[对方发送了一张图片]"; }
+            if (imageBean == null) return "[对方发送了一张图片]";
 
             String url = null;
             try { url = (String) XposedHelpers.callMethod(imageBean, "getCompressedUrl"); } catch (Exception ignored) {}
             if (url == null || url.isEmpty()) {
                 try { url = (String) XposedHelpers.callMethod(imageBean, "getUrl"); } catch (Exception ignored) {}
             }
-            if (url == null || url.isEmpty()) { log("图片URL为空"); return "[对方发送了一张图片]"; }
+            if (url == null || url.isEmpty()) return "[对方发送了一张图片]";
 
             OkHttpClient client = new OkHttpClient.Builder()
                     .connectTimeout(10, TimeUnit.SECONDS)
@@ -333,15 +329,12 @@ public class ChatHook {
                     .build();
             Request req = new Request.Builder().url(url).build();
             Response resp = client.newCall(req).execute();
-            if (!resp.isSuccessful() || resp.body() == null) {
-                log("图片下载失败 HTTP " + resp.code());
-                return "[对方发送了一张图片]";
-            }
+            if (!resp.isSuccessful() || resp.body() == null) return "[对方发送了一张图片]";
             byte[] bytes = resp.body().bytes();
             resp.close();
             String b64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
             log("图片自动抓取成功, size=" + bytes.length);
-            return "[IMAGE_BASE64:" + b64 + "]对方发来一张图片，请用中文描述这张图片的内容，并根据图片内容用最符合Ren的人设给出社交回复建议。";
+            return "[IMAGE_BASE64:" + b64 + "]对方发来一张图片，请用中文描述这张图片的内容，并根据图片内容用最符合对方人设的语气给出社交回复建议。";
         } catch (Exception e) {
             log("处理图片消息异常: " + e.getMessage());
             return "[对方发送了一张图片]";
@@ -395,7 +388,7 @@ public class ChatHook {
     }
 
     // ────────────────────────────────────────────
-    // 工具：按资源名递归查找 View
+    // 按资源名查找 View（旧版发送按钮用）
     // ────────────────────────────────────────────
 
     private static View findViewByEntryName(View root, String keyword) {
@@ -444,25 +437,83 @@ public class ChatHook {
     private static void tryAddBtn_New(View box) {
         EditText edit = findEditTextInView(box);
         if (edit != null) addTranslateBtn((ViewGroup) box, edit);
-        if (helloTalkSendBtn == null) {
-            try {
-                Field bf = box.getClass().getDeclaredField("binding");
-                bf.setAccessible(true);
-                Object binding = bf.get(box);
-                Field sf = binding.getClass().getDeclaredField("ivSend");
-                sf.setAccessible(true);
-                helloTalkSendBtn = (View) sf.get(binding);
-                log("已捕获 HelloTalk 发送按钮 (新版)");
-            } catch (Exception e) { log("新版发送按钮捕获失败: " + e.getMessage()); }
+
+        // ★ 捕获 ivSend 并 Hook setVisibility
+        try {
+            Field bf = box.getClass().getDeclaredField("binding");
+            bf.setAccessible(true);
+            Object binding = bf.get(box);
+            Field sf = binding.getClass().getDeclaredField("ivSend");
+            sf.setAccessible(true);
+            final View ivSend = (View) sf.get(binding);
+
+            // 打标签，防止重复 Hook
+            if (ivSend.getTag() != null && "HT_SEND_HOOKED".equals(ivSend.getTag().toString())) return;
+            ivSend.setTag("HT_SEND_HOOKED");
+
+            log("已捕获 HelloTalk 发送按钮 (新版)，正在 Hook setVisibility...");
+
+            XposedHelpers.findAndHookMethod(
+                    ivSend.getClass(),
+                    "setVisibility",
+                    int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            int visibility = (int) param.args[0];
+                            if (visibility == View.VISIBLE) {
+                                // 找到输入框检查是否有中文
+                                EditText et = findEditTextInView((View) ivSend.getParent());
+                                if (et != null) {
+                                    String txt = et.getText().toString();
+                                    if (!txt.trim().isEmpty() && AITranslator.isChineseOnly(txt.replace("@", ""))) {
+                                        param.args[0] = View.GONE;
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    });
+        } catch (Exception e) {
+            log("新版发送按钮 Hook 失败: " + e.getMessage());
         }
     }
 
     private static void tryAddBtn_Old(View box) {
         EditText edit = findEditTextInView(box);
         if (edit != null) addTranslateBtn((ViewGroup) box, edit);
-        if (helloTalkSendBtn == null) {
-            helloTalkSendBtn = findViewByEntryName(box, "send");
-            if (helloTalkSendBtn != null) log("已捕获 HelloTalk 发送按钮 (旧版)");
+
+        // ★ 旧版：查找发送按钮并 Hook setVisibility
+        try {
+            final View sendBtn = findViewByEntryName(box, "send");
+            if (sendBtn == null) return;
+
+            if (sendBtn.getTag() != null && "HT_SEND_HOOKED".equals(sendBtn.getTag().toString())) return;
+            sendBtn.setTag("HT_SEND_HOOKED");
+
+            log("已捕获 HelloTalk 发送按钮 (旧版)，正在 Hook setVisibility...");
+
+            XposedHelpers.findAndHookMethod(
+                    sendBtn.getClass(),
+                    "setVisibility",
+                    int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            int visibility = (int) param.args[0];
+                            if (visibility == View.VISIBLE) {
+                                EditText et = findEditTextInView(box);
+                                if (et != null) {
+                                    String txt = et.getText().toString();
+                                    if (!txt.trim().isEmpty() && AITranslator.isChineseOnly(txt.replace("@", ""))) {
+                                        param.args[0] = View.GONE;
+                                    }
+                                }
+                            }
+                        }
+                    });
+        } catch (Exception e) {
+            log("旧版发送按钮 Hook 失败: " + e.getMessage());
         }
     }
 
@@ -537,11 +588,8 @@ public class ChatHook {
                         btn.setText("译");
                         btn.setAlpha(0.93f);
                     }
-                    if (helloTalkSendBtn != null) helloTalkSendBtn.setVisibility(View.GONE);
                 } else {
                     if (!isTranslatingAPI) btn.setVisibility(View.GONE);
-                    if (helloTalkSendBtn != null && !currentText.trim().isEmpty())
-                        helloTalkSendBtn.setVisibility(View.VISIBLE);
                 }
             }
         });
