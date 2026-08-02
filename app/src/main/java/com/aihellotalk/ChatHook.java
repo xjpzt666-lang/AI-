@@ -50,16 +50,13 @@ public class ChatHook {
 
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
-    
-    // 用于记录已经打印过的开关，防止日志刷屏卡死手机
-    private static final Set<String> probeKeys = ConcurrentHashMap.newKeySet();
 
     // ═══════════════════════════════════════════
     // 安装入口
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v36.0 (全量查水表探针版) ===");
+        log("=== Hook v37.0 (精准截杀 behavior 版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -75,15 +72,14 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心：撒下全量探针，抓出隐身开关的真名！
-        try { hookGodModeProbe(cl); } catch (Throwable ignored) {}
+        // ★ 核心：精准拦截 X 光日志抓出的真身开关！
+        try { hookGodModePrivileges(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // 神之手探针：找出隐身开关和底层大动脉的真名
+    // 神之手：拦截 MMKV 缓存，利用官方逻辑实现物理隐身
     // ═══════════════════════════════════════════
-    private static void hookGodModeProbe(ClassLoader cl) {
-        // 1. 监控 MMKV 高速缓存（重点怀疑对象）
+    private static void hookGodModePrivileges(ClassLoader cl) {
         try {
             Class<?> mmkvClass = XposedHelpers.findClassIfExists("com.tencent.mmkv.MMKV", cl);
             if (mmkvClass != null) {
@@ -91,79 +87,32 @@ public class ChatHook {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
-                            String key = (String) param.args[0];
-                            // 如果这个开关还没被记录过，就打印出来
-                            if (key != null && probeKeys.add("MMKV_" + key)) {
-                                log("【查水表-MMKV】App刚刚查询了开关: " + key);
+                            String key = ((String) param.args[0]).toLowerCase();
+                            
+                            // 1. 致命一击：拦截“显示行为”开关（拼写错误的 key_showbeavior）
+                            if (key.contains("showbeavior") || key.contains("show_behavior") || key.contains("privacy")) {
+                                param.setResult(false); // 强制设为 false：拒绝广播我的任何行为（隐身+防已读）
+                                log("【降维隐身】已精准拦截 " + key + "，强行关闭状态广播！");
+                            }
+                            
+                            // 2. 顺手牵羊：白嫖 VIP 标识
+                            if (key.contains("vip_status_switch") || key.contains("talk_vip_tag") || key.contains("vip_dev_info_switch")) {
+                                param.setResult(true); // 强制设为 true：我是尊贵的 VIP
+                                log("【VIP特权】已强行点亮 VIP 开关: " + key);
                             }
                         }
                     }
                 };
-                // 监听它获取布尔值、整数、字符串的所有动作
+                
+                // 全量覆盖读取 Boolean 的方法
                 XposedBridge.hookAllMethods(mmkvClass, "decodeBool", mmkvHook);
-                XposedBridge.hookAllMethods(mmkvClass, "decodeInt", mmkvHook);
-                XposedBridge.hookAllMethods(mmkvClass, "decodeString", mmkvHook);
                 XposedBridge.hookAllMethods(mmkvClass, "getBoolean", mmkvHook);
+                
+                log("【神之手】已部署针对 showbeavior 的终极防线！");
             }
         } catch (Throwable e) {
-            log("【查水表】MMKV探针部署失败: " + e.getMessage());
+            log("【神之手】特权注入异常: " + e.getMessage());
         }
-
-        // 2. 监控 原生 SharedPreferences
-        try {
-            Class<?> spClass = XposedHelpers.findClassIfExists("android.app.SharedPreferencesImpl", cl);
-            if (spClass != null) {
-                XC_MethodHook spHook = new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
-                            String key = (String) param.args[0];
-                            if (key != null && probeKeys.add("SP_" + key)) {
-                                log("【查水表-SP】App刚刚查询了开关: " + key);
-                            }
-                        }
-                    }
-                };
-                XposedBridge.hookAllMethods(spClass, "getBoolean", spHook);
-                XposedBridge.hookAllMethods(spClass, "getInt", spHook);
-                XposedBridge.hookAllMethods(spClass, "getString", spHook);
-            }
-        } catch (Throwable e) {}
-        
-        // 3. 监控 之前的疑似 IM 底层类 (y10.c 和 z10.a)
-        try {
-            Class<?> y10c = XposedHelpers.findClassIfExists("y10.c", cl);
-            if (y10c != null) {
-                for(Method m : y10c.getDeclaredMethods()){
-                    if(!java.lang.reflect.Modifier.isAbstract(m.getModifiers())) {
-                        XposedBridge.hookMethod(m, new XC_MethodHook(){
-                            protected void beforeHookedMethod(MethodHookParam param) {
-                                if(probeKeys.add("y10_" + m.getName())) {
-                                    log("【查水表-输入法疑犯】y10.c 正在执行方法: " + m.getName());
-                                }
-                            }
-                        });
-                    }
-                }
-            }
-        } catch (Throwable ignored) {}
-        
-        try {
-            Class<?> z10a = XposedHelpers.findClassIfExists("z10.a", cl);
-            if (z10a != null) {
-                for(Method m : z10a.getDeclaredMethods()){
-                    if(!java.lang.reflect.Modifier.isAbstract(m.getModifiers())) {
-                        XposedBridge.hookMethod(m, new XC_MethodHook(){
-                            protected void beforeHookedMethod(MethodHookParam param) {
-                                if(probeKeys.add("z10_" + m.getName())) {
-                                    log("【查水表-已读疑犯】z10.a 正在执行方法: " + m.getName());
-                                }
-                            }
-                        });
-                    }
-                }
-            }
-        } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
