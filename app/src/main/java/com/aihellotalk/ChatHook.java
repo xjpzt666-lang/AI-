@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v33.0 (身份欺骗绝对隐身版) ===");
+        log("=== Hook v34.0 (全局VIP特权 + SDK底层断网版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,75 +72,119 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心：部署最新的“身份欺骗与监控掐断”防线
-        try { hookPrivacy(cl); } catch (Throwable ignored) {}
+        // ★ 核心 1：部署全局 VIP 特权与隐身设置
+        try { hookGodModePrivileges(cl); } catch (Throwable ignored) {}
+        
+        // ★ 核心 2：部署三大 IM SDK 底层静默狙击
+        try { hookGodModeIMSniper(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // 隐私保护：拦截已读回执 + 正在输入 (根据 X 光日志精确定制)
+    // 神之手 1：拦截本地配置，强开 VIP 特权与全局隐身
     // ═══════════════════════════════════════════
-
-    private static void hookPrivacy(ClassLoader cl) {
-        // ── 1. 拦截正在输入状态 (身份欺骗法) ──
+    private static void hookGodModePrivileges(ClassLoader cl) {
         try {
-            Class<?> vmClass = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
-            
-            // 只要输入框问“这是官方团队吗？”，我们一律回答“是！”
-            XposedBridge.hookAllMethods(vmClass, "isHelloTalkTeam", new XC_MethodHook() {
+            // 拦截所有布尔值权限查询 (开关类特权)
+            XposedHelpers.findAndHookMethod("android.app.SharedPreferencesImpl", cl, "getBoolean", String.class, boolean.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
-                    for (StackTraceElement element : stackTrace) {
-                        // 如果是输入框监听器调用的
-                        if (element.getClassName().contains("TextWatcher") || 
-                            element.getMethodName().contains("onTextChanged") ||
-                            element.getMethodName().contains("afterTextChanged") ||
-                            element.getMethodName().contains("showViewIfCan")) {
-                            
-                            param.setResult(true); // 强行设为 true
-                            log("【社交隐身】已拦截输入状态检测，成功伪装为官方团队！");
-                            return;
+                    String key = (String) param.args[0];
+                    if (key != null) {
+                        String k = key.toLowerCase();
+                        
+                        // 1. 解锁高级筛选、VIP 专属功能
+                        if (k.contains("vip") || k.contains("privilege") || k.contains("premium") || k.contains("svip") || k.contains("advanced_search")) {
+                            param.setResult(true);
+                            log("【VIP特权】已强行解锁高级功能节点: " + key);
                         }
-                    }
-                }
-            });
-
-            // 只要输入框问“这是公众号吗？”，我们一律回答“是！”
-            XposedBridge.hookAllMethods(vmClass, "isPublicAccount", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    StackTraceElement[] stackTrace = Thread.currentThread().getStackTrace();
-                    for (StackTraceElement element : stackTrace) {
-                        if (element.getClassName().contains("TextWatcher") || 
-                            element.getMethodName().contains("onTextChanged") ||
-                            element.getMethodName().contains("afterTextChanged") ||
-                            element.getMethodName().contains("showViewIfCan")) {
-                            
+                        
+                        // 2. 强开官方的“隐藏已读”、“隐藏在线”隐私设置
+                        if (k.contains("read_receipt") || k.contains("stealth") || k.contains("invisible") || k.contains("hide_online") || k.contains("typing")) {
                             param.setResult(true); 
-                            return;
+                            log("【隐私特权】已强行开启官方隐身/防已读设置: " + key);
                         }
                     }
                 }
             });
-        } catch (Throwable e) {
-            log("【社交隐身】输入状态欺骗部署异常: " + e.getMessage());
-        }
 
-        // ── 2. 拦截已读回执 (监听器源头掐断法) ──
-        try {
-            Class<?> vmClass = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
-            
-            // 直接掐断监控已读状态的注册器
-            XposedBridge.hookAllMethods(vmClass, "registerMessageObserver", new XC_MethodHook() {
+            // 拦截所有数字类权限查询 (等级类特权)
+            XposedHelpers.findAndHookMethod("android.app.SharedPreferencesImpl", cl, "getInt", String.class, int.class, new XC_MethodHook() {
                 @Override
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    param.setResult(null); // 强行阻断挂载
-                    log("【社交隐身】已成功切断“已读监控器”的挂载！");
+                    String key = (String) param.args[0];
+                    if (key != null) {
+                        String k = key.toLowerCase();
+                        if (k.contains("vip_level") || k.contains("privilege_level")) {
+                            param.setResult(99); // 尊贵满级 99 级
+                            log("【VIP特权】已将 VIP 等级锁定为 99");
+                        }
+                    }
                 }
             });
+            
+            log("【神之手】全局 SharedPreferences 伪装网已撒下！");
         } catch (Throwable e) {
-            log("【社交隐身】已读回执拦截部署异常: " + e.getMessage());
+            log("【神之手】特权注入异常: " + e.getMessage());
         }
+    }
+
+    // ═══════════════════════════════════════════
+    // 神之手 2：盲狙三大商业 IM SDK 发包接口 (定向断网)
+    // ═══════════════════════════════════════════
+    private static void hookGodModeIMSniper(ClassLoader cl) {
+        // 1. 狙击 融云 SDK (RongCloud)
+        try {
+            Class<?> rongClient = XposedHelpers.findClassIfExists("io.rong.imlib.RongIMClient", cl);
+            if (rongClient != null) {
+                XposedBridge.hookAllMethods(rongClient, "sendTypingStatus", new XC_MethodHook() {
+                    protected void beforeHookedMethod(MethodHookParam param) { param.setResult(null); }
+                });
+                XposedBridge.hookAllMethods(rongClient, "sendReadReceiptMessage", new XC_MethodHook() {
+                    protected void beforeHookedMethod(MethodHookParam param) { param.setResult(null); }
+                });
+                log("【SDK狙击】已成功锁定并切断 融云SDK 状态发送接口！");
+            }
+        } catch (Throwable ignored) {}
+
+        // 2. 狙击 网易云信 SDK (Netease NIM)
+        try {
+            Class<?> nimMsgService = XposedHelpers.findClassIfExists("com.netease.nimlib.sdk.msg.MsgService", cl);
+            if (nimMsgService != null) {
+                XposedBridge.hookAllMethods(nimMsgService, "sendCustomNotification", new XC_MethodHook() {
+                    protected void beforeHookedMethod(MethodHookParam param) { 
+                        // 网易的 typing 是 custom notification
+                        param.setResult(null); 
+                    }
+                });
+                XposedBridge.hookAllMethods(nimMsgService, "sendMessageReceipt", new XC_MethodHook() {
+                    protected void beforeHookedMethod(MethodHookParam param) { param.setResult(null); }
+                });
+                log("【SDK狙击】已成功锁定并切断 网易云信SDK 状态发送接口！");
+            }
+        } catch (Throwable ignored) {}
+
+        // 3. 狙击 腾讯云 SDK (Tencent IM)
+        try {
+            Class<?> timManager = XposedHelpers.findClassIfExists("com.tencent.imsdk.v2.V2TIMMessageManager", cl);
+            if (timManager != null) {
+                XposedBridge.hookAllMethods(timManager, "markC2CMessageAsRead", new XC_MethodHook() {
+                    protected void beforeHookedMethod(MethodHookParam param) { param.setResult(null); }
+                });
+                log("【SDK狙击】已成功锁定并切断 腾讯云SDK 状态发送接口！");
+            }
+        } catch (Throwable ignored) {}
+        
+        // 4. 强力切断 HelloTalk 业务层的 Online 状态上报
+        try {
+            Class<?> vmClass = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+            XposedBridge.hookAllMethods(vmClass, "requestOnlineStatus", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    param.setResult(null); // 切断在线状态汇报
+                    log("【社交隐身】已切断业务层 Online 状态上报！");
+                }
+            });
+        } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
