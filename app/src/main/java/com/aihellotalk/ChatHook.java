@@ -7,6 +7,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
 import android.text.Layout;
 import android.text.TextWatcher;
+import android.util.Base64;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -22,10 +23,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 
 public class ChatHook {
 
@@ -51,15 +56,15 @@ public class ChatHook {
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
 
-    // ★ HelloTalk 发送按钮引用
+    // HelloTalk 发送按钮引用
     private static View helloTalkSendBtn = null;
 
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
     // 安装入口
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v27.0 (发送按钮智能隐藏版) ===");
+        log("=== Hook v28.0 (发送按钮隐藏 + AI自动看图版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -76,9 +81,9 @@ public class ChatHook {
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
     }
 
-    // ═══════════════════════════════════════════
-    // 剪贴板拦截：保安白名单放行机制
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
+    // 剪贴板拦截
+    // ────────────────────────────────────────────
 
     private static void hookClipboard(ClassLoader cl) {
         XC_MethodHook clipHook = new XC_MethodHook() {
@@ -89,9 +94,7 @@ public class ChatHook {
                     CharSequence text = clip.getItemAt(0).getText();
                     if (text != null) {
                         String textStr = text.toString();
-                        if (clip.getDescription() != null && "HT_AI_Copy".equals(clip.getDescription().getLabel())) {
-                            return;
-                        }
+                        if (clip.getDescription() != null && "HT_AI_Copy".equals(clip.getDescription().getLabel())) return;
                         boolean hasIcon = textStr.endsWith(" 🌐") || textStr.endsWith(" 🔄");
                         boolean hasChinese = textStr.matches(".*[\\u4e00-\\u9fa5]+.*");
                         if (!hasIcon && !hasChinese) return;
@@ -99,8 +102,7 @@ public class ChatHook {
                             String orig = AITranslator.getForeignFuzzy(textStr);
                             if (orig != null && !orig.trim().isEmpty() && !orig.equals(textStr)) {
                                 param.args[0] = ClipData.newPlainText(
-                                        clip.getDescription() != null ? clip.getDescription().getLabel() : "HT_AI",
-                                        orig);
+                                        clip.getDescription() != null ? clip.getDescription().getLabel() : "HT_AI", orig);
                                 log("【剪贴板拦截】已替换为纯外语原文");
                             }
                         } catch (Throwable ignored) {}
@@ -108,13 +110,10 @@ public class ChatHook {
                 }
             }
         };
+        try { XposedHelpers.findAndHookMethod("android.content.ClipboardManager", cl, "setPrimaryClip", ClipData.class, clipHook); } catch (Throwable ignored) {}
         try {
-            XposedHelpers.findAndHookMethod("android.content.ClipboardManager", cl,
-                    "setPrimaryClip", ClipData.class, clipHook);
-        } catch (Throwable ignored) {}
-        try {
-            XposedHelpers.findAndHookMethod("android.text.ClipboardManager", cl,
-                    "setText", CharSequence.class, new XC_MethodHook() {
+            XposedHelpers.findAndHookMethod("android.text.ClipboardManager", cl, "setText", CharSequence.class,
+                    new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                             CharSequence text = (CharSequence) param.args[0];
@@ -125,9 +124,7 @@ public class ChatHook {
                                 if (!hasIcon && !hasChinese) return;
                                 try {
                                     String orig = AITranslator.getForeignFuzzy(textStr);
-                                    if (orig != null && !orig.trim().isEmpty() && !orig.equals(textStr)) {
-                                        param.args[0] = orig;
-                                    }
+                                    if (orig != null && !orig.trim().isEmpty() && !orig.equals(textStr)) param.args[0] = orig;
                                 } catch (Throwable ignored) {}
                             }
                         }
@@ -135,14 +132,14 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ═══════════════════════════════════════════
-    // 核心修复：精准拦截图标区域，不吞掉整条气泡
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
+    // 气泡翻转
+    // ────────────────────────────────────────────
 
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
         XposedHelpers.findAndHookMethod(
-                "com.hellotalk.lib.ui.text.view.HTCompatTextView",
-                cl, "onTouchEvent", MotionEvent.class,
+                "com.hellotalk.lib.ui.text.view.HTCompatTextView", cl,
+                "onTouchEvent", MotionEvent.class,
                 new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
@@ -174,14 +171,14 @@ public class ChatHook {
                 });
     }
 
-    // ═══════════════════════════════════════════
-    // 聊天打开时，记录当前 chatId / 用户资料
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
+    // 聊天打开
+    // ────────────────────────────────────────────
 
     private static void hookStartChat(ClassLoader cl) throws Exception {
         XposedHelpers.findAndHookMethod(
-                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
-                cl, "startChat", int.class, int.class,
+                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl,
+                "startChat", int.class, int.class,
                 new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
@@ -194,10 +191,7 @@ public class ChatHook {
                                 f.setAccessible(true);
                                 for (int i = 0; i < 6; i++) {
                                     Object chatUser = f.get(vm);
-                                    if (chatUser != null) {
-                                        updateFromChatUser(chatUser);
-                                        return;
-                                    }
+                                    if (chatUser != null) { updateFromChatUser(chatUser); return; }
                                     Thread.sleep(500);
                                 }
                             } catch (Exception ignored) {}
@@ -214,15 +208,14 @@ public class ChatHook {
             String userName = (String) XposedHelpers.callMethod(chatUser, "getUserName");
             latestNativeLang = nativeLang;
             latestNationality = nationality != null ? nationality : "";
-            latestPartnerName = (nickName != null && !nickName.isEmpty())
-                    ? nickName : (userName != null ? userName : "");
+            latestPartnerName = (nickName != null && !nickName.isEmpty()) ? nickName : (userName != null ? userName : "");
             if (!latestPartnerName.isEmpty()) currentPartnerName = latestPartnerName;
         } catch (Throwable ignored) {}
     }
 
-    // ═══════════════════════════════════════════
-    // 接收/发送消息文本拦截
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
+    // 接收/发送消息拦截（含图片自动抓取）
+    // ────────────────────────────────────────────
 
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
@@ -245,13 +238,21 @@ public class ChatHook {
                     try { text = (String) XposedHelpers.callMethod(bean, "getText"); } catch (Exception ignored) {}
                     String msgType = null;
                     try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Exception ignored) {}
+
+                    // ★ 图片消息：自动下载 → Base64 → 送 Vision
+                    if ((text == null || text.isEmpty())
+                            && ("image".equals(msgType) || "photo".equals(msgType))) {
+                        text = handleImageMessage(msg, cl);
+                        if (text == null) return;
+                    }
+
                     if (text == null || text.isEmpty()) {
-                        if ("image".equals(msgType) || "photo".equals(msgType)) text = "[对方发送了一张图片]";
-                        else if ("voice".equals(msgType) || "audio".equals(msgType)) text = "[对方发送了一条语音]";
+                        if ("voice".equals(msgType) || "audio".equals(msgType)) text = "[对方发送了一条语音]";
                         else if ("video".equals(msgType)) text = "[对方发送了一段视频]";
                         else if ("emoji".equals(msgType) || "sticker".equals(msgType)) text = "[对方发送了一个表情包]";
                         else return;
                     }
+
                     String mid = null;
                     try { mid = (String) XposedHelpers.callMethod(msg, "getMsgId"); } catch (Exception ignored) {}
                     if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
@@ -265,8 +266,7 @@ public class ChatHook {
                             if ("text".equals(rMsgType)) {
                                 Class<?> jsonBeanClass = XposedHelpers.findClass(
                                         "com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
-                                Object contentBean = XposedHelpers.callMethod(replyInfo,
-                                        "getMessageContent", jsonBeanClass, true);
+                                Object contentBean = XposedHelpers.callMethod(replyInfo, "getMessageContent", jsonBeanClass, true);
                                 if (contentBean != null) quotedText = (String) XposedHelpers.callMethod(contentBean, "getText");
                             } else if ("image".equals(rMsgType) || "photo".equals(rMsgType)) quotedText = "[图片]";
                             else quotedText = "[" + rMsgType + "]";
@@ -277,7 +277,7 @@ public class ChatHook {
                         if (isMine) AITranslator.appendHistory(thisChatId, mid, "assistant", text, sendTime, null);
                         else AITranslator.appendHistory(thisChatId, mid, "user", text, sendTime, quotedText);
                     }
-                    if (text.startsWith("[")) return;
+                    if (text.startsWith("[") && !text.startsWith("[IMAGE_BASE64:")) return;
                     if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
                     if (isMine) {
                         String myChineseDraft = AITranslator.getDraftFuzzy(text);
@@ -312,9 +312,45 @@ public class ChatHook {
         });
     }
 
-    // ═══════════════════════════════════════════
-    // 语言检测 Hook
-    // ═══════════════════════════════════════════
+    // ★ 新增：自动下载对方图片 → Base64
+    private static String handleImageMessage(Object msg, ClassLoader cl) {
+        try {
+            Class<?> imageBeanClass = XposedHelpers.findClass(
+                    "com.hellotalk.talk.detail.delegate.image.IMImageBean", cl);
+            Object imageBean = XposedHelpers.callMethod(msg, "getMessageContent", imageBeanClass, true);
+            if (imageBean == null) { log("IMImageBean 为空"); return "[对方发送了一张图片]"; }
+
+            String url = null;
+            try { url = (String) XposedHelpers.callMethod(imageBean, "getCompressedUrl"); } catch (Exception ignored) {}
+            if (url == null || url.isEmpty()) {
+                try { url = (String) XposedHelpers.callMethod(imageBean, "getUrl"); } catch (Exception ignored) {}
+            }
+            if (url == null || url.isEmpty()) { log("图片URL为空"); return "[对方发送了一张图片]"; }
+
+            OkHttpClient client = new OkHttpClient.Builder()
+                    .connectTimeout(10, TimeUnit.SECONDS)
+                    .readTimeout(15, TimeUnit.SECONDS)
+                    .build();
+            Request req = new Request.Builder().url(url).build();
+            Response resp = client.newCall(req).execute();
+            if (!resp.isSuccessful() || resp.body() == null) {
+                log("图片下载失败 HTTP " + resp.code());
+                return "[对方发送了一张图片]";
+            }
+            byte[] bytes = resp.body().bytes();
+            resp.close();
+            String b64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
+            log("图片自动抓取成功, size=" + bytes.length);
+            return "[IMAGE_BASE64:" + b64 + "]对方发来一张图片，请用中文描述这张图片的内容，并根据图片内容用最符合Ren的人设给出社交回复建议。";
+        } catch (Exception e) {
+            log("处理图片消息异常: " + e.getMessage());
+            return "[对方发送了一张图片]";
+        }
+    }
+
+    // ────────────────────────────────────────────
+    // 语言检测
+    // ────────────────────────────────────────────
 
     private static void hookLang(ClassLoader cl) throws Exception {
         Class<?> vm = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
@@ -333,9 +369,9 @@ public class ChatHook {
                 });
     }
 
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
     // 引用回复提取
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
 
     private static String getQuoteReplyText(View rootView) {
         if (rootView == null) return null;
@@ -358,9 +394,9 @@ public class ChatHook {
         return null;
     }
 
-    // ═══════════════════════════════════════════
-    // 按资源名查找 View（旧版发送按钮用）
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
+    // 工具：按资源名递归查找 View
+    // ────────────────────────────────────────────
 
     private static View findViewByEntryName(View root, String keyword) {
         if (root == null) return null;
@@ -378,9 +414,9 @@ public class ChatHook {
         return null;
     }
 
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
     // 输入框按钮注入
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
         Class<?> boxClass = XposedHelpers.findClass("com.hellotalk.chat.ui.ChatInputBoxView", cl);
@@ -408,8 +444,6 @@ public class ChatHook {
     private static void tryAddBtn_New(View box) {
         EditText edit = findEditTextInView(box);
         if (edit != null) addTranslateBtn((ViewGroup) box, edit);
-
-        // ★ 从 ChatInputUIOperate 的 binding 里拿 ivSend
         if (helloTalkSendBtn == null) {
             try {
                 Field bf = box.getClass().getDeclaredField("binding");
@@ -419,17 +453,13 @@ public class ChatHook {
                 sf.setAccessible(true);
                 helloTalkSendBtn = (View) sf.get(binding);
                 log("已捕获 HelloTalk 发送按钮 (新版)");
-            } catch (Exception e) {
-                log("新版发送按钮捕获失败: " + e.getMessage());
-            }
+            } catch (Exception e) { log("新版发送按钮捕获失败: " + e.getMessage()); }
         }
     }
 
     private static void tryAddBtn_Old(View box) {
         EditText edit = findEditTextInView(box);
         if (edit != null) addTranslateBtn((ViewGroup) box, edit);
-
-        // ★ 旧版输入框：按资源名搜索发送按钮
         if (helloTalkSendBtn == null) {
             helloTalkSendBtn = findViewByEntryName(box, "send");
             if (helloTalkSendBtn != null) log("已捕获 HelloTalk 发送按钮 (旧版)");
@@ -490,7 +520,6 @@ public class ChatHook {
             public void onTextChanged(CharSequence s, int st, int b, int c) {
                 if (s == null) return;
                 String currentText = s.toString();
-
                 if (isTranslatingAPI && currentText.contains("@")) {
                     AITranslator.cancelOngoingTranslation();
                     String cleanText = currentText.replace("@", "");
@@ -500,28 +529,19 @@ public class ChatHook {
                     edit.addTextChangedListener(this);
                     return;
                 }
-
                 String textWithoutAt = currentText.replace("@", "");
-
                 if (!currentText.trim().isEmpty() && AITranslator.isChineseOnly(textWithoutAt)) {
-                    // ★ 中文输入：显示"译"，隐藏发送按钮
                     if (!isTranslatingAPI) {
                         btn.setVisibility(View.VISIBLE);
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.93f);
                     }
-                    if (helloTalkSendBtn != null) {
-                        helloTalkSendBtn.setVisibility(View.GONE);
-                    }
+                    if (helloTalkSendBtn != null) helloTalkSendBtn.setVisibility(View.GONE);
                 } else {
-                    // ★ 非中文：隐藏"译"，恢复发送按钮
-                    if (!isTranslatingAPI) {
-                        btn.setVisibility(View.GONE);
-                    }
-                    if (helloTalkSendBtn != null && !currentText.trim().isEmpty()) {
+                    if (!isTranslatingAPI) btn.setVisibility(View.GONE);
+                    if (helloTalkSendBtn != null && !currentText.trim().isEmpty())
                         helloTalkSendBtn.setVisibility(View.VISIBLE);
-                    }
                 }
             }
         });
@@ -533,7 +553,6 @@ public class ChatHook {
             btn.setEnabled(false);
             btn.setText("...");
             btn.setAlpha(1.0f);
-
             String quoteText = null;
             try { quoteText = getQuoteReplyText(edit.getRootView()); } catch (Exception ignored) {}
             String textToTranslate = text;
@@ -545,10 +564,8 @@ public class ChatHook {
                 }
                 textToTranslate = "【我要回复的对方原话】：" + quoteText.trim() + "\n【我的回复】：" + text;
             }
-
             final String finalTextToTranslate = textToTranslate;
             final String rawChineseInput = text;
-
             new Thread(() -> {
                 try {
                     String targetLang = determineSmartTargetLang();
@@ -585,20 +602,19 @@ public class ChatHook {
                         btn.setText("译");
                         btn.setAlpha(0.88f);
                         String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-                        if (msg.contains("canceled") || msg.contains("socket closed")) {
+                        if (msg.contains("canceled") || msg.contains("socket closed"))
                             Toast.makeText(edit.getContext(), "🛑 翻译已急停，可重新编辑", Toast.LENGTH_SHORT).show();
-                        } else {
+                        else
                             Toast.makeText(edit.getContext(), "翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                        }
                     });
                 }
             }).start();
         });
     }
 
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
     // 智能目标语言
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
 
     private static String determineSmartTargetLang() {
         String nationality = latestNationality.toLowerCase();
@@ -649,9 +665,9 @@ public class ChatHook {
         }
     }
 
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
     // 版本选择器
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
 
     private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput) {
         if (result == null || result.trim().isEmpty()) {
@@ -671,16 +687,13 @@ public class ChatHook {
             for (String line : result.split("\n")) {
                 String trimmed = line.trim();
                 if (trimmed.isEmpty()) continue;
-                if (trimmed.contains("下半部分") || trimmed.contains("机器读取区")
-                        || trimmed.matches("^[=+\\-]{3,}.*$")) {
-                    inOptions = true;
-                    continue;
+                if (trimmed.contains("下半部分") || trimmed.contains("机器读取区") || trimmed.matches("^[=+\\-]{3,}.*$")) {
+                    inOptions = true; continue;
                 }
                 if (inOptions) opBuilder.append(trimmed).append("\n");
                 else {
                     if (trimmed.contains("|") && trimmed.matches("^[a-zA-Z\\d\\s\\p{Punct}\"“‘'].*\\|.*")) {
-                        inOptions = true;
-                        opBuilder.append(trimmed).append("\n");
+                        inOptions = true; opBuilder.append(trimmed).append("\n");
                     } else anBuilder.append(trimmed).append("\n\n");
                 }
             }
@@ -695,8 +708,7 @@ public class ChatHook {
                     || cleanLine.contains("【下半部分") || cleanLine.contains("机器读取区")
                     || cleanLine.contains("英文文本|符合Ren人设")) continue;
             if (cleanLine.contains("|")) {
-                cleanLine = cleanLine.replaceFirst(
-                        "^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\-\\d一二三四五]+[\\.\\)、：:\\s]*)", "").trim();
+                cleanLine = cleanLine.replaceFirst("^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\-\\d一二三四五]+[\\.\\)、：:\\s]*)", "").trim();
                 String[] parts = cleanLine.split("\\|");
                 String foreignText = parts[0].trim().replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
                 String chineseMean = parts.length > 1 ? parts[1].trim() : "";
@@ -800,7 +812,7 @@ public class ChatHook {
                         ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
                 if (clipboard != null) {
                     clipboard.setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", foreign.trim()));
-                    Toast.makeText(ctx, "✅ 已复制英文，可随时去其他 App 验证", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(ctx, "✅ 已复制英文", Toast.LENGTH_SHORT).show();
                 }
                 return true;
             });
@@ -809,9 +821,9 @@ public class ChatHook {
         dialog.show();
     }
 
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
     // 动态语言工具
-    // ═══════════════════════════════════════════
+    // ────────────────────────────────────────────
 
     private static String getDynamicLangCode(int langId) {
         if (langCodeMethod != null) {
@@ -826,10 +838,6 @@ public class ChatHook {
         }
         return "Unknown";
     }
-
-    // ═══════════════════════════════════════════
-    // 日志
-    // ═══════════════════════════════════════════
 
     private static void log(String msg) {
         XposedBridge.log("HT_AI " + msg);
