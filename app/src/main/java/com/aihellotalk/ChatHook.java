@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v37.0 (精准截杀 behavior 版) ===");
+        log("=== Hook v38.0 (海陆空三栖核弹版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -72,47 +72,122 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         
-        // ★ 核心：精准拦截 X 光日志抓出的真身开关！
+        // ★ 核心 1：【陆】全类型本地缓存绞杀
         try { hookGodModePrivileges(cl); } catch (Throwable ignored) {}
+        
+        // ★ 核心 2：【海】业务层监听器与状态发送物理切断
+        try { hookBusinessLayerNuke(cl); } catch (Throwable ignored) {}
+
+        // ★ 核心 3：【空】底层 WebSocket 发包嗅探拦截
+        try { hookWebSocketSniper(cl); } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // 神之手：拦截 MMKV 缓存，利用官方逻辑实现物理隐身
+    // 【陆】本地缓存绞杀：涵盖 Bool/Int/String 全类型
     // ═══════════════════════════════════════════
     private static void hookGodModePrivileges(ClassLoader cl) {
+        XC_MethodHook cacheHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                if (param.args == null || param.args.length == 0 || !(param.args[0] instanceof String)) return;
+                String key = ((String) param.args[0]).toLowerCase();
+                String mName = param.method.getName();
+                
+                // 应该返回 false / 0 的键（关闭行为展示）
+                boolean isHide = key.contains("showbeavior") || key.contains("show_behavior");
+                // 应该返回 true / 1 的键（开启隐私保护 / VIP特权）
+                boolean isVipOrPrivacy = key.contains("vip") || key.contains("privilege") || key.contains("privacy") || key.contains("stealth") || key.contains("hide_online");
+
+                if (isHide || isVipOrPrivacy) {
+                    if (mName.contains("Bool") || mName.equals("getBoolean")) {
+                        param.setResult(isVipOrPrivacy); // 如果是隐私/VIP就为true，如果是展示行为就为false
+                        log("【本地拦截】布尔值: " + key + " 强改 -> " + isVipOrPrivacy);
+                    } else if (mName.contains("Int") || mName.equals("getInt")) {
+                        param.setResult(isVipOrPrivacy ? 1 : 0);
+                        log("【本地拦截】整数值: " + key + " 强改 -> " + (isVipOrPrivacy ? 1 : 0));
+                    } else if (mName.contains("String") || mName.equals("getString")) {
+                        param.setResult(isVipOrPrivacy ? "1" : "0");
+                        log("【本地拦截】字符值: " + key + " 强改 -> " + (isVipOrPrivacy ? "1" : "0"));
+                    }
+                }
+            }
+        };
+
         try {
             Class<?> mmkvClass = XposedHelpers.findClassIfExists("com.tencent.mmkv.MMKV", cl);
             if (mmkvClass != null) {
-                XC_MethodHook mmkvHook = new XC_MethodHook() {
+                XposedBridge.hookAllMethods(mmkvClass, "decodeBool", cacheHook);
+                XposedBridge.hookAllMethods(mmkvClass, "decodeInt", cacheHook);
+                XposedBridge.hookAllMethods(mmkvClass, "decodeString", cacheHook);
+            }
+        } catch (Throwable ignored) {}
+
+        try {
+            Class<?> spClass = XposedHelpers.findClassIfExists("android.app.SharedPreferencesImpl", cl);
+            if (spClass != null) {
+                XposedBridge.hookAllMethods(spClass, "getBoolean", cacheHook);
+                XposedBridge.hookAllMethods(spClass, "getInt", cacheHook);
+                XposedBridge.hookAllMethods(spClass, "getString", cacheHook);
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    // ═══════════════════════════════════════════
+    // 【海】业务层物理拔线：切断已读监控器与在线状态上报
+    // ═══════════════════════════════════════════
+    private static void hookBusinessLayerNuke(ClassLoader cl) {
+        try {
+            Class<?> vmClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+            if (vmClass != null) {
+                // 掐断已读回执监控器
+                XposedBridge.hookAllMethods(vmClass, "registerMessageObserver", new XC_MethodHook() {
+                    protected void beforeHookedMethod(MethodHookParam param) { 
+                        param.setResult(null); 
+                        log("【业务拔线】已成功切断已读监控器 (registerMessageObserver)！");
+                    }
+                });
+                XposedBridge.hookAllMethods(vmClass, "getMessageReadLive", new XC_MethodHook() {
+                    protected void beforeHookedMethod(MethodHookParam param) { 
+                        param.setResult(null); 
+                        log("【业务拔线】已成功切断已读Live流 (getMessageReadLive)！");
+                    }
+                });
+                
+                // 掐断状态发送
+                XposedBridge.hookAllMethods(vmClass, "requestOnlineStatus", new XC_MethodHook() {
+                    protected void beforeHookedMethod(MethodHookParam param) { 
+                        param.setResult(null); 
+                        log("【业务拔线】已成功切断状态上报 (requestOnlineStatus)！");
+                    }
+                });
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    // ═══════════════════════════════════════════
+    // 【空】WebSocket 嗅探核弹：直接在网关层丢弃状态包
+    // ═══════════════════════════════════════════
+    private static void hookWebSocketSniper(ClassLoader cl) {
+        try {
+            // Android 绝大部分 App 的 WebSocket 都是 OkHttp 实现的
+            Class<?> realWsClass = XposedHelpers.findClassIfExists("okhttp3.internal.ws.RealWebSocket", cl);
+            if (realWsClass != null) {
+                XposedBridge.hookAllMethods(realWsClass, "send", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        if (param.args != null && param.args.length > 0 && param.args[0] instanceof String) {
-                            String key = ((String) param.args[0]).toLowerCase();
+                        if (param.args != null && param.args.length > 0 && param.args[0] != null) {
+                            String payload = param.args[0].toString().toLowerCase();
                             
-                            // 1. 致命一击：拦截“显示行为”开关（拼写错误的 key_showbeavior）
-                            if (key.contains("showbeavior") || key.contains("show_behavior") || key.contains("privacy")) {
-                                param.setResult(false); // 强制设为 false：拒绝广播我的任何行为（隐身+防已读）
-                                log("【降维隐身】已精准拦截 " + key + "，强行关闭状态广播！");
-                            }
-                            
-                            // 2. 顺手牵羊：白嫖 VIP 标识
-                            if (key.contains("vip_status_switch") || key.contains("talk_vip_tag") || key.contains("vip_dev_info_switch")) {
-                                param.setResult(true); // 强制设为 true：我是尊贵的 VIP
-                                log("【VIP特权】已强行点亮 VIP 开关: " + key);
+                            // 一旦侦测到往外发的包带有正在输入或已读特征
+                            if (payload.contains("typing") || payload.contains("read_status") || payload.contains("receipt")) {
+                                param.setResult(true); // 拦截！并骗系统说“发送成功了”
+                                log("【底层核弹】已在网关层成功拦截并销毁状态发包！");
                             }
                         }
                     }
-                };
-                
-                // 全量覆盖读取 Boolean 的方法
-                XposedBridge.hookAllMethods(mmkvClass, "decodeBool", mmkvHook);
-                XposedBridge.hookAllMethods(mmkvClass, "getBoolean", mmkvHook);
-                
-                log("【神之手】已部署针对 showbeavior 的终极防线！");
+                });
             }
-        } catch (Throwable e) {
-            log("【神之手】特权注入异常: " + e.getMessage());
-        }
+        } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
