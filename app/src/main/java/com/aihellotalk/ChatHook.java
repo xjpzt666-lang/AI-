@@ -56,7 +56,7 @@ public class ChatHook {
     // ═══════════════════════════════════════════
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v26.0 (终极零容错+剪贴板全面修复版) ===");
+        log("=== Hook v27.0 (防误触发送 + 剪贴板完全解禁终极版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -479,6 +479,35 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
+    // 安全查找原生发送按钮 (极速防卡死版)
+    // ═══════════════════════════════════════════
+    private static View findNativeSendButtonSafely(ViewGroup root) {
+        if (root == null) return null;
+        ArrayList<View> views = new ArrayList<>();
+        views.add(root);
+
+        for (int i = 0; i < views.size(); i++) {
+            View current = views.get(i);
+            try {
+                if (current.getId() != View.NO_ID) {
+                    String idName = current.getResources().getResourceEntryName(current.getId());
+                    if (idName != null && idName.toLowerCase().contains("send")) {
+                        return current; 
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            if (current instanceof ViewGroup) {
+                ViewGroup vg = (ViewGroup) current;
+                for (int j = 0; j < vg.getChildCount(); j++) {
+                    views.add(vg.getChildAt(j));
+                }
+            }
+        }
+        return null;
+    }
+
+    // ═══════════════════════════════════════════
     // 输入框按钮注入与权限解禁
     // ═══════════════════════════════════════════
 
@@ -566,6 +595,9 @@ public class ChatHook {
         layout.addView(btn, 0);
         layout.setTag("HT_AI_BTN");
 
+        final View[] cachedNativeSendBtn = new View[1];
+        final boolean[] hasSearchedSendBtn = new boolean[1];
+
         edit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
             @Override public void afterTextChanged(Editable s) {}
@@ -585,6 +617,11 @@ public class ChatHook {
                     return;
                 }
 
+                if (!hasSearchedSendBtn[0]) {
+                    hasSearchedSendBtn[0] = true;
+                    cachedNativeSendBtn[0] = findNativeSendButtonSafely(layout);
+                }
+
                 String textWithoutAt = currentText.replace("@", "");
                 if (!currentText.trim().isEmpty() && AITranslator.isChineseOnly(textWithoutAt)) {
                     if (!isTranslatingAPI) {
@@ -593,9 +630,15 @@ public class ChatHook {
                         btn.setText("译");
                         btn.setAlpha(0.93f);
                     }
+                    if (cachedNativeSendBtn[0] != null) {
+                        cachedNativeSendBtn[0].post(() -> cachedNativeSendBtn[0].setVisibility(View.GONE));
+                    }
                 } else {
                     if (!isTranslatingAPI) {
                         btn.setVisibility(View.GONE);
+                    }
+                    if (cachedNativeSendBtn[0] != null && !currentText.trim().isEmpty()) {
+                        cachedNativeSendBtn[0].post(() -> cachedNativeSendBtn[0].setVisibility(View.VISIBLE));
                     }
                 }
             }
@@ -786,7 +829,7 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 版本选择器 (V26 终极零容错+物理隔离版)
+    // 版本选择器 (物理切分零容错)
     // ═══════════════════════════════════════════
 
     private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput) {
@@ -804,7 +847,6 @@ public class ChatHook {
             analysisText = splitData[0].trim();
             optionsText = splitData[splitData.length - 1].trim();
         } else {
-            // 兜底：万一大模型连等号都忘了写，逐行扫描
             StringBuilder anBuilder = new StringBuilder();
             StringBuilder opBuilder = new StringBuilder();
             boolean inOptions = false;
@@ -820,7 +862,6 @@ public class ChatHook {
                 if (inOptions) {
                     opBuilder.append(trimmed).append("\n");
                 } else {
-                    // 如果还未进入选项区，但这一行极度像卡片（包含竖线且英文字母开头）
                     if (trimmed.contains("|") && trimmed.matches("^[a-zA-Z\\d\\s\\p{Punct}\"“‘'].*\\|.*")) {
                         inOptions = true;
                         opBuilder.append(trimmed).append("\n");
@@ -969,7 +1010,7 @@ public class ChatHook {
                 card.addView(tvChinese);
             }
 
-            // 短按：填入输入框，并彻底激活输入框的选中与剪切权限
+            // 短按：填入输入框
             card.setOnClickListener(v -> {
                 AITranslator.mySentDrafts.put(foreign.trim(), originalChineseInput.trim());
                 edit.setText(foreign);
@@ -986,7 +1027,7 @@ public class ChatHook {
                 dialog.dismiss();
             });
 
-            // 长按：在卡片弹窗里就能直接复制外文（使用带有特殊标签的 ClipData 突破保安拦截）
+            // 长按：直接复制外文（特殊标签白名单放行）
             card.setOnLongClickListener(v -> {
                 android.content.ClipboardManager clipboard = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
                 if (clipboard != null) {
