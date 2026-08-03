@@ -62,7 +62,6 @@ public class ChatHook {
     private static volatile String latestRenderedImagePath = null;
     private static volatile long latestRenderedImageTime = 0;
     
-    // ★ V59 防错认兜底相关字段
     private static volatile String currentQuotedImagePath = null;
     private static volatile boolean currentQuotedImageMissing = false;
 
@@ -81,7 +80,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v59.0 (暴力缓存提取 + 纯括号防污染 + 长按复制) ===");
+        log("=== Hook v60.0 (稳健状态快照 + 备用入口 + 强控AI输出) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -101,10 +100,6 @@ public class ChatHook {
         try { hookImageRenderLayer(cl); } catch (Throwable ignored) {}
         try { hookReplyMessageView(cl); } catch (Throwable ignored) {}
     }
-
-    // ==========================================
-    // ★ V59 核心新增辅助方法区 (暴力提取相关)
-    // ==========================================
 
     private static boolean isPureBracketQuery(String text) {
         if (text == null) return false;
@@ -206,7 +201,6 @@ public class ChatHook {
         return result;
     }
 
-    // ★ V59：底层暴力搜索本地图库核心引擎
     private static String bruteFindLocalImagePathFromBean(Object imageBean) {
         if (imageBean == null) return null;
 
@@ -238,7 +232,7 @@ public class ChatHook {
             }
         }
 
-        // 第二轮：最近图片记录里按 url/compressedUrl 特征找
+        // 第二轮：特征找
         synchronized (recentRenderedImages) {
             for (RenderedImageInfo info : recentRenderedImages) {
                 if (info == null || info.path == null) continue;
@@ -262,31 +256,11 @@ public class ChatHook {
                 if (compressedName != null && infoName.contains(compressedName)) return info.path;
             }
         }
-
-        // 第三轮：最近修改时间取 cache dir 中最新有效文件 (限制8秒内)
-        long bestTime = -1;
-        File best = null;
-        for (File f : files) {
-            if (f == null || !f.exists() || f.length() <= 0) continue;
-            long t = f.lastModified();
-            if (t > bestTime) {
-                bestTime = t;
-                best = f;
-            }
-        }
-        if (best != null) {
-            long now = System.currentTimeMillis();
-            if ((now - best.lastModified()) < 8000) {
-                return best.getAbsolutePath();
-            }
-        }
+        
+        // ★ 核心改动：第三轮兜底已删除，防止错乱绑定
 
         return null;
     }
-
-    // ==========================================
-    // ★ V59 核心 Hook 区
-    // ==========================================
 
     private static void hookUltimateStealth(ClassLoader cl) {
         try {
@@ -393,14 +367,13 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ★ V59: 重构的深度提取引擎 (替换了旧的 URL Map 匹配)
     private static void hookReplyMessageView(ClassLoader cl) {
         try {
             Class<?> replyViewClass = XposedHelpers.findClassIfExists(
                     "com.hellotalk.talk.detail.widget.ReplyMessageView", cl);
 
             if (replyViewClass != null) {
-                // 先保留原来的入口，用于识别当前回复的是不是图片
+                // 原有入口A
                 XposedBridge.hookAllMethods(replyViewClass, "A", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -414,14 +387,31 @@ public class ChatHook {
                         try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Throwable ignored) {}
 
                         if ("image".equals(msgType) || "photo".equals(msgType)) {
-                            // 这里只标记“当前回复对象是图片”，不做 latest 盲狙
                             currentQuotedImageMissing = true;
-                            log("【回复框状态】当前引用对象是图片，等待渲染层暴力反推本地路径");
+                            log("【回复框状态】A入口检测到引用图片");
                         }
                     }
                 });
+                
+                // ★ 核心改动：增加 public 备用入口 B，防止私有方法被混淆导致 hook 失败
+                XposedBridge.hookAllMethods(replyViewClass, "B", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            if (param.args != null && param.args.length >= 2) {
+                                Object msg = param.args[1];
+                                if (msg != null) {
+                                    String msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
+                                    if ("image".equals(msgType)) {
+                                        currentQuotedImageMissing = true;
+                                        log("【ReplyMessageView.B命中图片分支】");
+                                    }
+                                }
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                });
 
-                // 真正的暴力提取点：ReplyMessageView.setImageMessageImage(IMImageBean)
                 XposedBridge.hookAllMethods(replyViewClass, "setImageMessageImage", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -453,7 +443,25 @@ public class ChatHook {
                     "com.hellotalk.talk.detail.widget.reply.ReplyHolderView", cl);
 
             if (replyHolderClass != null) {
-                // 备用通道：ReplyHolderView.setImageMessageImage(IMImageBean)
+                // ★ 核心改动：增加 public 备用入口 f
+                XposedBridge.hookAllMethods(replyHolderClass, "f", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        try {
+                            if (param.args != null && param.args.length >= 2) {
+                                Object msg = param.args[1];
+                                if (msg != null) {
+                                    String msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
+                                    if ("image".equals(msgType)) {
+                                        currentQuotedImageMissing = true;
+                                        log("【ReplyHolderView.f命中图片分支】");
+                                    }
+                                }
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                });
+
                 XposedBridge.hookAllMethods(replyHolderClass, "setImageMessageImage", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -873,7 +881,13 @@ public class ChatHook {
             String quoteText = null;
             try { quoteText = getQuoteReplyText(edit.getRootView()); } catch (Exception ignored) {}
 
-            // ★ V59: 纯括号隔离机制完善
+            // ★ 核心改动：立即生成状态快照并清空全局变量，防止残留污染！
+            final String quotedImageSnapshot = currentQuotedImagePath;
+            final boolean quotedMissingSnapshot = currentQuotedImageMissing;
+
+            currentQuotedImagePath = null;
+            currentQuotedImageMissing = false;
+
             boolean pureBracketMode = isPureBracketQuery(text);
             String textToTranslate = text;
 
@@ -882,7 +896,7 @@ public class ChatHook {
                 if (orig != null) quoteText = orig;
                 textToTranslate = "【我要回复的对方原话】：" + quoteText.trim() + "\n【我的回复】：" + text;
             } else {
-                textToTranslate = text; // 纯括号模式绝不拼接引用文本
+                textToTranslate = text;
             }
             
             if (pureBracketMode) {
@@ -891,23 +905,21 @@ public class ChatHook {
 
             List<String> recentImages = getRecentImagePaths(3);
 
-            if (currentQuotedImagePath != null) {
-                File quoted = new File(currentQuotedImagePath);
+            // 用 snapshot 替代原来的全局变量
+            if (quotedImageSnapshot != null) {
+                File quoted = new File(quotedImageSnapshot);
                 if (quoted.exists() && quoted.length() > 0) {
-                    textToTranslate += "\n[QUOTED_LOCAL_IMAGE:" + currentQuotedImagePath + "]";
-                    log("【焦点图】已附带回复目标图: " + currentQuotedImagePath);
-                } else {
-                    currentQuotedImagePath = null;
-                    currentQuotedImageMissing = true;
+                    textToTranslate += "\n[QUOTED_LOCAL_IMAGE:" + quotedImageSnapshot + "]";
+                    log("【焦点图】已附带回复目标图: " + quotedImageSnapshot);
                 }
-            } else if (currentQuotedImageMissing) {
+            } else if (quotedMissingSnapshot) {
                 textToTranslate += "\n[QUOTED_IMAGE_BUT_PATH_MISSING]";
                 log("【焦点图缺失】回复的是图片，但本地路径未拿到，已显式告知AI");
             }
 
             for (String p : recentImages) {
                 if (p == null || p.isEmpty()) continue;
-                if (currentQuotedImagePath != null && currentQuotedImagePath.equals(p)) continue;
+                if (quotedImageSnapshot != null && quotedImageSnapshot.equals(p)) continue;
                 File f = new File(p);
                 if (f.exists() && f.length() > 0) {
                     textToTranslate += "\n[LOCAL_IMAGE:" + p + "]";
@@ -1130,7 +1142,7 @@ public class ChatHook {
                 dialog.dismiss();
             });
 
-            // ★ 长按选项卡，直接复制并提示
+            // ★ 长按复制保留
             card.setOnLongClickListener(v -> {
                 try {
                     android.content.ClipboardManager clipboard = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
