@@ -52,11 +52,12 @@ public class ChatHook {
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
 
-    // ★ 新增：用于临时缓存刚刚渲染的图片路径，防止上下文错乱
+    // ★ 全局图片雷达：只要屏幕上刚画过图片，这里就会死死记住它的路径！
     private static volatile String latestRenderedImagePath = null;
+    private static volatile long latestRenderedImageTime = 0;
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v53.0 (UI渲染层抓取多模态视觉) ===");
+        log("=== Hook v54.0 (时空穿梭视觉终极版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -153,34 +154,27 @@ public class ChatHook {
                 XposedBridge.hookAllMethods(imageMsgCardClass, "c", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                        // 该方法有多个重载，我们找符合我们要求的那个 (参数1: Bean, 参数2: String filePath)
                         if (param.args != null && param.args.length >= 2) {
-                            Object imageBean = param.args[0];
                             Object filePathObj = param.args[1];
-                            
                             if (filePathObj instanceof String) {
                                 String filePath = (String) filePathObj;
-                                
-                                // 确认文件真的存在且不为空
                                 File imgFile = new File(filePath);
+                                // 确认文件存在，直接存入全局雷达！
                                 if (imgFile.exists() && imgFile.length() > 0) {
                                     latestRenderedImagePath = filePath;
-                                    log("【UI视觉拦截】成功捕获落盘图片路径: " + filePath);
+                                    latestRenderedImageTime = System.currentTimeMillis();
+                                    log("【UI视觉雷达】锁定屏幕图片路径: " + filePath);
                                 }
                             }
                         }
                     }
                 });
-            } else {
-                log("【UI视觉拦截警告】找不到 ImageMsgCard 类！");
             }
-        } catch (Throwable t) {
-            log("UI视觉拦截异常: " + t.getMessage());
-        }
+        } catch (Throwable t) {}
     }
 
     // ═══════════════════════════════════════════
-    // 底层接收层：只记录基础文本，图片路径由 UI 层补偿
+    // 底层接收层：剥离复杂逻辑，回归最纯粹的历史记录
     // ═══════════════════════════════════════════
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
@@ -194,44 +188,26 @@ public class ChatHook {
                     if (bean == null) return;
 
                     int cidInt = 0;
-                    try {
-                        cidInt = (Integer) XposedHelpers.callMethod(msg, "getChatId");
-                    } catch (Exception ignored) {}
+                    try { cidInt = (Integer) XposedHelpers.callMethod(msg, "getChatId"); } catch (Exception ignored) {}
                     final String thisChatId = String.valueOf(cidInt);
                     currentChatId = thisChatId;
 
                     String senderName = null;
-                    try {
-                        senderName = (String) XposedHelpers.callMethod(msg, "getSenderName");
-                    } catch (Exception ignored) {}
+                    try { senderName = (String) XposedHelpers.callMethod(msg, "getSenderName"); } catch (Exception ignored) {}
                     if (senderName != null && !senderName.isEmpty() && !isMine) {
                         currentPartnerName = senderName;
                     }
 
                     String text = null;
-                    try {
-                        text = (String) XposedHelpers.callMethod(bean, "getText");
-                    } catch (Exception ignored) {}
+                    try { text = (String) XposedHelpers.callMethod(bean, "getText"); } catch (Exception ignored) {}
 
                     String msgType = null;
-                    try {
-                        msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
-                    } catch (Exception ignored) {}
+                    try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Exception ignored) {}
 
-                    // ★ 多模态标签注入：结合 UI 层捕获的最新路径
+                    // 纯粹记录动作，不再这里折腾路径（解决时空悖论）
                     if (text == null || text.isEmpty()) {
                         if ("image".equals(msgType) || "photo".equals(msgType)) {
-                            // 因为 UI 渲染可能比消息接收慢几毫秒，我们稍微等一下或者直接取最新的缓存
-                            if (latestRenderedImagePath != null) {
-                                text = "[LOCAL_IMAGE:" + latestRenderedImagePath + "]";
-                                log("【网络层匹配】成功将 UI 路径注入记录: " + latestRenderedImagePath);
-                                // 用完即抛，防止污染下一张图
-                                latestRenderedImagePath = null; 
-                            } else {
-                                // 兜底：如果 UI 还没来得及渲染，我们就标记一个待查标志
-                                // (AITranslator.java 里如果读不到，会忽略它，不至于让 AI 瞎编)
-                                text = "[对方发送了一张图片，等待系统渲染...]";
-                            }
+                            text = "[对方发送了一张图片]";
                         } else if ("voice".equals(msgType) || "audio".equals(msgType)) {
                             text = "[对方发送了一条语音]";
                         } else if ("video".equals(msgType)) {
@@ -244,17 +220,11 @@ public class ChatHook {
                     }
 
                     String mid = null;
-                    try {
-                        mid = (String) XposedHelpers.callMethod(msg, "getMsgId");
-                    } catch (Exception ignored) {}
-                    if (mid == null || mid.isEmpty()) {
-                        mid = "n_" + text.hashCode();
-                    }
+                    try { mid = (String) XposedHelpers.callMethod(msg, "getMsgId"); } catch (Exception ignored) {}
+                    if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
 
                     long sendTime = System.currentTimeMillis();
-                    try {
-                        sendTime = (Long) XposedHelpers.callMethod(msg, "getSendTime");
-                    } catch (Exception ignored) {}
+                    try { sendTime = (Long) XposedHelpers.callMethod(msg, "getSendTime"); } catch (Exception ignored) {}
 
                     String quotedText = null;
                     try {
@@ -262,13 +232,9 @@ public class ChatHook {
                         if (replyInfo != null && !isMine) {
                             String rMsgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
                             if ("text".equals(rMsgType)) {
-                                Class<?> jsonBeanClass = XposedHelpers.findClass(
-                                        "com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
-                                Object contentBean = XposedHelpers.callMethod(
-                                        replyInfo, "getMessageContent", jsonBeanClass, true);
-                                if (contentBean != null) {
-                                    quotedText = (String) XposedHelpers.callMethod(contentBean, "getText");
-                                }
+                                Class<?> jsonBeanClass = XposedHelpers.findClass("com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
+                                Object contentBean = XposedHelpers.callMethod(replyInfo, "getMessageContent", jsonBeanClass, true);
+                                if (contentBean != null) quotedText = (String) XposedHelpers.callMethod(contentBean, "getText");
                             } else {
                                 quotedText = "[" + rMsgType + "]";
                             }
@@ -277,11 +243,8 @@ public class ChatHook {
 
                     boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
                     if (isNewMessage) {
-                        if (isMine) {
-                            AITranslator.appendHistory(thisChatId, mid, "assistant", text, sendTime, null);
-                        } else {
-                            AITranslator.appendHistory(thisChatId, mid, "user", text, sendTime, quotedText);
-                        }
+                        if (isMine) AITranslator.appendHistory(thisChatId, mid, "assistant", text, sendTime, null);
+                        else AITranslator.appendHistory(thisChatId, mid, "user", text, sendTime, quotedText);
                     }
 
                     if (text.startsWith("[")) return;
@@ -289,17 +252,13 @@ public class ChatHook {
 
                     if (isMine) {
                         String myChineseDraft = AITranslator.getDraftFuzzy(text);
-                        if (myChineseDraft != null) {
-                            AITranslator.cacheResult(mid, text, myChineseDraft);
-                        }
+                        if (myChineseDraft != null) AITranslator.cacheResult(mid, text, myChineseDraft);
                         return;
                     }
 
                     String[] cached = AITranslator.getCached(mid);
                     if (cached != null) {
-                        try {
-                            XposedHelpers.callMethod(bean, "setText", cached[1] + " 🔄");
-                        } catch (Exception ignored) {}
+                        try { XposedHelpers.callMethod(bean, "setText", cached[1] + " 🔄"); } catch (Exception ignored) {}
                         return;
                     }
 
@@ -314,9 +273,7 @@ public class ChatHook {
                             String t = AITranslator.toChinese(finalText, thisChatId);
                             if (t != null && !t.trim().isEmpty() && !t.equals(finalText)) {
                                 AITranslator.cacheResult(finalMid, finalText, t);
-                                try {
-                                    XposedHelpers.callMethod(finalBean, "setText", t + " 🔄");
-                                } catch (Exception ignored) {}
+                                try { XposedHelpers.callMethod(finalBean, "setText", t + " 🔄"); } catch (Exception ignored) {}
                             }
                         } catch (Exception ignored) {
                         } finally {
@@ -625,6 +582,24 @@ public class ChatHook {
                 String orig = AITranslator.getForeignFuzzy(quoteText);
                 if (orig != null) quoteText = orig;
                 textToTranslate = "【我要回复的对方原话】：" + quoteText.trim() + "\n【我的回复】：" + text;
+            }
+
+            // ★ 视觉绝杀：点按钮的一瞬间，把刚看到的图片强行塞给模型！
+            if (latestRenderedImagePath != null) {
+                File imgFile = new File(latestRenderedImagePath);
+                // 只有在一两分钟内刚刚渲染出来的图，或者是你明确打括号提问时，才带图
+                boolean isRecent = (System.currentTimeMillis() - latestRenderedImageTime) < 120000;
+                boolean isAsking = textToTranslate.contains("(") || textToTranslate.contains("（");
+                
+                if (imgFile.exists() && imgFile.length() > 0 && (isRecent || isAsking)) {
+                    textToTranslate += "\n[LOCAL_IMAGE:" + latestRenderedImagePath + "]";
+                    log("【视觉强绑定】已将屏幕图片拼接到本次翻译请求中");
+                    
+                    // 如果你不是在问问题，只是正常聊天带了一句翻译，用完就清空，免得下句话还带图浪费流量
+                    if (!isAsking) {
+                        latestRenderedImagePath = null;
+                    }
+                }
             }
 
             final String finalTextToTranslate = textToTranslate;
