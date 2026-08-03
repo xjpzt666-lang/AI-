@@ -159,7 +159,7 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // 好友信息与语言判断 (保持不变)
+    // 好友信息与语言判断
     // ═══════════════════════════════════════════
 
     public static void loadFriends() {
@@ -203,6 +203,36 @@ public class AITranslator {
             if (friendsData.has(chatId)) return friendsData.getJSONObject(chatId).optString("lang", "en");
         } catch (JSONException ignored) {}
         return "en";
+    }
+
+    public static String getFriendName(String chatId) {
+        try {
+            if (friendsData.has(chatId)) return friendsData.getJSONObject(chatId).optString("name", chatId);
+        } catch (JSONException ignored) {
+        }
+        return chatId;
+    }
+
+    public static JSONArray getAllFriends() {
+        JSONArray list = new JSONArray();
+        try {
+            JSONArray ids = friendsData.names();
+            if (ids == null) return list;
+            for (int i = 0; i < ids.length(); i++) {
+                String id = ids.getString(i);
+                JSONObject info = friendsData.getJSONObject(id);
+                JSONObject item = new JSONObject();
+                item.put("id", id);
+                item.put("name", info.optString("name", id));
+                item.put("lang", info.optString("lang", "en"));
+                item.put("lastTime", info.optLong("lastTime", 0));
+                JSONArray hist = loadHistory(id);
+                item.put("count", hist.length());
+                list.put(item);
+            }
+        } catch (JSONException ignored) {
+        }
+        return list;
     }
 
     public static boolean containsJapanese(String s) {
@@ -314,6 +344,8 @@ public class AITranslator {
 
             int maxChatMessages = 15;
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
+            boolean hasContext = false;
+
             for (int i = startIdx; i < fullHistory.length(); i++) {
                 JSONObject msg = fullHistory.getJSONObject(i);
                 String role = msg.optString("role", "");
@@ -321,11 +353,18 @@ public class AITranslator {
                 if (content != null && content.equals(text)) continue;
                 if ("user".equals(role)) {
                     scriptBuilder.append("对方: ").append(content).append("\n");
+                    hasContext = true;
                 } else if ("assistant".equals(role)) {
                     scriptBuilder.append("我: ").append(content).append("\n");
+                    hasContext = true;
                 } else if ("system".equals(role) && content.contains("[LOCAL_IMAGE:")) {
                     scriptBuilder.append("我(注入行为): ").append(content).append("\n");
+                    hasContext = true;
                 }
+            }
+
+            if (!hasContext) {
+                scriptBuilder.append("（暂无有效上下文）\n");
             }
 
             scriptBuilder.append("\n【请翻译以下最新外语消息】\n").append(text);
@@ -333,6 +372,21 @@ public class AITranslator {
             return callChatMessages(messages);
         } catch (JSONException e) {
             return callChatSimple(receivePrompt + "\n\n需要翻译的外语消息：\n" + text);
+        }
+    }
+
+    public static String fromChinese(String text, String lang) throws IOException {
+        text = text.trim();
+        if (text.isEmpty()) return text;
+        String prompt = "把以下中文翻译成" + lang + "：" + text;
+        return callChatSimple(prompt);
+    }
+
+    public static String translateTest(String text, String lang) throws IOException {
+        if (isChineseOnly(text)) {
+            return callChatSimple("把以下中文翻译成" + lang + "：" + text);
+        } else {
+            return toChinese(text, "0");
         }
     }
 
@@ -407,7 +461,7 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // 网络层请求 (保持不变)
+    // 网络层请求
     // ═══════════════════════════════════════════
 
     private static String callChatSimple(String prompt) throws IOException {
@@ -501,7 +555,7 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // 缓存与其他功能层 (保持不变)
+    // 缓存与其他功能层
     // ═══════════════════════════════════════════
 
     private static void loadCache() {
@@ -625,6 +679,10 @@ public class AITranslator {
         if (promptUK.isEmpty()) promptUK = "你是社交嘴替。把中文转成地道乌克兰语口语，4版本。格式：外文|中文大意|标签。";
         if (promptKO.isEmpty()) promptKO = "你是社交嘴替。把中文转成地道韩语口语，4版本。格式：外文|中文大意|标签。";
         if (promptES.isEmpty()) promptES = "你是社交嘴替。把中文转成地道西班牙语口语，4版本。格式：外文|中文大意|标签。";
+    }
+
+    public static void savePrompts(String zh, String en, String ru, String uk) {
+        receivePrompt = zh; promptEN = en; promptRU = ru; promptUK = uk;
     }
 
     public static void savePrompts(String zh, String en, String ru, String uk, String ko, String es) {
