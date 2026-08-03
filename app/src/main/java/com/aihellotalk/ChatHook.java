@@ -22,8 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -54,7 +52,7 @@ public class ChatHook {
     private static Method langNameMethod = null;
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v50.0 (消息与本地路径绝对绑定版) ===");
+        log("=== Hook v51.0 (官方Getter直取图片URL多模态完全体) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -104,45 +102,30 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 【核心改动】从当前消息对象内部直接提取本地路径或URL，绝不张冠李戴
+    // 【核心】利用官方 IMImageBean.getUrl() 精准提取图片 URL
     // ═══════════════════════════════════════════
-    private static String extractPathFromMessageBean(Object msg, Object bean) {
+    private static String extractImageUrlFromMessage(Object msg, ClassLoader cl) {
         try {
-            // 1. 尝试从消息的原始 JSON 中直接精准正则提取 localPath / url
-            String json = null;
-            try {
-                json = (String) XposedHelpers.callMethod(msg, "getMsgContentJson$lib_im_release");
-            } catch (Throwable t) {
-                try {
-                    json = (String) XposedHelpers.getObjectField(msg, "msgContentJson");
-                } catch (Throwable ignored) {}
-            }
-
-            if (json != null && !json.isEmpty()) {
-                Pattern pattern = Pattern.compile("\"(?:localPath|localpath|url|originalUrl|originUrl|fileUrl)\"\\s*:\\s*\"([^\"]+)\"");
-                Matcher matcher = pattern.matcher(json);
-                if (matcher.find()) {
-                    String found = matcher.group(1);
-                    if (found != null && !found.isEmpty()) {
-                        return found.replace("\\/", "/");
+            Class<?> imageBeanClass = XposedHelpers.findClassIfExists(
+                    "com.hellotalk.talk.detail.delegate.image.IMImageBean", cl);
+            if (imageBeanClass != null) {
+                Object imageBean = XposedHelpers.callMethod(msg, "getMessageContent", imageBeanClass, false);
+                if (imageBean != null) {
+                    // 优先尝试获取原图 URL
+                    String url = (String) XposedHelpers.callMethod(imageBean, "getUrl");
+                    if (url == null || url.trim().isEmpty()) {
+                        // 降级尝试压缩图 URL
+                        url = (String) XposedHelpers.callMethod(imageBean, "getCompressedUrl");
+                    }
+                    if (url != null && !url.trim().isEmpty()) {
+                        log("【多模态视觉】成功通过 IMImageBean 拿到图片 URL: " + url);
+                        return url.trim();
                     }
                 }
             }
-
-            // 2. 如果 JSON 没命中，直接通过反射扫描当前这条消息对应的 bean 内部字段
-            if (bean != null) {
-                for (Field f : bean.getClass().getDeclaredFields()) {
-                    f.setAccessible(true);
-                    Object val = f.get(bean);
-                    if (val instanceof String) {
-                        String valStr = (String) val;
-                        if ((valStr.startsWith("/") || valStr.startsWith("http")) && (valStr.contains("image") || valStr.contains("cache") || valStr.contains("file") || valStr.endsWith(".0") || valStr.endsWith(".jpg") || valStr.endsWith(".png"))) {
-                            return valStr;
-                        }
-                    }
-                }
-            }
-        } catch (Throwable ignored) {}
+        } catch (Throwable t) {
+            log("提取 IMImageBean URL 异常: " + t.getMessage());
+        }
         return null;
     }
 
@@ -182,13 +165,12 @@ public class ChatHook {
                         msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
                     } catch (Exception ignored) {}
 
-                    // ★ 核心：精准提取当前这条消息绑定的图片路径
+                    // ★ 核心：精准识别 "image" 类型，通过官方 Bean 提取图片链接注入上下文
                     if (text == null || text.isEmpty()) {
-                        if ("image".equals(msgType) || "photo".equals(msgType) || bean.getClass().getName().toLowerCase().contains("image")) {
-                            String imgPath = extractPathFromMessageBean(msg, bean);
-                            if (imgPath != null) {
-                                text = "[对方发送了一张图片 | Path: " + imgPath + " ]";
-                                log("【精准多模态】成功绑定当前消息图片路径: " + imgPath);
+                        if ("image".equals(msgType)) {
+                            String imgUrl = extractImageUrlFromMessage(msg, cl);
+                            if (imgUrl != null) {
+                                text = "[对方发送了一张图片 | URL: " + imgUrl + " ]";
                             } else {
                                 text = "[对方发送了一张图片]";
                             }
