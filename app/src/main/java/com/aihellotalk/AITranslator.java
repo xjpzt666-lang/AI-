@@ -44,7 +44,6 @@ public class AITranslator {
     public static final Map<String, String[]> cache = new ConcurrentHashMap<>();
     public static final Map<String, String> foreignToChinese = new ConcurrentHashMap<>();
     public static final Map<String, String> chineseToForeign = new ConcurrentHashMap<>();
-
     public static final Map<String, String> mySentDrafts = new ConcurrentHashMap<>();
 
     private static File cacheFile;
@@ -62,9 +61,9 @@ public class AITranslator {
 
     private static final Object fileLock = new Object();
 
-    private static final Pattern JAPANESE_PATTERN = Pattern.compile(
-            "[\\u3040-\\u30FF\\uFF65-\\uFF9F\\u30FC]+"
-    );
+    private static final Pattern JAPANESE_PATTERN = Pattern.compile("[\\u3040-\\u30FF\\uFF65-\\uFF9F\\u30FC]+");
+    private static final Pattern LOCAL_IMAGE_PATTERN = Pattern.compile("\\[LOCAL_IMAGE:(.*?)\\]");
+    private static final Pattern QUOTED_LOCAL_IMAGE_PATTERN = Pattern.compile("\\[QUOTED_LOCAL_IMAGE:(.*?)\\]");
 
     public static void init(String key, String url, String m) {
         apiKey = key;
@@ -99,8 +98,7 @@ public class AITranslator {
             try {
                 client.dispatcher().cancelAll();
                 Log.i(TAG, "已触发急停：切断所有底层翻译请求");
-            } catch (Exception ignored) {
-            }
+            } catch (Exception ignored) {}
         }
     }
 
@@ -143,6 +141,100 @@ public class AITranslator {
             }
         }
         return inSampleSize;
+    }
+
+    private static class ParsedVisualInput {
+        String cleanText;
+        List<String> contextImagePaths = new ArrayList<>();
+        List<String> quotedImagePaths = new ArrayList<>();
+    }
+
+    private static ParsedVisualInput parseVisualMarkers(String content) {
+        ParsedVisualInput result = new ParsedVisualInput();
+        if (content == null) {
+            result.cleanText = "";
+            return result;
+        }
+
+        String working = content;
+
+        Matcher quotedMatcher = QUOTED_LOCAL_IMAGE_PATTERN.matcher(working);
+        StringBuffer quotedSb = new StringBuffer();
+        while (quotedMatcher.find()) {
+            String path = quotedMatcher.group(1).trim();
+            if (!path.isEmpty()) result.quotedImagePaths.add(path);
+            quotedMatcher.appendReplacement(quotedSb, "[系统提示：当前回复目标图已附带]");
+        }
+        quotedMatcher.appendTail(quotedSb);
+        working = quotedSb.toString();
+
+        Matcher localMatcher = LOCAL_IMAGE_PATTERN.matcher(working);
+        StringBuffer localSb = new StringBuffer();
+        while (localMatcher.find()) {
+            String path = localMatcher.group(1).trim();
+            if (!path.isEmpty()) result.contextImagePaths.add(path);
+            localMatcher.appendReplacement(localSb, "[系统提示：背景上下文图片已附带]");
+        }
+        localMatcher.appendTail(localSb);
+
+        result.cleanText = localSb.toString();
+        return result;
+    }
+
+    private static JSONObject createTextPart(String text) throws JSONException {
+        JSONObject txt = new JSONObject();
+        txt.put("type", "text");
+        txt.put("text", text);
+        return txt;
+    }
+
+    private static JSONObject createImagePart(String base64) throws JSONException {
+        JSONObject imgObj = new JSONObject();
+        imgObj.put("type", "image_url");
+        JSONObject urlObj = new JSONObject();
+        urlObj.put("url", "data:image/jpeg;base64," + base64);
+        imgObj.put("image_url", urlObj);
+        return imgObj;
+    }
+
+    private static JSONObject createMessageObj(String role, String content) throws JSONException {
+        JSONObject msgObj = new JSONObject();
+        msgObj.put("role", role);
+
+        ParsedVisualInput parsed = parseVisualMarkers(content);
+        boolean hasContextImages = !parsed.contextImagePaths.isEmpty();
+        boolean hasQuotedImages = !parsed.quotedImagePaths.isEmpty();
+
+        if (!hasContextImages && !hasQuotedImages) {
+            msgObj.put("content", parsed.cleanText);
+            return msgObj;
+        }
+
+        JSONArray contentArray = new JSONArray();
+        contentArray.put(createTextPart(parsed.cleanText));
+
+        for (String path : parsed.contextImagePaths) {
+            String b64 = encodeFileToBase64(path);
+            if (b64 != null && !b64.isEmpty()) {
+                contentArray.put(createTextPart("[背景上下文图片]"));
+                contentArray.put(createImagePart(b64));
+            } else {
+                contentArray.put(createTextPart("[背景上下文图片读取失败]"));
+            }
+        }
+
+        for (String path : parsed.quotedImagePaths) {
+            String b64 = encodeFileToBase64(path);
+            if (b64 != null && !b64.isEmpty()) {
+                contentArray.put(createTextPart("[当前回复目标图]"));
+                contentArray.put(createImagePart(b64));
+            } else {
+                contentArray.put(createTextPart("[当前回复目标图读取失败]"));
+            }
+        }
+
+        msgObj.put("content", contentArray);
+        return msgObj;
     }
 
     public static void loadFriends() {
@@ -248,70 +340,25 @@ public class AITranslator {
         return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
     }
 
-    private static JSONObject createMessageObj(String role, String content) throws JSONException {
-        JSONObject msgObj = new JSONObject();
-        msgObj.put("role", role);
-
-        if (content.contains("[LOCAL_IMAGE:")) {
-            JSONArray contentArray = new JSONArray();
-            
-            Matcher m = Pattern.compile("\\[LOCAL_IMAGE:(.*?)\\]").matcher(content);
-            StringBuffer cleanText = new StringBuffer();
-            List<String> base64Images = new ArrayList<>();
-
-            while (m.find()) {
-                String path = m.group(1).trim();
-                String b64 = encodeFileToBase64(path);
-                if (b64 != null && !b64.isEmpty()) {
-                    base64Images.add(b64);
-                    m.appendReplacement(cleanText, "[系统提示：图片已附带在视觉通道中]");
-                } else {
-                    m.appendReplacement(cleanText, "[系统提示：图片读取失败]");
-                }
-            }
-            m.appendTail(cleanText);
-
-            JSONObject txtObj = new JSONObject();
-            txtObj.put("type", "text");
-            txtObj.put("text", cleanText.toString());
-            contentArray.put(txtObj);
-
-            for (String b64 : base64Images) {
-                JSONObject imgObj = new JSONObject();
-                imgObj.put("type", "image_url");
-                JSONObject urlObj = new JSONObject();
-                urlObj.put("url", "data:image/jpeg;base64," + b64);
-                imgObj.put("image_url", urlObj);
-                contentArray.put(imgObj);
-            }
-
-            msgObj.put("content", contentArray);
-        } else {
-            msgObj.put("content", content);
-        }
-        return msgObj;
-    }
-
     public static String toChinese(String text) throws IOException {
         return toChinese(text, "0");
     }
 
     public static String toChinese(String text, String chatId) throws IOException {
-        return toChinese(text, chatId, null);
-    }
-
-    public static String toChinese(String text, String chatId, String imagePath) throws IOException {
         text = text.trim();
         if (text.isEmpty()) return text;
         if (!needTranslateToChinese(text)) return text;
 
         try {
             JSONArray messages = new JSONArray();
-            String sysPrompt = receivePrompt + "\n\n【系统隐性指令】：仅用于辅助理解上下文，若提供了图片请结合图片理解外语语境。只直译最后一条外语消息。";
-            
-            if (imagePath != null && !imagePath.isEmpty()) {
-                sysPrompt += "\n[LOCAL_IMAGE:" + imagePath + "]";
-            }
+
+            String sysPrompt = receivePrompt +
+                    "\n\n【系统隐性协议（多模态）】：" +
+                    "\n1. 你可能会同时看到文本和图片。" +
+                    "\n2. 如果消息中带有[背景上下文图片]，那是最近聊天背景，用于帮助理解上下文。" +
+                    "\n3. 如果消息中带有[当前回复目标图]，那是当前重点图，优先关注这张。" +
+                    "\n4. 你只需要把最后一条外语消息翻译成中文，必要时结合图片消歧。" +
+                    "\n5. 不要描述你收到了图片，也不要解释协议。";
 
             messages.put(createMessageObj("system", sysPrompt));
 
@@ -337,11 +384,9 @@ public class AITranslator {
                 }
             }
 
-            if (!hasContext) {
-                scriptBuilder.append("（暂无有效上下文）\n");
-            }
-
+            if (!hasContext) scriptBuilder.append("（暂无有效上下文）\n");
             scriptBuilder.append("\n【请翻译以下最新外语消息】\n").append(text);
+
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
             try {
@@ -386,26 +431,26 @@ public class AITranslator {
                 default: sysPrompt = promptEN; break;
             }
 
-            // ★ 核心重构：绝对身份隔离 + 防幻觉抽象举例 + 清晰处理双模指令
-            String universalProtocol = sysPrompt + "\n\n【系统最高强制协议（多模态视觉与指令解析）】：\n" +
-                    "1. 下方是【历史聊天剧本】。如果提示中带有图片，代表你已经看到了该图片。\n" +
-                    "2. 剧本后，<translate> 标签内包裹的是我刚刚输入的【最新文字】。请严格判断格式，执行以下两种模式之一：\n\n" +
-                    "【模式A：纯对话求助模式（不翻译）】\n" +
-                    "► 触发条件：<translate> 内的文字**全部**被括号（() 或 （））包裹。例如：`(这张图里是哪部电影？)`。\n" +
-                    "► 你的绝对身份：你必须立刻解除扮演'我'或'对方'的身份！你是客观中立、拥有上帝视角的独立AI军师。\n" +
-                    "► 你的任务：绝不进行外语翻译，也不要代入聊天角色！直接客观解答我的提问。\n" +
-                    "► 格式强制：在 ===== 上半部分写出你的详细解答。下半部分直接写一个占位选项。\n" +
-                    "回答示例：\n" +
-                    "经分析，图片里是某某作品的截图...\n" +
-                    "====================\n" +
-                    "Got it|(已为你解答，请查看上方区域)|AI助手\n\n" +
-                    "【模式B：标准翻译 + 附加指令/提问模式】\n" +
-                    "► 触发条件：<translate> 内有正常的中文（不在括号里），且可能带有一个括号。例如：`看起来挺酷的（顺便告诉我图片里是什么）` 或 `晚上好（语气客气一点）`。\n" +
-                    "► 你的任务：\n" +
-                    "  1. 【严禁】把括号里的字面意思直接翻译成外语！括号内是给你的私下要求或提问。\n" +
-                    "  2. 如果括号内提出了客观问题（如问图片内容），你必须在 ===== 上半部分先以AI军师的身份给出解答！\n" +
-                    "  3. 严格结合上下文和图片，按照括号里的风格要求，将括号【外】的正常中文翻译成地道外语。\n" +
-                    "► 格式强制：上半部分写客观解答（若无提问可留空或简单分析）。下半部分严格输出4个翻译选项。\n";
+            String universalProtocol = sysPrompt +
+                    "\n\n【系统最高强制协议（多模态视觉与指令解析）】：" +
+                    "\n1. 下方是【历史聊天剧本】。如果消息里附带了图片，你已经可以看到它们。" +
+                    "\n2. [背景上下文图片] = 最近聊天背景，仅用于帮助理解上下文。" +
+                    "\n3. [当前回复目标图] = 我此刻正在回复的焦点图，优先分析这张。" +
+                    "\n4. 剧本后，<translate> 标签内包裹的是我刚刚输入的【最新文字】。请严格判断格式，执行以下两种模式之一：" +
+
+                    "\n\n【模式A：纯对话求助模式（不翻译）】" +
+                    "\n► 触发条件：<translate> 内的文字全部被括号（() 或 （））包裹。" +
+                    "\n► 你的身份：你是独立AI军师，不扮演我或对方。" +
+                    "\n► 任务：结合焦点图优先、背景图次之，直接客观回答我的问题。" +
+                    "\n► 输出格式：上半部分写详细解答，下半部分给一个占位选项。" +
+
+                    "\n\n【模式B：标准翻译 + 附加指令/提问模式】" +
+                    "\n► 触发条件：<translate> 内存在正常中文正文，且可能附带括号要求。" +
+                    "\n► 任务：" +
+                    "\n  1. 括号内是给你的私下要求、风格要求、补充提问，严禁逐字翻译进外语。" +
+                    "\n  2. 如括号内包含关于图片的提问，请先在 ===== 上半部分回答问题。" +
+                    "\n  3. 然后严格结合上下文，把括号外正文翻译成地道目标语言。" +
+                    "\n► 输出格式：上半部分写分析/解答（若无可简短），下半部分输出4个翻译选项。";
 
             messages.put(createMessageObj("system", universalProtocol));
 
@@ -465,10 +510,10 @@ public class AITranslator {
                     for (int j = 0; j < arr.length(); j++) {
                         JSONObject item = arr.getJSONObject(j);
                         if ("text".equals(item.optString("type"))) {
-                            textSb.append(item.optString("text"));
+                            textSb.append(item.optString("text")).append("\n");
                         }
                     }
-                    cleanMsg.put("content", textSb.toString());
+                    cleanMsg.put("content", textSb.toString().trim());
                 } else {
                     cleanMsg.put("content", contentObj.toString());
                 }
@@ -734,7 +779,9 @@ public class AITranslator {
                         if (msgId.equals(obj.optString("msgId"))) return;
                     }
                 }
-                if (quotedText != null && !quotedText.isEmpty()) content = "（针对我的原话：\"" + quotedText + "\" 进行了回复）\n" + content;
+                if (quotedText != null && !quotedText.isEmpty()) {
+                    content = "（针对我的原话：\"" + quotedText + "\" 进行了回复）\n" + content;
+                }
 
                 JSONObject entry = new JSONObject();
                 if (msgId != null) entry.put("msgId", msgId);
@@ -759,7 +806,9 @@ public class AITranslator {
 
                 File f = historyFile(chatId);
                 f.getParentFile().mkdirs();
-                try (BufferedWriter w = new BufferedWriter(new FileWriter(f))) { w.write(history.toString()); }
+                try (BufferedWriter w = new BufferedWriter(new FileWriter(f))) {
+                    w.write(history.toString());
+                }
             } catch (Exception ignored) {}
         }
     }
