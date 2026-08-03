@@ -15,6 +15,7 @@ import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -22,8 +23,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -53,8 +52,11 @@ public class ChatHook {
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
 
+    // ★ 新增：用于临时缓存刚刚渲染的图片路径，防止上下文错乱
+    private static volatile String latestRenderedImagePath = null;
+
     public static void install(ClassLoader cl) {
-        log("=== Hook v52.0 (全防御恢复 & 多模态Base64预备版) ===");
+        log("=== Hook v53.0 (UI渲染层抓取多模态视觉) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -69,16 +71,13 @@ public class ChatHook {
         try { hookLang(cl); } catch (Throwable ignored) {}
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
-        
-        // 核心：无死角恢复所有的拦截逻辑！绝不删减！
         try { hookUltimateStealth(cl); } catch (Throwable ignored) {}
+
+        // ★ 核心注入：拦截 UI 图片渲染层
+        try { hookImageRenderLayer(cl); } catch (Throwable ignored) {}
     }
 
-    // ═══════════════════════════════════════════
-    // 【认错恢复】极其严密、一滴水都不漏的终极隐身墙
-    // ═══════════════════════════════════════════
     private static void hookUltimateStealth(ClassLoader cl) {
-        // 第一层：业务控制层死掐“正在输入”
         try {
             Class<?> titleControllerClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
             if (titleControllerClass != null) {
@@ -91,7 +90,6 @@ public class ChatHook {
             }
         } catch (Throwable ignored) {}
 
-        // 第二层：业务仓库层死掐“已读清零”(恢复 V43 成功经验)
         XC_MethodHook killReadHook = new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
@@ -113,7 +111,6 @@ public class ChatHook {
             }
         } catch (Throwable ignored) {}
 
-        // 第三层：Socket 总线层阻断 (恢复 V44 成功经验)
         try {
             Class<?> b20eClass = XposedHelpers.findClassIfExists("b20.e", cl);
             if (b20eClass != null) {
@@ -131,7 +128,6 @@ public class ChatHook {
             }
         } catch (Throwable ignored) {}
 
-        // 第四层：包体破坏层，让已读回执变空壳 (彻底锁死)
         try {
             Class<?> e20cClass = XposedHelpers.findClassIfExists("e20.c", cl);
             if (e20cClass != null) {
@@ -146,34 +142,46 @@ public class ChatHook {
     }
 
     // ═══════════════════════════════════════════
-    // 【核心提取】稳准狠提取本地缓存绝对路径
+    // 【全新战场】拦截图片气泡 UI 渲染层
     // ═══════════════════════════════════════════
-    private static String extractLocalPathFromJson(Object msg) {
+    private static void hookImageRenderLayer(ClassLoader cl) {
         try {
-            String json = null;
-            try {
-                json = (String) XposedHelpers.callMethod(msg, "getMsgContentJson$lib_im_release");
-            } catch (Throwable t) {
-                try {
-                    json = (String) XposedHelpers.getObjectField(msg, "msgContentJson");
-                } catch (Throwable ignored) {}
-            }
-
-            if (json != null && !json.isEmpty()) {
-                // 正则捕获本地路径字段
-                Pattern pattern = Pattern.compile("\"(?:localPath|localpath)\"\\s*:\\s*\"([^\"]+)\"");
-                Matcher matcher = pattern.matcher(json);
-                if (matcher.find()) {
-                    String found = matcher.group(1);
-                    if (found != null && !found.isEmpty()) {
-                        return found.replace("\\/", "/");
+            Class<?> imageMsgCardClass = XposedHelpers.findClassIfExists(
+                    "com.hellotalk.talk.detail.widget.msgcard.ImageMsgCard", cl);
+            
+            if (imageMsgCardClass != null) {
+                XposedBridge.hookAllMethods(imageMsgCardClass, "c", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        // 该方法有多个重载，我们找符合我们要求的那个 (参数1: Bean, 参数2: String filePath)
+                        if (param.args != null && param.args.length >= 2) {
+                            Object imageBean = param.args[0];
+                            Object filePathObj = param.args[1];
+                            
+                            if (filePathObj instanceof String) {
+                                String filePath = (String) filePathObj;
+                                
+                                // 确认文件真的存在且不为空
+                                File imgFile = new File(filePath);
+                                if (imgFile.exists() && imgFile.length() > 0) {
+                                    latestRenderedImagePath = filePath;
+                                    log("【UI视觉拦截】成功捕获落盘图片路径: " + filePath);
+                                }
+                            }
+                        }
                     }
-                }
+                });
+            } else {
+                log("【UI视觉拦截警告】找不到 ImageMsgCard 类！");
             }
-        } catch (Throwable ignored) {}
-        return null;
+        } catch (Throwable t) {
+            log("UI视觉拦截异常: " + t.getMessage());
+        }
     }
 
+    // ═══════════════════════════════════════════
+    // 底层接收层：只记录基础文本，图片路径由 UI 层补偿
+    // ═══════════════════════════════════════════
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
         XposedBridge.hookAllMethods(hm, "getMessageContent", new XC_MethodHook() {
@@ -210,16 +218,19 @@ public class ChatHook {
                         msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
                     } catch (Exception ignored) {}
 
-                    // ★ 多模态标签注入：只有拿到本地路径，才给 AI 打标签！
+                    // ★ 多模态标签注入：结合 UI 层捕获的最新路径
                     if (text == null || text.isEmpty()) {
-                        if ("image".equals(msgType)) {
-                            String localPath = extractLocalPathFromJson(msg);
-                            if (localPath != null && localPath.contains("/storage/")) {
-                                // 留给 AITranslator 提取 Base64 的锚点标签
-                                text = "[LOCAL_IMAGE:" + localPath + "]";
-                                log("【多模态锚点】成功注入本地图片路径，请在 AITranslator 中转为 Base64: " + localPath);
+                        if ("image".equals(msgType) || "photo".equals(msgType)) {
+                            // 因为 UI 渲染可能比消息接收慢几毫秒，我们稍微等一下或者直接取最新的缓存
+                            if (latestRenderedImagePath != null) {
+                                text = "[LOCAL_IMAGE:" + latestRenderedImagePath + "]";
+                                log("【网络层匹配】成功将 UI 路径注入记录: " + latestRenderedImagePath);
+                                // 用完即抛，防止污染下一张图
+                                latestRenderedImagePath = null; 
                             } else {
-                                text = "[对方发送了一张图片]";
+                                // 兜底：如果 UI 还没来得及渲染，我们就标记一个待查标志
+                                // (AITranslator.java 里如果读不到，会忽略它，不至于让 AI 瞎编)
+                                text = "[对方发送了一张图片，等待系统渲染...]";
                             }
                         } else if ("voice".equals(msgType) || "audio".equals(msgType)) {
                             text = "[对方发送了一条语音]";
