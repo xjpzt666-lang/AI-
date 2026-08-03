@@ -64,8 +64,6 @@ public class AITranslator {
     private static final Pattern JAPANESE_PATTERN = Pattern.compile("[\\u3040-\\u30FF\\uFF65-\\uFF9F\\u30FC]+");
     private static final Pattern LOCAL_IMAGE_PATTERN = Pattern.compile("\\[LOCAL_IMAGE:(.*?)\\]");
     private static final Pattern QUOTED_LOCAL_IMAGE_PATTERN = Pattern.compile("\\[QUOTED_LOCAL_IMAGE:(.*?)\\]");
-    
-    // ★ V58 新增防污染标签正则
     private static final Pattern PURE_BRACKET_MODE_PATTERN = Pattern.compile("\\[PURE_BRACKET_MODE\\]");
     private static final Pattern QUOTED_IMAGE_MISSING_PATTERN = Pattern.compile("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]");
 
@@ -147,7 +145,6 @@ public class AITranslator {
         return inSampleSize;
     }
 
-    // ★ V58 视觉解析体结构升级
     private static class ParsedVisualInput {
         String cleanText;
         List<String> contextImagePaths = new ArrayList<>();
@@ -156,7 +153,6 @@ public class AITranslator {
         boolean quotedImageMissing = false;
     }
 
-    // ★ V58 视觉标记解析引擎
     private static ParsedVisualInput parseVisualMarkers(String content) {
         ParsedVisualInput result = new ParsedVisualInput();
         if (content == null) {
@@ -217,7 +213,6 @@ public class AITranslator {
         return imgObj;
     }
 
-    // ★ V58 多模态消息装载引擎
     private static JSONObject createMessageObj(String role, String content) throws JSONException {
         JSONObject msgObj = new JSONObject();
         msgObj.put("role", role);
@@ -244,23 +239,28 @@ public class AITranslator {
 
         contentArray.put(createTextPart(clean));
 
-        for (String path : parsed.contextImagePaths) {
-            String b64 = encodeFileToBase64(path);
-            if (b64 != null && !b64.isEmpty()) {
-                contentArray.put(createTextPart("[背景上下文图片]"));
-                contentArray.put(createImagePart(b64));
-            } else {
-                contentArray.put(createTextPart("[背景上下文图片读取失败]"));
-            }
-        }
-
+        // ★ 核心改动：把焦点图放到前面，强行转移 AI 的注意力
+        int qIdx = 1;
         for (String path : parsed.quotedImagePaths) {
             String b64 = encodeFileToBase64(path);
             if (b64 != null && !b64.isEmpty()) {
-                contentArray.put(createTextPart("[当前回复目标图]"));
+                contentArray.put(createTextPart("[当前回复目标焦点图 #" + qIdx + "]"));
                 contentArray.put(createImagePart(b64));
+                qIdx++;
             } else {
                 contentArray.put(createTextPart("[当前回复目标图读取失败]"));
+            }
+        }
+
+        int cIdx = 1;
+        for (String path : parsed.contextImagePaths) {
+            String b64 = encodeFileToBase64(path);
+            if (b64 != null && !b64.isEmpty()) {
+                contentArray.put(createTextPart("[背景上下文辅助图片 #" + cIdx + "]"));
+                contentArray.put(createImagePart(b64));
+                cIdx++;
+            } else {
+                contentArray.put(createTextPart("[背景上下文图片读取失败]"));
             }
         }
 
@@ -366,11 +366,6 @@ public class AITranslator {
         return true;
     }
 
-    private static String stripFlipMarks(String s) {
-        if (s == null) return null;
-        return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
-    }
-
     public static String toChinese(String text) throws IOException {
         return toChinese(text, "0");
     }
@@ -462,7 +457,6 @@ public class AITranslator {
                 default: sysPrompt = promptEN; break;
             }
 
-            // ★ V58 系统最高强制协议重写（防误翻译、防盲兜底）
             String universalProtocol = sysPrompt +
                     "\n\n【系统最高强制协议（多模态视觉与指令解析）】：" +
                     "\n1. 下方是【历史聊天剧本】。如果消息里附带了图片，你已经可以看到它们。" +
@@ -470,15 +464,16 @@ public class AITranslator {
                     "\n3. [当前回复目标图] = 我此刻正在回复的焦点图，优先分析这张。" +
                     "\n4. 如果提示中出现“当前回复目标是一张图片，但本地文件路径未获取到”，说明你不能把背景图误认为焦点图，必须保守回答。" +
                     "\n5. 剧本后，<translate> 标签内包裹的是我刚刚输入的【最新文字】。请严格判断格式，执行以下两种模式之一：" +
+                    "\n6. 【绝对服从】：如果用户消息中出现【强制模式】MODE_A_ONLY，你必须无条件执行【模式A】，严禁出现任何翻译选项！" +
 
                     "\n\n【模式A：纯对话求助模式（不翻译）】" +
                     "\n► 触发条件（任一满足即可）：" +
                     "\n  a. <translate> 内的文字全部被括号（() 或 （））包裹；" +
-                    "\n  b. 提示文本中明确出现“这是纯括号求助模式，必须执行模式A”。" +
+                    "\n  b. 提示文本中明确出现“【强制模式】MODE_A_ONLY”。" +
                     "\n► 你的身份：你是独立AI军师，不扮演我或对方。" +
                     "\n► 任务：结合焦点图优先、背景图次之，直接客观回答我的问题。" +
-                    "\n► 严禁：输出4个翻译选项；严禁把括号问题翻译成外语。" +
-                    "\n► 输出格式：上半部分写详细解答，下半部分给一个占位选项。" +
+                    "\n► 严禁：严禁输出4个翻译选项！严禁把括号问题翻译成外语！" +
+                    "\n► 输出格式：上半部分写详细解答，下半部分直接给一个占位选项。" +
 
                     "\n\n【模式B：标准翻译 + 附加指令/提问模式】" +
                     "\n► 触发条件：存在正常中文正文，且不是模式A。" +
@@ -510,6 +505,12 @@ public class AITranslator {
             }
 
             scriptBuilder.append("\n【我的最新输入】\n");
+            
+            // ★ 核心改动：加入强制模式指令，彻底锁死 AI 输出格式
+            boolean forceModeA = text.contains("[PURE_BRACKET_MODE]");
+            if (forceModeA) {
+                scriptBuilder.append("\n【强制模式】MODE_A_ONLY\n");
+            }
             scriptBuilder.append("<translate>\n").append(text).append("\n</translate>");
 
             messages.put(createMessageObj("user", scriptBuilder.toString()));
@@ -549,7 +550,7 @@ public class AITranslator {
                             textSb.append(item.optString("text")).append("\n");
                         }
                     }
-                    cleanMsg.put("content", textSb.toString().trim());
+                    cleanMsg.put("content", textSb.toString().replaceAll("\\n{3,}", "\n\n").trim());
                 } else {
                     cleanMsg.put("content", contentObj.toString());
                 }
