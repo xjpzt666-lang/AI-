@@ -104,10 +104,6 @@ public class AITranslator {
         }
     }
 
-    // ═══════════════════════════════════════════
-    // 图片转 Base64（深度压缩降维，防止过大报错）
-    // ═══════════════════════════════════════════
-
     public static String encodeFileToBase64(String path) {
         try {
             File file = new File(path);
@@ -252,10 +248,6 @@ public class AITranslator {
         return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
     }
 
-    // ═══════════════════════════════════════════
-    // 构造消息对象（支持多模态 Vision 视觉输入）
-    // ═══════════════════════════════════════════
-
     private static JSONObject createMessageObj(String role, String content) throws JSONException {
         JSONObject msgObj = new JSONObject();
         msgObj.put("role", role);
@@ -308,7 +300,6 @@ public class AITranslator {
         return toChinese(text, chatId, null);
     }
 
-    // 升级版：支持在翻译外语时顺便带上图片路径
     public static String toChinese(String text, String chatId, String imagePath) throws IOException {
         text = text.trim();
         if (text.isEmpty()) return text;
@@ -318,7 +309,6 @@ public class AITranslator {
             JSONArray messages = new JSONArray();
             String sysPrompt = receivePrompt + "\n\n【系统隐性指令】：仅用于辅助理解上下文，若提供了图片请结合图片理解外语语境。只直译最后一条外语消息。";
             
-            // 如果传了图片路径，拼在系统提示后方
             if (imagePath != null && !imagePath.isEmpty()) {
                 sysPrompt += "\n[LOCAL_IMAGE:" + imagePath + "]";
             }
@@ -396,19 +386,21 @@ public class AITranslator {
                 default: sysPrompt = promptEN; break;
             }
 
+            // ★ 核心重构：绝对身份隔离机制
             String universalProtocol = sysPrompt + "\n\n【系统最高强制协议（含多模态视觉与括号指令解析）】：\n" +
                     "1. 下方是【历史聊天剧本】。如果剧本或上下文提示中带有图片，代表你已经看到了该图片。\n" +
                     "2. 剧本后，<translate> 标签内包裹的是我刚刚在输入框打出的【最新文字】。请严格判断文字格式，执行以下两种模式之一：\n\n" +
                     "【模式A：纯对话求助模式（不翻译）】\n" +
                     "► 触发条件：<translate> 内的文字**全部**被括号（() 或 （））包裹，括号外没有任何其他字符。例如：`(这张图片里是哪部电影？)`。\n" +
-                    "► 你的任务：不需要进行任何外语翻译！直接作为一个无所不知的AI助手，回答我的提问。\n" +
-                    "► 格式强制：在 ===== 上半部分给出你的详细解答/分析。下半部分直接写一个占位选项（格式如下）。\n" +
+                    "► 你的绝对身份：此刻起，你必须立刻解除'翻译官'、'我'或'对方'的身份绑定！你是一个客观中立、拥有上帝视角的独立AI智囊团。\n" +
+                    "► 你的任务：绝不要代入聊天记录里的任何角色！直接以第三方的口吻，客观解答我的提问。\n" +
+                    "► 格式强制：在 ===== 上半部分给出你的详细客观解答。下半部分直接写一个占位选项（格式如下）。\n" +
                     "回答示例：\n" +
-                    "图片里是...\n" +
+                    "经分析图片及上下文，这是《战狼2》的截图...\n" +
                     "====================\n" +
                     "Got it|(已为你解答，请查看上方区域)|AI助手\n\n" +
                     "【模式B：标准翻译 + 附加指令模式】\n" +
-                    "► 触发条件：<translate> 内有正常的中文（不在括号里）。例如：`看起来挺酷的（说说图片是什么电影）`。\n" +
+                    "► 触发条件：<translate> 内有正常的中文（不在括号里）。\n" +
                     "► 你的任务：将括号外的中文翻译为地道外语。如果在括号内提出了问题，在 ===== 上半部分先给出解答！下半部分给出4个翻译选项。\n";
 
             messages.put(createMessageObj("system", universalProtocol));
