@@ -52,12 +52,14 @@ public class ChatHook {
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
 
-    // ★ 全局图片雷达：只要屏幕上刚画过图片，这里就会死死记住它的路径！
+    // ★ 全局精准视觉雷达
+    private static final Map<String, String> imageUrlToPathMap = new ConcurrentHashMap<>();
     private static volatile String latestRenderedImagePath = null;
     private static volatile long latestRenderedImageTime = 0;
+    private static volatile String currentQuotedImagePath = null; // 用于记录当前回复框中选中的图片
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v54.0 (时空穿梭视觉终极版) ===");
+        log("=== Hook v56.0 (精准回复框视觉绑定 + 修复剪贴板) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -73,9 +75,10 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         try { hookUltimateStealth(cl); } catch (Throwable ignored) {}
-
-        // ★ 核心注入：拦截 UI 图片渲染层
+        
+        // ★ 核心视觉注入
         try { hookImageRenderLayer(cl); } catch (Throwable ignored) {}
+        try { hookReplyMessageView(cl); } catch (Throwable ignored) {}
     }
 
     private static void hookUltimateStealth(ClassLoader cl) {
@@ -142,9 +145,7 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ═══════════════════════════════════════════
-    // 【全新战场】拦截图片气泡 UI 渲染层
-    // ═══════════════════════════════════════════
+    // 拦截图片气泡渲染，记录图片唯一特征和绝对路径
     private static void hookImageRenderLayer(ClassLoader cl) {
         try {
             Class<?> imageMsgCardClass = XposedHelpers.findClassIfExists(
@@ -155,15 +156,24 @@ public class ChatHook {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                         if (param.args != null && param.args.length >= 2) {
+                            Object imageBean = param.args[0];
                             Object filePathObj = param.args[1];
                             if (filePathObj instanceof String) {
                                 String filePath = (String) filePathObj;
                                 File imgFile = new File(filePath);
-                                // 确认文件存在，直接存入全局雷达！
                                 if (imgFile.exists() && imgFile.length() > 0) {
                                     latestRenderedImagePath = filePath;
                                     latestRenderedImageTime = System.currentTimeMillis();
-                                    log("【UI视觉雷达】锁定屏幕图片路径: " + filePath);
+                                    
+                                    try {
+                                        String url = (String) XposedHelpers.callMethod(imageBean, "getUrl");
+                                        if (url == null || url.isEmpty()) {
+                                            url = (String) XposedHelpers.callMethod(imageBean, "getCompressedUrl");
+                                        }
+                                        if (url != null && !url.isEmpty()) {
+                                            imageUrlToPathMap.put(url, filePath);
+                                        }
+                                    } catch (Throwable ignored) {}
                                 }
                             }
                         }
@@ -173,9 +183,46 @@ public class ChatHook {
         } catch (Throwable t) {}
     }
 
-    // ═══════════════════════════════════════════
-    // 底层接收层：剥离复杂逻辑，回归最纯粹的历史记录
-    // ═══════════════════════════════════════════
+    // ★ 拦截输入框的“回复气泡区”，实现你说的：选哪张就翻哪张！
+    private static void hookReplyMessageView(ClassLoader cl) {
+        try {
+            Class<?> replyViewClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.widget.ReplyMessageView", cl);
+            if (replyViewClass != null) {
+                XposedBridge.hookAllMethods(replyViewClass, "A", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        Object msg = (param.args != null && param.args.length > 0) ? param.args[0] : null;
+                        if (msg == null) {
+                            currentQuotedImagePath = null;
+                            return;
+                        }
+                        String msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
+                        if ("image".equals(msgType) || "photo".equals(msgType)) {
+                            Class<?> imageBeanClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.delegate.image.IMImageBean", cl);
+                            if (imageBeanClass != null) {
+                                Object imageBean = XposedHelpers.callMethod(msg, "getMessageContent", imageBeanClass, false);
+                                if (imageBean != null) {
+                                    String url = (String) XposedHelpers.callMethod(imageBean, "getUrl");
+                                    if (url == null || url.isEmpty()) {
+                                        url = (String) XposedHelpers.callMethod(imageBean, "getCompressedUrl");
+                                    }
+                                    if (url != null && imageUrlToPathMap.containsKey(url)) {
+                                        currentQuotedImagePath = imageUrlToPathMap.get(url);
+                                        log("【精准锁定】回复框捕获到图片: " + currentQuotedImagePath);
+                                    } else {
+                                        currentQuotedImagePath = latestRenderedImagePath;
+                                    }
+                                }
+                            }
+                        } else {
+                            currentQuotedImagePath = null; 
+                        }
+                    }
+                });
+            }
+        } catch (Throwable t) {}
+    }
+
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
         XposedBridge.hookAllMethods(hm, "getMessageContent", new XC_MethodHook() {
@@ -204,7 +251,6 @@ public class ChatHook {
                     String msgType = null;
                     try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Exception ignored) {}
 
-                    // 纯粹记录动作，不再这里折腾路径（解决时空悖论）
                     if (text == null || text.isEmpty()) {
                         if ("image".equals(msgType) || "photo".equals(msgType)) {
                             text = "[对方发送了一张图片]";
@@ -285,10 +331,6 @@ public class ChatHook {
             }
         });
     }
-
-    // ═══════════════════════════════════════════
-    // 以下维持 V28 原生手感及翻译/输入框注入
-    // ═══════════════════════════════════════════
 
     private static void hookClipboard(ClassLoader cl) {
         XC_MethodHook clipHook = new XC_MethodHook() {
@@ -584,20 +626,20 @@ public class ChatHook {
                 textToTranslate = "【我要回复的对方原话】：" + quoteText.trim() + "\n【我的回复】：" + text;
             }
 
-            // ★ 视觉绝杀：点按钮的一瞬间，把刚看到的图片强行塞给模型！
-            if (latestRenderedImagePath != null) {
-                File imgFile = new File(latestRenderedImagePath);
-                // 只有在一两分钟内刚刚渲染出来的图，或者是你明确打括号提问时，才带图
-                boolean isRecent = (System.currentTimeMillis() - latestRenderedImageTime) < 120000;
+            // ★ 视觉绝杀V56：指哪打哪！优先抓取回复框里的图，没选的话且是提问状态就抓最近渲染的图
+            if (currentQuotedImagePath != null) {
+                File imgFile = new File(currentQuotedImagePath);
+                if (imgFile.exists() && imgFile.length() > 0) {
+                    textToTranslate += "\n[LOCAL_IMAGE:" + currentQuotedImagePath + "]";
+                    log("【视觉强绑定】已精准附带回复框中选中的图片！");
+                }
+            } else {
                 boolean isAsking = textToTranslate.contains("(") || textToTranslate.contains("（");
-                
-                if (imgFile.exists() && imgFile.length() > 0 && (isRecent || isAsking)) {
-                    textToTranslate += "\n[LOCAL_IMAGE:" + latestRenderedImagePath + "]";
-                    log("【视觉强绑定】已将屏幕图片拼接到本次翻译请求中");
-                    
-                    // 如果你不是在问问题，只是正常聊天带了一句翻译，用完就清空，免得下句话还带图浪费流量
-                    if (!isAsking) {
-                        latestRenderedImagePath = null;
+                if (isAsking && latestRenderedImagePath != null) {
+                    long timeDiff = System.currentTimeMillis() - latestRenderedImageTime;
+                    if (timeDiff < 120000) {
+                        textToTranslate += "\n[LOCAL_IMAGE:" + latestRenderedImagePath + "]";
+                        log("【视觉盲狙绑定】未使用回复框，但检测到提问，自动带入最近一张图片。");
                     }
                 }
             }
@@ -801,10 +843,20 @@ public class ChatHook {
                 card.addView(tvChinese);
             }
 
+            // ★ 修复的点击赋值与剪贴板拷贝
             card.setOnClickListener(v -> {
                 AITranslator.mySentDrafts.put(foreign.trim(), originalChineseInput.trim());
                 edit.setText(foreign);
                 edit.setSelection(foreign.length());
+                
+                try {
+                    android.content.ClipboardManager clipboard = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                    if (clipboard != null) {
+                        android.content.ClipData clip = android.content.ClipData.newPlainText("HT_AI_Copy", foreign);
+                        clipboard.setPrimaryClip(clip);
+                    }
+                } catch (Exception ignored) {}
+
                 dialog.dismiss();
             });
             container.addView(card);
