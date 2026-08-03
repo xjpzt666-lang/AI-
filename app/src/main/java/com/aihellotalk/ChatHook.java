@@ -22,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -52,7 +54,7 @@ public class ChatHook {
     private static Method langNameMethod = null;
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v51.0 (官方Getter直取图片URL多模态完全体) ===");
+        log("=== Hook v52.0 (全防御恢复 & 多模态Base64预备版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -67,22 +69,51 @@ public class ChatHook {
         try { hookLang(cl); } catch (Throwable ignored) {}
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
+        
+        // 核心：无死角恢复所有的拦截逻辑！绝不删减！
         try { hookUltimateStealth(cl); } catch (Throwable ignored) {}
     }
 
+    // ═══════════════════════════════════════════
+    // 【认错恢复】极其严密、一滴水都不漏的终极隐身墙
+    // ═══════════════════════════════════════════
     private static void hookUltimateStealth(ClassLoader cl) {
+        // 第一层：业务控制层死掐“正在输入”
         try {
             Class<?> titleControllerClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
             if (titleControllerClass != null) {
                 XposedBridge.hookAllMethods(titleControllerClass, "s0", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        param.setResult(null);
+                        param.setResult(null); 
                     }
                 });
             }
         } catch (Throwable ignored) {}
 
+        // 第二层：业务仓库层死掐“已读清零”(恢复 V43 成功经验)
+        XC_MethodHook killReadHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                param.setResult(null);
+            }
+        };
+        try {
+            Class<?> z10aClass = XposedHelpers.findClassIfExists("z10.a", cl);
+            if (z10aClass != null) {
+                XposedBridge.hookAllMethods(z10aClass, "m", killReadHook);
+                XposedBridge.hookAllMethods(z10aClass, "c0", killReadHook);
+                XposedBridge.hookAllMethods(z10aClass, "f0", killReadHook);
+            }
+            Class<?> y10bClass = XposedHelpers.findClassIfExists("y10.b", cl);
+            if (y10bClass != null) {
+                XposedBridge.hookAllMethods(y10bClass, "m", killReadHook);
+                XposedBridge.hookAllMethods(y10bClass, "c0", killReadHook);
+                XposedBridge.hookAllMethods(y10bClass, "f0", killReadHook);
+            }
+        } catch (Throwable ignored) {}
+
+        // 第三层：Socket 总线层阻断 (恢复 V44 成功经验)
         try {
             Class<?> b20eClass = XposedHelpers.findClassIfExists("b20.e", cl);
             if (b20eClass != null) {
@@ -99,33 +130,47 @@ public class ChatHook {
                 });
             }
         } catch (Throwable ignored) {}
+
+        // 第四层：包体破坏层，让已读回执变空壳 (彻底锁死)
+        try {
+            Class<?> e20cClass = XposedHelpers.findClassIfExists("e20.c", cl);
+            if (e20cClass != null) {
+                XposedBridge.hookAllMethods(e20cClass, "f", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        param.setResult(new byte[0]); 
+                    }
+                });
+            }
+        } catch (Throwable ignored) {}
     }
 
     // ═══════════════════════════════════════════
-    // 【核心】利用官方 IMImageBean.getUrl() 精准提取图片 URL
+    // 【核心提取】稳准狠提取本地缓存绝对路径
     // ═══════════════════════════════════════════
-    private static String extractImageUrlFromMessage(Object msg, ClassLoader cl) {
+    private static String extractLocalPathFromJson(Object msg) {
         try {
-            Class<?> imageBeanClass = XposedHelpers.findClassIfExists(
-                    "com.hellotalk.talk.detail.delegate.image.IMImageBean", cl);
-            if (imageBeanClass != null) {
-                Object imageBean = XposedHelpers.callMethod(msg, "getMessageContent", imageBeanClass, false);
-                if (imageBean != null) {
-                    // 优先尝试获取原图 URL
-                    String url = (String) XposedHelpers.callMethod(imageBean, "getUrl");
-                    if (url == null || url.trim().isEmpty()) {
-                        // 降级尝试压缩图 URL
-                        url = (String) XposedHelpers.callMethod(imageBean, "getCompressedUrl");
-                    }
-                    if (url != null && !url.trim().isEmpty()) {
-                        log("【多模态视觉】成功通过 IMImageBean 拿到图片 URL: " + url);
-                        return url.trim();
+            String json = null;
+            try {
+                json = (String) XposedHelpers.callMethod(msg, "getMsgContentJson$lib_im_release");
+            } catch (Throwable t) {
+                try {
+                    json = (String) XposedHelpers.getObjectField(msg, "msgContentJson");
+                } catch (Throwable ignored) {}
+            }
+
+            if (json != null && !json.isEmpty()) {
+                // 正则捕获本地路径字段
+                Pattern pattern = Pattern.compile("\"(?:localPath|localpath)\"\\s*:\\s*\"([^\"]+)\"");
+                Matcher matcher = pattern.matcher(json);
+                if (matcher.find()) {
+                    String found = matcher.group(1);
+                    if (found != null && !found.isEmpty()) {
+                        return found.replace("\\/", "/");
                     }
                 }
             }
-        } catch (Throwable t) {
-            log("提取 IMImageBean URL 异常: " + t.getMessage());
-        }
+        } catch (Throwable ignored) {}
         return null;
     }
 
@@ -165,12 +210,14 @@ public class ChatHook {
                         msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
                     } catch (Exception ignored) {}
 
-                    // ★ 核心：精准识别 "image" 类型，通过官方 Bean 提取图片链接注入上下文
+                    // ★ 多模态标签注入：只有拿到本地路径，才给 AI 打标签！
                     if (text == null || text.isEmpty()) {
                         if ("image".equals(msgType)) {
-                            String imgUrl = extractImageUrlFromMessage(msg, cl);
-                            if (imgUrl != null) {
-                                text = "[对方发送了一张图片 | URL: " + imgUrl + " ]";
+                            String localPath = extractLocalPathFromJson(msg);
+                            if (localPath != null && localPath.contains("/storage/")) {
+                                // 留给 AITranslator 提取 Base64 的锚点标签
+                                text = "[LOCAL_IMAGE:" + localPath + "]";
+                                log("【多模态锚点】成功注入本地图片路径，请在 AITranslator 中转为 Base64: " + localPath);
                             } else {
                                 text = "[对方发送了一张图片]";
                             }
