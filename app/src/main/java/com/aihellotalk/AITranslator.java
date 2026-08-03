@@ -64,6 +64,10 @@ public class AITranslator {
     private static final Pattern JAPANESE_PATTERN = Pattern.compile("[\\u3040-\\u30FF\\uFF65-\\uFF9F\\u30FC]+");
     private static final Pattern LOCAL_IMAGE_PATTERN = Pattern.compile("\\[LOCAL_IMAGE:(.*?)\\]");
     private static final Pattern QUOTED_LOCAL_IMAGE_PATTERN = Pattern.compile("\\[QUOTED_LOCAL_IMAGE:(.*?)\\]");
+    
+    // ★ V58 新增防污染标签正则
+    private static final Pattern PURE_BRACKET_MODE_PATTERN = Pattern.compile("\\[PURE_BRACKET_MODE\\]");
+    private static final Pattern QUOTED_IMAGE_MISSING_PATTERN = Pattern.compile("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]");
 
     public static void init(String key, String url, String m) {
         apiKey = key;
@@ -143,12 +147,16 @@ public class AITranslator {
         return inSampleSize;
     }
 
+    // ★ V58 视觉解析体结构升级
     private static class ParsedVisualInput {
         String cleanText;
         List<String> contextImagePaths = new ArrayList<>();
         List<String> quotedImagePaths = new ArrayList<>();
+        boolean pureBracketMode = false;
+        boolean quotedImageMissing = false;
     }
 
+    // ★ V58 视觉标记解析引擎
     private static ParsedVisualInput parseVisualMarkers(String content) {
         ParsedVisualInput result = new ParsedVisualInput();
         if (content == null) {
@@ -157,6 +165,18 @@ public class AITranslator {
         }
 
         String working = content;
+
+        Matcher pureMatcher = PURE_BRACKET_MODE_PATTERN.matcher(working);
+        if (pureMatcher.find()) {
+            result.pureBracketMode = true;
+            working = pureMatcher.replaceAll("").trim();
+        }
+
+        Matcher quotedMissingMatcher = QUOTED_IMAGE_MISSING_PATTERN.matcher(working);
+        if (quotedMissingMatcher.find()) {
+            result.quotedImageMissing = true;
+            working = quotedMissingMatcher.replaceAll("[系统提示：当前回复目标图存在，但本地路径缺失]").trim();
+        }
 
         Matcher quotedMatcher = QUOTED_LOCAL_IMAGE_PATTERN.matcher(working);
         StringBuffer quotedSb = new StringBuffer();
@@ -177,7 +197,7 @@ public class AITranslator {
         }
         localMatcher.appendTail(localSb);
 
-        result.cleanText = localSb.toString();
+        result.cleanText = localSb.toString().trim();
         return result;
     }
 
@@ -197,6 +217,7 @@ public class AITranslator {
         return imgObj;
     }
 
+    // ★ V58 多模态消息装载引擎
     private static JSONObject createMessageObj(String role, String content) throws JSONException {
         JSONObject msgObj = new JSONObject();
         msgObj.put("role", role);
@@ -205,13 +226,23 @@ public class AITranslator {
         boolean hasContextImages = !parsed.contextImagePaths.isEmpty();
         boolean hasQuotedImages = !parsed.quotedImagePaths.isEmpty();
 
-        if (!hasContextImages && !hasQuotedImages) {
+        if (!hasContextImages && !hasQuotedImages && !parsed.quotedImageMissing) {
             msgObj.put("content", parsed.cleanText);
             return msgObj;
         }
 
         JSONArray contentArray = new JSONArray();
-        contentArray.put(createTextPart(parsed.cleanText));
+        String clean = parsed.cleanText;
+
+        if (parsed.pureBracketMode) {
+            clean = "[系统提示：这是纯括号求助模式，必须执行模式A，不要给4个翻译选项]\n" + clean;
+        }
+
+        if (parsed.quotedImageMissing) {
+            clean = clean + "\n[系统提示：当前回复目标是一张图片，但本地文件路径未获取到，请不要把背景图误认成目标图，只能结合上下文保守回答。]";
+        }
+
+        contentArray.put(createTextPart(clean));
 
         for (String path : parsed.contextImagePaths) {
             String b64 = encodeFileToBase64(path);
@@ -431,21 +462,26 @@ public class AITranslator {
                 default: sysPrompt = promptEN; break;
             }
 
+            // ★ V58 系统最高强制协议重写（防误翻译、防盲兜底）
             String universalProtocol = sysPrompt +
                     "\n\n【系统最高强制协议（多模态视觉与指令解析）】：" +
                     "\n1. 下方是【历史聊天剧本】。如果消息里附带了图片，你已经可以看到它们。" +
                     "\n2. [背景上下文图片] = 最近聊天背景，仅用于帮助理解上下文。" +
                     "\n3. [当前回复目标图] = 我此刻正在回复的焦点图，优先分析这张。" +
-                    "\n4. 剧本后，<translate> 标签内包裹的是我刚刚输入的【最新文字】。请严格判断格式，执行以下两种模式之一：" +
+                    "\n4. 如果提示中出现“当前回复目标是一张图片，但本地文件路径未获取到”，说明你不能把背景图误认为焦点图，必须保守回答。" +
+                    "\n5. 剧本后，<translate> 标签内包裹的是我刚刚输入的【最新文字】。请严格判断格式，执行以下两种模式之一：" +
 
                     "\n\n【模式A：纯对话求助模式（不翻译）】" +
-                    "\n► 触发条件：<translate> 内的文字全部被括号（() 或 （））包裹。" +
+                    "\n► 触发条件（任一满足即可）：" +
+                    "\n  a. <translate> 内的文字全部被括号（() 或 （））包裹；" +
+                    "\n  b. 提示文本中明确出现“这是纯括号求助模式，必须执行模式A”。" +
                     "\n► 你的身份：你是独立AI军师，不扮演我或对方。" +
                     "\n► 任务：结合焦点图优先、背景图次之，直接客观回答我的问题。" +
+                    "\n► 严禁：输出4个翻译选项；严禁把括号问题翻译成外语。" +
                     "\n► 输出格式：上半部分写详细解答，下半部分给一个占位选项。" +
 
                     "\n\n【模式B：标准翻译 + 附加指令/提问模式】" +
-                    "\n► 触发条件：<translate> 内存在正常中文正文，且可能附带括号要求。" +
+                    "\n► 触发条件：存在正常中文正文，且不是模式A。" +
                     "\n► 任务：" +
                     "\n  1. 括号内是给你的私下要求、风格要求、补充提问，严禁逐字翻译进外语。" +
                     "\n  2. 如括号内包含关于图片的提问，请先在 ===== 上半部分回答问题。" +
