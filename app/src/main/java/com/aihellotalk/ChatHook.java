@@ -62,7 +62,7 @@ public class ChatHook {
     private static volatile String latestRenderedImagePath = null;
     private static volatile long latestRenderedImageTime = 0;
     
-    // ★ V58 防错认兜底相关字段
+    // ★ V59 防错认兜底相关字段
     private static volatile String currentQuotedImagePath = null;
     private static volatile boolean currentQuotedImageMissing = false;
 
@@ -81,7 +81,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v58.0 (纯括号防污染 + 取消错误兜底 + 长按复制) ===");
+        log("=== Hook v59.0 (暴力缓存提取 + 纯括号防污染 + 长按复制) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -102,7 +102,10 @@ public class ChatHook {
         try { hookReplyMessageView(cl); } catch (Throwable ignored) {}
     }
 
-    // ★ V58 核心判断：是否是纯括号发问模式
+    // ==========================================
+    // ★ V59 核心新增辅助方法区 (暴力提取相关)
+    // ==========================================
+
     private static boolean isPureBracketQuery(String text) {
         if (text == null) return false;
         String s = text.trim();
@@ -110,38 +113,47 @@ public class ChatHook {
                (s.startsWith("（") && s.endsWith("）"));
     }
 
-    private static String normalizeUrl(String url) {
-        if (url == null) return null;
+    private static String safeCallString(Object obj, String methodName) {
+        if (obj == null) return null;
         try {
-            String s = url.trim();
-            if (s.isEmpty()) return null;
-
-            int q = s.indexOf('?');
-            if (q >= 0) s = s.substring(0, q);
-
-            int h = s.indexOf('#');
-            if (h >= 0) s = s.substring(0, h);
-
-            try {
-                s = URLDecoder.decode(s, "UTF-8");
-            } catch (Throwable ignored) {}
-
-            return s.trim();
-        } catch (Throwable e) {
-            return url;
+            Object r = XposedHelpers.callMethod(obj, methodName);
+            return r == null ? null : String.valueOf(r);
+        } catch (Throwable ignored) {
+            return null;
         }
     }
 
-    private static String extractFileName(String value) {
-        if (value == null || value.trim().isEmpty()) return null;
+    private static String safeNormalize(String s) {
+        if (s == null) return null;
         try {
-            String s = normalizeUrl(value);
-            if (s == null) return null;
-            int idx = s.lastIndexOf('/');
-            if (idx >= 0 && idx < s.length() - 1) {
-                return s.substring(idx + 1);
-            }
+            String x = s.trim();
+            if (x.isEmpty()) return null;
+            int q = x.indexOf('?');
+            if (q >= 0) x = x.substring(0, q);
+            int h = x.indexOf('#');
+            if (h >= 0) x = x.substring(0, h);
+            try { x = URLDecoder.decode(x, "UTF-8"); } catch (Throwable ignored) {}
+            return x.trim();
+        } catch (Throwable e) {
             return s;
+        }
+    }
+
+    private static String fileNameFromUrl(String url) {
+        try {
+            String s = safeNormalize(url);
+            if (s == null || s.isEmpty()) return null;
+            int idx = s.lastIndexOf('/');
+            if (idx >= 0 && idx < s.length() - 1) return s.substring(idx + 1);
+            return s;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static File getHelloTalkImageCacheDir() {
+        try {
+            return new File("/storage/emulated/0/Android/data/com.hellotalk/cache/hellotalk/images_/");
         } catch (Throwable e) {
             return null;
         }
@@ -178,60 +190,6 @@ public class ChatHook {
         }
     }
 
-    private static String findBestPathForImageBean(Object imageBean) {
-        if (imageBean == null) return null;
-
-        String url = null;
-        String compressedUrl = null;
-        try { url = (String) XposedHelpers.callMethod(imageBean, "getUrl"); } catch (Throwable ignored) {}
-        try { compressedUrl = (String) XposedHelpers.callMethod(imageBean, "getCompressedUrl"); } catch (Throwable ignored) {}
-
-        if (url != null && imageUrlToPathMap.containsKey(url)) return imageUrlToPathMap.get(url);
-        if (compressedUrl != null && imageUrlToPathMap.containsKey(compressedUrl)) return imageUrlToPathMap.get(compressedUrl);
-
-        String nUrl = normalizeUrl(url);
-        String nCompressed = normalizeUrl(compressedUrl);
-        if (nUrl != null && imageUrlToPathMap.containsKey(nUrl)) return imageUrlToPathMap.get(nUrl);
-        if (nCompressed != null && imageUrlToPathMap.containsKey(nCompressed)) return imageUrlToPathMap.get(nCompressed);
-
-        String urlName = extractFileName(url);
-        String compressedName = extractFileName(compressedUrl);
-
-        synchronized (recentRenderedImages) {
-            for (RenderedImageInfo info : recentRenderedImages) {
-                if (info == null || info.path == null) continue;
-                String pathName = new File(info.path).getName();
-
-                if (urlName != null && pathName.contains(urlName)) return info.path;
-                if (compressedName != null && pathName.contains(compressedName)) return info.path;
-
-                String infoUrlName = extractFileName(info.url);
-                String infoCompressedName = extractFileName(info.compressedUrl);
-
-                if (urlName != null && infoUrlName != null &&
-                        (urlName.equals(infoUrlName) || infoUrlName.contains(urlName) || urlName.contains(infoUrlName))) {
-                    return info.path;
-                }
-                if (compressedName != null && infoCompressedName != null &&
-                        (compressedName.equals(infoCompressedName) || infoCompressedName.contains(compressedName) || compressedName.contains(infoCompressedName))) {
-                    return info.path;
-                }
-            }
-        }
-
-        long now = System.currentTimeMillis();
-        synchronized (recentRenderedImages) {
-            if (!recentRenderedImages.isEmpty()) {
-                RenderedImageInfo first = recentRenderedImages.get(0);
-                if (first != null && (now - first.ts) < 8000) {
-                    return first.path;
-                }
-            }
-        }
-
-        return null;
-    }
-
     private static List<String> getRecentImagePaths(int limit) {
         List<String> result = new ArrayList<>();
         synchronized (recentRenderedImages) {
@@ -247,6 +205,88 @@ public class ChatHook {
         }
         return result;
     }
+
+    // ★ V59：底层暴力搜索本地图库核心引擎
+    private static String bruteFindLocalImagePathFromBean(Object imageBean) {
+        if (imageBean == null) return null;
+
+        String url = safeCallString(imageBean, "getUrl");
+        String compressedUrl = safeCallString(imageBean, "getCompressedUrl");
+
+        String urlNorm = safeNormalize(url);
+        String compressedNorm = safeNormalize(compressedUrl);
+
+        String urlName = fileNameFromUrl(url);
+        String compressedName = fileNameFromUrl(compressedUrl);
+
+        File dir = getHelloTalkImageCacheDir();
+        if (dir == null || !dir.exists() || !dir.isDirectory()) return null;
+
+        File[] files = dir.listFiles();
+        if (files == null || files.length == 0) return null;
+
+        // 第一轮：名字强匹配
+        for (File f : files) {
+            if (f == null || !f.exists() || f.length() <= 0) continue;
+            String name = f.getName();
+
+            if (urlName != null && !urlName.isEmpty() && name.contains(urlName)) {
+                return f.getAbsolutePath();
+            }
+            if (compressedName != null && !compressedName.isEmpty() && name.contains(compressedName)) {
+                return f.getAbsolutePath();
+            }
+        }
+
+        // 第二轮：最近图片记录里按 url/compressedUrl 特征找
+        synchronized (recentRenderedImages) {
+            for (RenderedImageInfo info : recentRenderedImages) {
+                if (info == null || info.path == null) continue;
+                File f = new File(info.path);
+                if (!f.exists() || f.length() <= 0) continue;
+
+                String infoUrl = safeNormalize(info.url);
+                String infoCompressed = safeNormalize(info.compressedUrl);
+
+                if (urlNorm != null && infoUrl != null &&
+                        (urlNorm.equals(infoUrl) || infoUrl.contains(urlNorm) || urlNorm.contains(infoUrl))) {
+                    return info.path;
+                }
+                if (compressedNorm != null && infoCompressed != null &&
+                        (compressedNorm.equals(infoCompressed) || infoCompressed.contains(compressedNorm) || compressedNorm.contains(infoCompressed))) {
+                    return info.path;
+                }
+
+                String infoName = f.getName();
+                if (urlName != null && infoName.contains(urlName)) return info.path;
+                if (compressedName != null && infoName.contains(compressedName)) return info.path;
+            }
+        }
+
+        // 第三轮：最近修改时间取 cache dir 中最新有效文件 (限制8秒内)
+        long bestTime = -1;
+        File best = null;
+        for (File f : files) {
+            if (f == null || !f.exists() || f.length() <= 0) continue;
+            long t = f.lastModified();
+            if (t > bestTime) {
+                bestTime = t;
+                best = f;
+            }
+        }
+        if (best != null) {
+            long now = System.currentTimeMillis();
+            if ((now - best.lastModified()) < 8000) {
+                return best.getAbsolutePath();
+            }
+        }
+
+        return null;
+    }
+
+    // ==========================================
+    // ★ V59 核心 Hook 区
+    // ==========================================
 
     private static void hookUltimateStealth(ClassLoader cl) {
         try {
@@ -338,11 +378,11 @@ public class ChatHook {
 
                         putImageMapping(url, filePath);
                         putImageMapping(compressedUrl, filePath);
-                        putImageMapping(normalizeUrl(url), filePath);
-                        putImageMapping(normalizeUrl(compressedUrl), filePath);
+                        putImageMapping(safeNormalize(url), filePath);
+                        putImageMapping(safeNormalize(compressedUrl), filePath);
 
-                        String urlName = extractFileName(url);
-                        String compressedName = extractFileName(compressedUrl);
+                        String urlName = fileNameFromUrl(url);
+                        String compressedName = fileNameFromUrl(compressedUrl);
                         if (urlName != null) putImageMapping("fname:" + urlName, filePath);
                         if (compressedName != null) putImageMapping("fname:" + compressedName, filePath);
 
@@ -353,18 +393,18 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ★ V58 取消错误兜底，避免指鹿为马
+    // ★ V59: 重构的深度提取引擎 (替换了旧的 URL Map 匹配)
     private static void hookReplyMessageView(ClassLoader cl) {
         try {
             Class<?> replyViewClass = XposedHelpers.findClassIfExists(
                     "com.hellotalk.talk.detail.widget.ReplyMessageView", cl);
 
             if (replyViewClass != null) {
+                // 先保留原来的入口，用于识别当前回复的是不是图片
                 XposedBridge.hookAllMethods(replyViewClass, "A", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                         Object msg = (param.args != null && param.args.length > 0) ? param.args[0] : null;
-
                         currentQuotedImagePath = null;
                         currentQuotedImageMissing = false;
 
@@ -373,43 +413,63 @@ public class ChatHook {
                         String msgType = null;
                         try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Throwable ignored) {}
 
-                        if (!"image".equals(msgType) && !"photo".equals(msgType)) {
-                            return;
+                        if ("image".equals(msgType) || "photo".equals(msgType)) {
+                            // 这里只标记“当前回复对象是图片”，不做 latest 盲狙
+                            currentQuotedImageMissing = true;
+                            log("【回复框状态】当前引用对象是图片，等待渲染层暴力反推本地路径");
+                        }
+                    }
+                });
+
+                // 真正的暴力提取点：ReplyMessageView.setImageMessageImage(IMImageBean)
+                XposedBridge.hookAllMethods(replyViewClass, "setImageMessageImage", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args == null || param.args.length < 1) return;
+                        Object imageBean = param.args[0];
+                        if (imageBean == null) return;
+
+                        String localPath = bruteFindLocalImagePathFromBean(imageBean);
+                        if (localPath != null) {
+                            File f = new File(localPath);
+                            if (f.exists() && f.length() > 0) {
+                                currentQuotedImagePath = localPath;
+                                currentQuotedImageMissing = false;
+                                log("【ReplyMessageView命中本地图】" + localPath);
+                                return;
+                            }
                         }
 
-                        try {
-                            Class<?> imageBeanClass = XposedHelpers.findClassIfExists(
-                                    "com.hellotalk.talk.detail.delegate.image.IMImageBean", cl);
-                            if (imageBeanClass == null) {
-                                currentQuotedImageMissing = true;
+                        currentQuotedImagePath = null;
+                        currentQuotedImageMissing = true;
+                        log("【ReplyMessageView未命中】回复图片存在，但本地路径仍未反推出");
+                    }
+                });
+            }
+        } catch (Throwable ignored) {}
+
+        try {
+            Class<?> replyHolderClass = XposedHelpers.findClassIfExists(
+                    "com.hellotalk.talk.detail.widget.reply.ReplyHolderView", cl);
+
+            if (replyHolderClass != null) {
+                // 备用通道：ReplyHolderView.setImageMessageImage(IMImageBean)
+                XposedBridge.hookAllMethods(replyHolderClass, "setImageMessageImage", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) throws Throwable {
+                        if (param.args == null || param.args.length < 1) return;
+                        Object imageBean = param.args[0];
+                        if (imageBean == null) return;
+
+                        String localPath = bruteFindLocalImagePathFromBean(imageBean);
+                        if (localPath != null) {
+                            File f = new File(localPath);
+                            if (f.exists() && f.length() > 0) {
+                                currentQuotedImagePath = localPath;
+                                currentQuotedImageMissing = false;
+                                log("【ReplyHolderView命中本地图】" + localPath);
                                 return;
                             }
-
-                            Object imageBean = XposedHelpers.callMethod(msg, "getMessageContent", imageBeanClass, false);
-                            if (imageBean == null) {
-                                currentQuotedImageMissing = true;
-                                return;
-                            }
-
-                            String matched = findBestPathForImageBean(imageBean);
-                            if (matched != null) {
-                                File f = new File(matched);
-                                if (f.exists() && f.length() > 0) {
-                                    currentQuotedImagePath = matched;
-                                    currentQuotedImageMissing = false;
-                                    log("【精准回复图匹配成功】" + matched);
-                                    return;
-                                }
-                            }
-
-                            // 匹配失败时，不再盲狙最近图，避免指鹿为马
-                            currentQuotedImagePath = null;
-                            currentQuotedImageMissing = true;
-                            log("【回复图匹配失败】当前引用的是图片，但未获取到本地路径，已禁止错误兜底");
-
-                        } catch (Throwable t) {
-                            currentQuotedImagePath = null;
-                            currentQuotedImageMissing = true;
                         }
                     }
                 });
@@ -813,9 +873,9 @@ public class ChatHook {
             String quoteText = null;
             try { quoteText = getQuoteReplyText(edit.getRootView()); } catch (Exception ignored) {}
 
-            String textToTranslate = text;
-            // ★ V58：判断是否为纯括号求助模式，防止文本污染
+            // ★ V59: 纯括号隔离机制完善
             boolean pureBracketMode = isPureBracketQuery(text);
+            String textToTranslate = text;
 
             if (!pureBracketMode && quoteText != null && !quoteText.trim().isEmpty()) {
                 String orig = AITranslator.getForeignFuzzy(quoteText);
@@ -831,7 +891,6 @@ public class ChatHook {
 
             List<String> recentImages = getRecentImagePaths(3);
 
-            // ★ V58：不再盲目兜底，显式告知缺失
             if (currentQuotedImagePath != null) {
                 File quoted = new File(currentQuotedImagePath);
                 if (quoted.exists() && quoted.length() > 0) {
@@ -1071,7 +1130,7 @@ public class ChatHook {
                 dialog.dismiss();
             });
 
-            // ★ 完美保留：长按选项卡，直接复制并提示！
+            // ★ 长按选项卡，直接复制并提示
             card.setOnLongClickListener(v -> {
                 try {
                     android.content.ClipboardManager clipboard = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
