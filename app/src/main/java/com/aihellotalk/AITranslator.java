@@ -366,6 +366,12 @@ public class AITranslator {
         return true;
     }
 
+    // ★ 修复：刚才不小心漏掉的方法，必须补上！
+    private static String stripFlipMarks(String s) {
+        if (s == null) return null;
+        return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
+    }
+
     public static String toChinese(String text) throws IOException {
         return toChinese(text, "0");
     }
@@ -506,7 +512,6 @@ public class AITranslator {
 
             scriptBuilder.append("\n【我的最新输入】\n");
             
-            // ★ 核心改动：加入强制模式指令，彻底锁死 AI 输出格式
             boolean forceModeA = text.contains("[PURE_BRACKET_MODE]");
             if (forceModeA) {
                 scriptBuilder.append("\n【强制模式】MODE_A_ONLY\n");
