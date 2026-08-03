@@ -1,5 +1,8 @@
 package com.aihellotalk;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.util.Base64;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -8,6 +11,7 @@ import org.json.JSONObject;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
@@ -18,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import okhttp3.MediaType;
@@ -218,12 +223,114 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // 文本清洗（核心止血）
+    // 文本清洗
     // ═══════════════════════════════════════════
 
     private static String stripFlipMarks(String s) {
         if (s == null) return null;
         return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
+    }
+
+    // ═══════════════════════════════════════════
+    // 图片转 Base64（智能压缩防崩溃）
+    // ═══════════════════════════════════════════
+
+    private static String encodeFileToBase64(String path) {
+        try {
+            File file = new File(path);
+            if (!file.exists()) return null;
+
+            // 1. 获取图片原始宽高，不加载到内存
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(path, options);
+
+            // 2. 计算缩放比例 (限制最大宽高在 1024x1024 内)
+            options.inSampleSize = calculateInSampleSize(options, 1024, 1024);
+            options.inJustDecodeBounds = false;
+
+            // 3. 真正解码并转 Base64
+            Bitmap bitmap = BitmapFactory.decodeFile(path, options);
+            if (bitmap == null) return null;
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 60, baos); // 画质压到60，保证网络传输快
+            byte[] bytes = baos.toByteArray();
+            bitmap.recycle(); // 及时释放内存
+
+            return Base64.encodeToString(bytes, Base64.NO_WRAP);
+        } catch (Throwable e) {
+            Log.e(TAG, "图片转Base64失败: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private static int calculateInSampleSize(BitmapFactory.Options options, int reqWidth, int reqHeight) {
+        final int height = options.outHeight;
+        final int width = options.outWidth;
+        int inSampleSize = 1;
+        if (height > reqHeight || width > reqWidth) {
+            final int halfHeight = height / 2;
+            final int halfWidth = width / 2;
+            while ((halfHeight / inSampleSize) >= reqHeight && (halfWidth / inSampleSize) >= reqWidth) {
+                inSampleSize *= 2;
+            }
+        }
+        return inSampleSize;
+    }
+
+    // ═══════════════════════════════════════════
+    // 构造消息对象（全新多模态解析支持）
+    // ═══════════════════════════════════════════
+
+    private static JSONObject createMessageObj(String role, String content) throws JSONException {
+        JSONObject msgObj = new JSONObject();
+        msgObj.put("role", role);
+
+        // 如果剧本中包含了我们拦截到的本地图片标签
+        if (content.contains("[LOCAL_IMAGE:")) {
+            JSONArray contentArray = new JSONArray();
+            
+            // 使用正则找出所有的 [LOCAL_IMAGE:/path/to/img.jpg]
+            Matcher m = Pattern.compile("\\[LOCAL_IMAGE:(.*?)\\]").matcher(content);
+            StringBuffer cleanText = new StringBuffer();
+            List<String> base64Images = new ArrayList<>();
+
+            while (m.find()) {
+                String path = m.group(1).trim();
+                String b64 = encodeFileToBase64(path);
+                if (b64 != null) {
+                    base64Images.add(b64);
+                    // 在纯文本部分用 [图] 代替，保持对话逻辑连贯
+                    m.appendReplacement(cleanText, "[图片已成功附带在视觉通道]");
+                } else {
+                    m.appendReplacement(cleanText, "[图片文件已过期或读取失败]");
+                }
+            }
+            m.appendTail(cleanText);
+
+            // 1. 组装纯文本部分
+            JSONObject txtObj = new JSONObject();
+            txtObj.put("type", "text");
+            txtObj.put("text", cleanText.toString());
+            contentArray.put(txtObj);
+
+            // 2. 将所有提取成功的 Base64 图片依次追加为图像模块
+            for (String b64 : base64Images) {
+                JSONObject imgObj = new JSONObject();
+                imgObj.put("type", "image_url");
+                JSONObject urlObj = new JSONObject();
+                urlObj.put("url", "data:image/jpeg;base64," + b64);
+                imgObj.put("image_url", urlObj);
+                contentArray.put(imgObj);
+            }
+
+            msgObj.put("content", contentArray);
+        } else {
+            // 普通纯文本消息
+            msgObj.put("content", content);
+        }
+        return msgObj;
     }
 
     // ═══════════════════════════════════════════
@@ -303,41 +410,6 @@ public class AITranslator {
         }
     }
 
-    // ═══════════════════════════════════════════
-    // 构造消息对象（支持 Vision）
-    // ═══════════════════════════════════════════
-
-    private static JSONObject createMessageObj(String role, String content) throws JSONException {
-        JSONObject msgObj = new JSONObject();
-        if (content.contains("[IMAGE_BASE64:")) {
-            msgObj.put("role", "user");
-            int start = content.indexOf("[IMAGE_BASE64:");
-            int end = content.indexOf("]", start);
-            String b64 = content.substring(start + 14, end);
-            String txt = content.substring(0, start) + content.substring(end + 1);
-
-            JSONArray arr = new JSONArray();
-
-            JSONObject txtObj = new JSONObject();
-            txtObj.put("type", "text");
-            txtObj.put("text", txt.trim().isEmpty() ? "请参考这张图片：" : txt.trim());
-            arr.put(txtObj);
-
-            JSONObject imgObj = new JSONObject();
-            imgObj.put("type", "image_url");
-            JSONObject urlObj = new JSONObject();
-            urlObj.put("url", "data:image/jpeg;base64," + b64);
-            imgObj.put("image_url", urlObj);
-            arr.put(imgObj);
-
-            msgObj.put("content", arr);
-        } else {
-            msgObj.put("role", role);
-            msgObj.put("content", content);
-        }
-        return msgObj;
-    }
-
     public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
         try {
             JSONArray messages = new JSONArray();
@@ -387,7 +459,7 @@ public class AITranslator {
                     scriptBuilder.append("对方: ").append(content).append("\n");
                 } else if ("assistant".equals(role)) {
                     scriptBuilder.append("我: ").append(content).append("\n");
-                } else if ("system".equals(role) && content.contains("[IMAGE_BASE64:")) {
+                } else if ("system".equals(role) && content.contains("[LOCAL_IMAGE:")) {
                     scriptBuilder.append("我(注入行为): ").append(content).append("\n");
                 }
             }
