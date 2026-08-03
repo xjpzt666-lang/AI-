@@ -55,14 +55,16 @@ public class ChatHook {
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
 
-    // ★ 全局精准视觉雷达
     private static final int RECENT_IMAGE_LIMIT = 3;
     private static final Map<String, String> imageUrlToPathMap = new ConcurrentHashMap<>();
     private static final List<RenderedImageInfo> recentRenderedImages = Collections.synchronizedList(new ArrayList<>());
 
     private static volatile String latestRenderedImagePath = null;
     private static volatile long latestRenderedImageTime = 0;
+    
+    // ★ V58 防错认兜底相关字段
     private static volatile String currentQuotedImagePath = null;
+    private static volatile boolean currentQuotedImageMissing = false;
 
     private static class RenderedImageInfo {
         final String path;
@@ -79,7 +81,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v57.0 (指哪打哪多级匹配 + 长按复制修复) ===");
+        log("=== Hook v58.0 (纯括号防污染 + 取消错误兜底 + 长按复制) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -98,6 +100,14 @@ public class ChatHook {
         
         try { hookImageRenderLayer(cl); } catch (Throwable ignored) {}
         try { hookReplyMessageView(cl); } catch (Throwable ignored) {}
+    }
+
+    // ★ V58 核心判断：是否是纯括号发问模式
+    private static boolean isPureBracketQuery(String text) {
+        if (text == null) return false;
+        String s = text.trim();
+        return (s.startsWith("(") && s.endsWith(")")) ||
+               (s.startsWith("（") && s.endsWith("）"));
     }
 
     private static String normalizeUrl(String url) {
@@ -343,6 +353,7 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
+    // ★ V58 取消错误兜底，避免指鹿为马
     private static void hookReplyMessageView(ClassLoader cl) {
         try {
             Class<?> replyViewClass = XposedHelpers.findClassIfExists(
@@ -353,7 +364,9 @@ public class ChatHook {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                         Object msg = (param.args != null && param.args.length > 0) ? param.args[0] : null;
+
                         currentQuotedImagePath = null;
+                        currentQuotedImageMissing = false;
 
                         if (msg == null) return;
 
@@ -367,29 +380,36 @@ public class ChatHook {
                         try {
                             Class<?> imageBeanClass = XposedHelpers.findClassIfExists(
                                     "com.hellotalk.talk.detail.delegate.image.IMImageBean", cl);
-                            if (imageBeanClass == null) return;
+                            if (imageBeanClass == null) {
+                                currentQuotedImageMissing = true;
+                                return;
+                            }
 
                             Object imageBean = XposedHelpers.callMethod(msg, "getMessageContent", imageBeanClass, false);
-                            if (imageBean == null) return;
+                            if (imageBean == null) {
+                                currentQuotedImageMissing = true;
+                                return;
+                            }
 
                             String matched = findBestPathForImageBean(imageBean);
                             if (matched != null) {
                                 File f = new File(matched);
                                 if (f.exists() && f.length() > 0) {
                                     currentQuotedImagePath = matched;
+                                    currentQuotedImageMissing = false;
                                     log("【精准回复图匹配成功】" + matched);
                                     return;
                                 }
                             }
 
-                            List<String> recent = getRecentImagePaths(1);
-                            if (!recent.isEmpty()) {
-                                currentQuotedImagePath = recent.get(0);
-                                log("【回复图近邻兜底】" + currentQuotedImagePath);
-                            }
+                            // 匹配失败时，不再盲狙最近图，避免指鹿为马
+                            currentQuotedImagePath = null;
+                            currentQuotedImageMissing = true;
+                            log("【回复图匹配失败】当前引用的是图片，但未获取到本地路径，已禁止错误兜底");
 
                         } catch (Throwable t) {
                             currentQuotedImagePath = null;
+                            currentQuotedImageMissing = true;
                         }
                     }
                 });
@@ -794,45 +814,44 @@ public class ChatHook {
             try { quoteText = getQuoteReplyText(edit.getRootView()); } catch (Exception ignored) {}
 
             String textToTranslate = text;
-            if (quoteText != null && !quoteText.trim().isEmpty()) {
+            // ★ V58：判断是否为纯括号求助模式，防止文本污染
+            boolean pureBracketMode = isPureBracketQuery(text);
+
+            if (!pureBracketMode && quoteText != null && !quoteText.trim().isEmpty()) {
                 String orig = AITranslator.getForeignFuzzy(quoteText);
                 if (orig != null) quoteText = orig;
                 textToTranslate = "【我要回复的对方原话】：" + quoteText.trim() + "\n【我的回复】：" + text;
+            } else {
+                textToTranslate = text; // 纯括号模式绝不拼接引用文本
+            }
+            
+            if (pureBracketMode) {
+                textToTranslate = "[PURE_BRACKET_MODE]\n" + textToTranslate;
             }
 
-            // ★ V57：全局视野 + 精准打击
             List<String> recentImages = getRecentImagePaths(3);
 
+            // ★ V58：不再盲目兜底，显式告知缺失
             if (currentQuotedImagePath != null) {
                 File quoted = new File(currentQuotedImagePath);
                 if (quoted.exists() && quoted.length() > 0) {
                     textToTranslate += "\n[QUOTED_LOCAL_IMAGE:" + currentQuotedImagePath + "]";
                     log("【焦点图】已附带回复目标图: " + currentQuotedImagePath);
+                } else {
+                    currentQuotedImagePath = null;
+                    currentQuotedImageMissing = true;
                 }
+            } else if (currentQuotedImageMissing) {
+                textToTranslate += "\n[QUOTED_IMAGE_BUT_PATH_MISSING]";
+                log("【焦点图缺失】回复的是图片，但本地路径未拿到，已显式告知AI");
             }
 
-            // 把最近 3 张图作为背景上下文图带上（避免和焦点图重复）
             for (String p : recentImages) {
                 if (p == null || p.isEmpty()) continue;
                 if (currentQuotedImagePath != null && currentQuotedImagePath.equals(p)) continue;
                 File f = new File(p);
                 if (f.exists() && f.length() > 0) {
                     textToTranslate += "\n[LOCAL_IMAGE:" + p + "]";
-                }
-            }
-
-            // 如果没有回复图，且是提问状态，确保最近一张图至少带上
-            if (currentQuotedImagePath == null) {
-                boolean isAsking = textToTranslate.contains("(") || textToTranslate.contains("（");
-                if (isAsking && recentImages.isEmpty() && latestRenderedImagePath != null) {
-                    long timeDiff = System.currentTimeMillis() - latestRenderedImageTime;
-                    if (timeDiff < 120000) {
-                        File img = new File(latestRenderedImagePath);
-                        if (img.exists() && img.length() > 0) {
-                            textToTranslate += "\n[LOCAL_IMAGE:" + latestRenderedImagePath + "]";
-                            log("【背景图兜底】带入最近渲染图片: " + latestRenderedImagePath);
-                        }
-                    }
                 }
             }
 
@@ -1035,7 +1054,7 @@ public class ChatHook {
                 card.addView(tvChinese);
             }
 
-            // ★ 修复：单点点击 -> 填入输入框，顺便也进剪贴板
+            // 单点点击：填入输入框
             card.setOnClickListener(v -> {
                 AITranslator.mySentDrafts.put(foreign.trim(), originalChineseInput.trim());
                 edit.setText(foreign);
@@ -1052,7 +1071,7 @@ public class ChatHook {
                 dialog.dismiss();
             });
 
-            // ★ 修复：长按 -> 不关弹窗，直接复制到剪贴板/输入法！
+            // ★ 完美保留：长按选项卡，直接复制并提示！
             card.setOnLongClickListener(v -> {
                 try {
                     android.content.ClipboardManager clipboard = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
