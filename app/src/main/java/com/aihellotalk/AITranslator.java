@@ -41,12 +41,10 @@ public class AITranslator {
     private static String model;
     private static OkHttpClient client;
 
-    // key = msgId, value = [foreign, chinese]
     public static final Map<String, String[]> cache = new ConcurrentHashMap<>();
     public static final Map<String, String> foreignToChinese = new ConcurrentHashMap<>();
     public static final Map<String, String> chineseToForeign = new ConcurrentHashMap<>();
 
-    // 我发送出去时，用外语文本反查中文草稿
     public static final Map<String, String> mySentDrafts = new ConcurrentHashMap<>();
 
     private static File cacheFile;
@@ -67,10 +65,6 @@ public class AITranslator {
     private static final Pattern JAPANESE_PATTERN = Pattern.compile(
             "[\\u3040-\\u30FF\\uFF65-\\uFF9F\\u30FC]+"
     );
-
-    // ═══════════════════════════════════════════
-    // 初始化
-    // ═══════════════════════════════════════════
 
     public static void init(String key, String url, String m) {
         apiKey = key;
@@ -111,29 +105,27 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // 图片转 Base64（智能压缩防崩溃）
+    // 图片转 Base64（深度压缩降维，防止 HTTP 400）
     // ═══════════════════════════════════════════
 
     private static String encodeFileToBase64(String path) {
         try {
             File file = new File(path);
-            if (!file.exists()) return null;
+            if (!file.exists() || file.length() == 0) return null;
 
-            // 1. 获取图片原始宽高，不加载到内存
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inJustDecodeBounds = true;
             BitmapFactory.decodeFile(path, options);
 
-            // 2. 计算缩放比例 (限制最大宽高在 1024x1024 内，防止网络超时或OOM)
-            options.inSampleSize = calculateInSampleSize(options, 1024, 1024);
+            // 深度缩小尺寸至 800x800 以内，极大地压缩体积
+            options.inSampleSize = calculateInSampleSize(options, 800, 800);
             options.inJustDecodeBounds = false;
 
-            // 3. 真正解码并转 Base64
             Bitmap bitmap = BitmapFactory.decodeFile(path, options);
             if (bitmap == null) return null;
 
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 60, baos);
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 50, baos); // 50% 画质，保持极小体积
             byte[] bytes = baos.toByteArray();
             bitmap.recycle();
 
@@ -157,10 +149,6 @@ public class AITranslator {
         }
         return inSampleSize;
     }
-
-    // ═══════════════════════════════════════════
-    // 好友信息与语言判断
-    // ═══════════════════════════════════════════
 
     public static void loadFriends() {
         try {
@@ -208,8 +196,7 @@ public class AITranslator {
     public static String getFriendName(String chatId) {
         try {
             if (friendsData.has(chatId)) return friendsData.getJSONObject(chatId).optString("name", chatId);
-        } catch (JSONException ignored) {
-        }
+        } catch (JSONException ignored) {}
         return chatId;
     }
 
@@ -230,8 +217,7 @@ public class AITranslator {
                 item.put("count", hist.length());
                 list.put(item);
             }
-        } catch (JSONException ignored) {
-        }
+        } catch (JSONException ignored) {}
         return list;
     }
 
@@ -268,14 +254,13 @@ public class AITranslator {
     }
 
     // ═══════════════════════════════════════════
-    // 构造消息对象（全新多模态解析支持）
+    // 构造消息对象（防 HTTP 400 熔断保护）
     // ═══════════════════════════════════════════
 
     private static JSONObject createMessageObj(String role, String content) throws JSONException {
         JSONObject msgObj = new JSONObject();
         msgObj.put("role", role);
 
-        // 如果剧本中包含了我们在 ChatHook 拦截到的本地图片标签
         if (content.contains("[LOCAL_IMAGE:")) {
             JSONArray contentArray = new JSONArray();
             
@@ -286,23 +271,22 @@ public class AITranslator {
             while (m.find()) {
                 String path = m.group(1).trim();
                 String b64 = encodeFileToBase64(path);
-                if (b64 != null) {
+                if (b64 != null && !b64.isEmpty()) {
                     base64Images.add(b64);
-                    // 替换占位符，告知AI图已发
-                    m.appendReplacement(cleanText, "[系统提示：对方发送了一张图片，该图片已附带在视觉通道中供你查看]");
+                    m.appendReplacement(cleanText, "[系统提示：对方发送了一张图片]");
                 } else {
-                    m.appendReplacement(cleanText, "[系统提示：对方发送了一张图片，但本地读取失败]");
+                    m.appendReplacement(cleanText, "[系统提示：对方发送了一张图片（读取失败）]");
                 }
             }
             m.appendTail(cleanText);
 
-            // 1. 组装纯文本部分
+            // 纯文本部分
             JSONObject txtObj = new JSONObject();
             txtObj.put("type", "text");
             txtObj.put("text", cleanText.toString());
             contentArray.put(txtObj);
 
-            // 2. 将提取成功的 Base64 拼接到消息体，实现 OpenAI Vision 格式
+            // 追加图片（多模态 API 标准格式）
             for (String b64 : base64Images) {
                 JSONObject imgObj = new JSONObject();
                 imgObj.put("type", "image_url");
@@ -314,15 +298,10 @@ public class AITranslator {
 
             msgObj.put("content", contentArray);
         } else {
-            // 普通纯文本消息
             msgObj.put("content", content);
         }
         return msgObj;
     }
-
-    // ═══════════════════════════════════════════
-    // 翻译入口 (完美融合括号提问双模式)
-    // ═══════════════════════════════════════════
 
     public static String toChinese(String text) throws IOException {
         return toChinese(text, "0");
@@ -358,7 +337,7 @@ public class AITranslator {
                     scriptBuilder.append("我: ").append(content).append("\n");
                     hasContext = true;
                 } else if ("system".equals(role) && content.contains("[LOCAL_IMAGE:")) {
-                    scriptBuilder.append("我(注入行为): ").append(content).append("\n");
+                    scriptBuilder.append("我(收到系统数据): ").append(content).append("\n");
                     hasContext = true;
                 }
             }
@@ -403,28 +382,20 @@ public class AITranslator {
                 default: sysPrompt = promptEN; break;
             }
 
-            // ★ 核心魔法：括号双模解析机制
             String universalProtocol = sysPrompt + "\n\n【系统最高强制协议（含多模态视觉与括号指令解析）】：\n" +
-                    "1. 下方是【历史聊天剧本】。如果剧本中出现“[图片已成功附带在视觉通道]”，代表你已经看到了该图片。\n" +
+                    "1. 下方是【历史聊天剧本】。如果剧本或上下文提示有图片，请参考它。\n" +
                     "2. 剧本后，<translate> 标签内包裹的是我刚刚在输入框打出的【最新文字】。请严格判断文字格式，执行以下两种模式之一：\n\n" +
                     "【模式A：纯对话求助模式（不翻译）】\n" +
-                    "► 触发条件：<translate> 内的文字**全部**被括号（() 或 （））包裹，括号外没有任何其他字符。例如：`(这张图片里是哪部动漫？)` 或 `（她这句话是生气了吗）`。\n" +
-                    "► 你的任务：不需要进行任何外语翻译！直接作为一个无所不知的AI助手，观察上下文或图片，回答我的提问。\n" +
+                    "► 触发条件：<translate> 内的文字**全部**被括号（() 或 （））包裹，括号外没有任何其他字符。例如：`(这张图片里是哪部电影？)`。\n" +
+                    "► 你的任务：不需要进行任何外语翻译！直接作为一个无所不知的AI助手，回答我的提问。\n" +
                     "► 格式强制：在 ===== 上半部分给出你的详细解答/分析。下半部分直接写一个占位选项（格式如下）。\n" +
                     "回答示例：\n" +
-                    "图片里是《火影忍者》，主要角色有鸣人、佐助...\n" +
+                    "图片里是《战狼2》，主要角色有...\n" +
                     "====================\n" +
                     "Got it|(已为你解答，请查看上方区域)|AI助手\n\n" +
                     "【模式B：标准翻译 + 附加指令模式】\n" +
-                    "► 触发条件：<translate> 内有正常的中文（不在括号里）。括号可能作为附加要求存在。例如：`看起来挺酷的（说说图片是什么动漫）` 或 `哈哈没关系`。\n" +
-                    "► 你的任务：将括号外的中文翻译为地道外语。如果带有括号，括号里的内容是给你的“风格要求”或“附加提问”。如果括号内提出了问题（比如问图片内容），你必须在 ===== 上半部分先给出解答！下半部分严格给出4个翻译选项，【严禁】把括号里的中文字面意思翻译过去！\n" +
-                    "回答示例：\n" +
-                    "解答：图片里是《火影忍者》。接下来为你翻译“看起来挺酷的”：\n" +
-                    "====================\n" +
-                    "That looks pretty cool!|那看起来挺酷的！|自然随性\n" +
-                    "The art style is amazing.|画风看起来很棒。|赞美\n" +
-                    "Wow, so cool!|哇，太酷了！|热情\n" +
-                    "It looks awesome.|它看起来棒极了。|简洁\n";
+                    "► 触发条件：<translate> 内有正常的中文（不在括号里）。例如：`看起来挺酷的（说说图片是什么电影）`。\n" +
+                    "► 你的任务：将括号外的中文翻译为地道外语。如果在括号内提出了问题，在 ===== 上半部分先给出解答！下半部分给出4个翻译选项。\n";
 
             messages.put(createMessageObj("system", universalProtocol));
 
@@ -454,15 +425,58 @@ public class AITranslator {
 
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
-            return callChatMessages(messages);
+            // 尝试带图片发起网络请求；如果服务器报 HTTP 400（比如模型不支持图片），自动降级为纯文本重试！
+            try {
+                return callChatMessages(messages);
+            } catch (IOException e) {
+                if (e.getMessage() != null && e.getMessage().contains("400")) {
+                    Log.w(TAG, "检测到 API 不支持视觉格式 (HTTP 400)，触发自动降级纯文本模式");
+                    return fallbackToPureTextRequest(messages);
+                } else {
+                    throw e;
+                }
+            }
+
         } catch (JSONException e) {
             throw new IOException("构建Messages失败");
         }
     }
 
     // ═══════════════════════════════════════════
-    // 网络层请求
+    // HTTP 400 自动降级纯文本重试机制
     // ═══════════════════════════════════════════
+
+    private static String fallbackToPureTextRequest(JSONArray originalMessages) throws IOException {
+        try {
+            JSONArray cleanMessages = new JSONArray();
+            for (int i = 0; i < originalMessages.length(); i++) {
+                JSONObject msg = originalMessages.getJSONObject(i);
+                String role = msg.getString("role");
+                Object contentObj = msg.get("content");
+
+                JSONObject cleanMsg = new JSONObject();
+                cleanMsg.put("role", role);
+
+                if (contentObj instanceof JSONArray) {
+                    JSONArray arr = (JSONArray) contentObj;
+                    StringBuilder textSb = new StringBuilder();
+                    for (int j = 0; j < arr.length(); j++) {
+                        JSONObject item = arr.getJSONObject(j);
+                        if ("text".equals(item.optString("type"))) {
+                            textSb.append(item.optString("text"));
+                        }
+                    }
+                    cleanMsg.put("content", textSb.toString());
+                } else {
+                    cleanMsg.put("content", contentObj.toString());
+                }
+                cleanMessages.put(cleanMsg);
+            }
+            return callChatMessages(cleanMessages);
+        } catch (JSONException e) {
+            throw new IOException("降级解析失败");
+        }
+    }
 
     private static String callChatSimple(String prompt) throws IOException {
         if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
@@ -553,10 +567,6 @@ public class AITranslator {
 
         return result;
     }
-
-    // ═══════════════════════════════════════════
-    // 缓存与其他功能层
-    // ═══════════════════════════════════════════
 
     private static void loadCache() {
         if (!cacheFile.exists()) return;
