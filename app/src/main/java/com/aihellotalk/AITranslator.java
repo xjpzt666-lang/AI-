@@ -46,6 +46,9 @@ public class AITranslator {
     public static final Map<String, String> chineseToForeign = new ConcurrentHashMap<>();
     public static final Map<String, String> mySentDrafts = new ConcurrentHashMap<>();
 
+    // ★ 核心性能优化：新增图片 Base64 内存缓存字典
+    private static final Map<String, String> imageBase64Cache = new ConcurrentHashMap<>();
+
     private static File cacheFile;
     private static File promptFile;
 
@@ -106,7 +109,25 @@ public class AITranslator {
         }
     }
 
+    // ★ 核心性能优化：生成图片缓存的唯一 Key（路径 + 修改时间 + 文件大小）
+    private static String buildImageCacheKey(String path) {
+        try {
+            File f = new File(path);
+            if (!f.exists()) return path;
+            return path + "_" + f.lastModified() + "_" + f.length();
+        } catch (Throwable e) {
+            return path;
+        }
+    }
+
     public static String encodeFileToBase64(String path) {
+        // ★ 核心性能优化：先查缓存，有就直接秒回，省去所有解码压缩步骤！
+        String cacheKey = buildImageCacheKey(path);
+        String cached = imageBase64Cache.get(cacheKey);
+        if (cached != null && !cached.isEmpty()) {
+            return cached;
+        }
+
         try {
             File file = new File(path);
             if (!file.exists() || file.length() == 0) return null;
@@ -152,7 +173,10 @@ public class AITranslator {
             bitmap.recycle();
             if (bestBytes == null || bestBytes.length == 0) return null;
 
-            return Base64.encodeToString(bestBytes, Base64.NO_WRAP);
+            String result = Base64.encodeToString(bestBytes, Base64.NO_WRAP);
+            // ★ 核心性能优化：把费了九牛二虎之力压好的 Base64 存进冰箱
+            imageBase64Cache.put(cacheKey, result);
+            return result;
         } catch (Throwable e) {
             Log.e(TAG, "图片转Base64失败: " + e.getMessage());
             return null;
