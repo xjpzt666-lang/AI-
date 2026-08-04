@@ -501,7 +501,6 @@ public class AITranslator {
                 default: sysPrompt = promptEN; break;
             }
 
-            // ★ 终极防干涉协议：给废话开辟特区，严守底部分隔符！
             String universalProtocol = sysPrompt +
                     "\n\n【系统最高强制协议（多模态视觉与指令解析）】：" +
                     "\n1. 下方是【历史聊天剧本】。如果消息里附带了图片，你已经可以看到它们。" +
