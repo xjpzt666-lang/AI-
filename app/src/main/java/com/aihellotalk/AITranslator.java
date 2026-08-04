@@ -67,15 +67,19 @@ public class AITranslator {
     private static final Pattern PURE_BRACKET_MODE_PATTERN = Pattern.compile("\\[PURE_BRACKET_MODE\\]");
     private static final Pattern QUOTED_IMAGE_MISSING_PATTERN = Pattern.compile("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]");
 
+    // ★ 核心改动：设置每次请求的总 Base64 字符上限 (约 675KB，保护网关)
+    private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
+
     public static void init(String key, String url, String m) {
         apiKey = key;
         apiUrl = url;
         model = m;
 
+        // ★ 核心改动：放宽视觉大包上传的超时时间
         client = new OkHttpClient.Builder()
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
-                .writeTimeout(15, TimeUnit.SECONDS)
+                .connectTimeout(20, TimeUnit.SECONDS)
+                .readTimeout(90, TimeUnit.SECONDS)
+                .writeTimeout(45, TimeUnit.SECONDS)
                 .build();
 
         cacheFile = new File("/data/data/com.hellotalk/files/htai_cache.txt");
@@ -104,6 +108,7 @@ public class AITranslator {
         }
     }
 
+    // ★ 核心改动：多轮阶梯压缩，死守 90KB 单图体积底线
     public static String encodeFileToBase64(String path) {
         try {
             File file = new File(path);
@@ -113,18 +118,44 @@ public class AITranslator {
             options.inJustDecodeBounds = true;
             BitmapFactory.decodeFile(path, options);
 
-            options.inSampleSize = calculateInSampleSize(options, 800, 800);
+            options.inSampleSize = calculateInSampleSize(options, 448, 448);
             options.inJustDecodeBounds = false;
 
             Bitmap bitmap = BitmapFactory.decodeFile(path, options);
             if (bitmap == null) return null;
 
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 50, baos);
-            byte[] bytes = baos.toByteArray();
-            bitmap.recycle();
+            int w = bitmap.getWidth();
+            int h = bitmap.getHeight();
+            int maxSide = Math.max(w, h);
+            if (maxSide > 448) {
+                float scale = 448f / maxSide;
+                int nw = Math.max(1, Math.round(w * scale));
+                int nh = Math.max(1, Math.round(h * scale));
+                Bitmap scaled = Bitmap.createScaledBitmap(bitmap, nw, nh, true);
+                if (scaled != bitmap) {
+                    bitmap.recycle();
+                    bitmap = scaled;
+                }
+            }
 
-            return Base64.encodeToString(bytes, Base64.NO_WRAP);
+            int[] qualities = new int[]{30, 22, 16, 12};
+            byte[] bestBytes = null;
+
+            for (int q : qualities) {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                bitmap.compress(Bitmap.CompressFormat.JPEG, q, baos);
+                byte[] bytes = baos.toByteArray();
+
+                bestBytes = bytes;
+                if (bytes.length <= 90 * 1024) {
+                    break;
+                }
+            }
+
+            bitmap.recycle();
+            if (bestBytes == null || bestBytes.length == 0) return null;
+
+            return Base64.encodeToString(bestBytes, Base64.NO_WRAP);
         } catch (Throwable e) {
             Log.e(TAG, "图片转Base64失败: " + e.getMessage());
             return null;
@@ -239,13 +270,20 @@ public class AITranslator {
 
         contentArray.put(createTextPart(clean));
 
-        // ★ 核心改动：把焦点图放到前面，强行转移 AI 的注意力
+        // ★ 核心改动：引入总体积预算，超额则跳过图片，保住请求
+        int totalB64Chars = 0;
+
         int qIdx = 1;
         for (String path : parsed.quotedImagePaths) {
             String b64 = encodeFileToBase64(path);
             if (b64 != null && !b64.isEmpty()) {
+                if (totalB64Chars + b64.length() > MAX_TOTAL_BASE64_CHARS) {
+                    contentArray.put(createTextPart("[当前回复目标焦点图 #" + qIdx + " 因体积限制未附带]"));
+                    continue;
+                }
                 contentArray.put(createTextPart("[当前回复目标焦点图 #" + qIdx + "]"));
                 contentArray.put(createImagePart(b64));
+                totalB64Chars += b64.length();
                 qIdx++;
             } else {
                 contentArray.put(createTextPart("[当前回复目标图读取失败]"));
@@ -256,8 +294,13 @@ public class AITranslator {
         for (String path : parsed.contextImagePaths) {
             String b64 = encodeFileToBase64(path);
             if (b64 != null && !b64.isEmpty()) {
+                if (totalB64Chars + b64.length() > MAX_TOTAL_BASE64_CHARS) {
+                    contentArray.put(createTextPart("[背景上下文辅助图片 #" + cIdx + " 因体积限制未附带]"));
+                    continue;
+                }
                 contentArray.put(createTextPart("[背景上下文辅助图片 #" + cIdx + "]"));
                 contentArray.put(createImagePart(b64));
+                totalB64Chars += b64.length();
                 cIdx++;
             } else {
                 contentArray.put(createTextPart("[背景上下文图片读取失败]"));
@@ -366,7 +409,6 @@ public class AITranslator {
         return true;
     }
 
-    // ★ 修复：刚才不小心漏掉的方法，必须补上！
     private static String stripFlipMarks(String s) {
         if (s == null) return null;
         return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
@@ -600,12 +642,16 @@ public class AITranslator {
         }
     }
 
+    // ★ 核心改动：加入日志打印 Request Body 长度，方便查明网关是否超载
     private static String executeRequest(JSONObject body) throws IOException {
+        String bodyStr = body.toString();
+        Log.i(TAG, "request body chars = " + bodyStr.length());
+        
         Request req = new Request.Builder()
                 .url(fixUrl(apiUrl))
                 .header("Authorization", "Bearer " + apiKey)
                 .header("Content-Type", "application/json")
-                .post(RequestBody.create(body.toString(), JSON_TYPE))
+                .post(RequestBody.create(bodyStr, JSON_TYPE))
                 .build();
         try (Response resp = client.newCall(req).execute()) {
             if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
