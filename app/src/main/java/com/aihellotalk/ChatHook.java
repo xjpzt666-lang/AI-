@@ -26,7 +26,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -81,7 +80,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v63.0 (防误触终极收官版) ===");
+        log("=== Hook v64.0 (极致轻量化 0 背景图版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -918,7 +917,8 @@ public class ChatHook {
                 textToTranslate = "[PURE_BRACKET_MODE]\n" + textToTranslate;
             }
 
-            List<String> recentImages = getRecentImagePaths(3);
+            // ★ 核心修改：盲抓背景图数量降为 0！
+            List<String> recentImages = getRecentImagePaths(0); 
 
             if (quotedImageSnapshot != null) {
                 File quoted = new File(quotedImageSnapshot);
