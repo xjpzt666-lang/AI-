@@ -80,7 +80,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v60.0 (稳健状态快照 + 备用入口 + 强控AI输出) ===");
+        log("=== Hook v61.0 (反转气泡满血复活版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -256,8 +256,6 @@ public class ChatHook {
                 if (compressedName != null && infoName.contains(compressedName)) return info.path;
             }
         }
-        
-        // ★ 核心改动：第三轮兜底已删除，防止错乱绑定
 
         return null;
     }
@@ -373,7 +371,6 @@ public class ChatHook {
                     "com.hellotalk.talk.detail.widget.ReplyMessageView", cl);
 
             if (replyViewClass != null) {
-                // 原有入口A
                 XposedBridge.hookAllMethods(replyViewClass, "A", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -393,7 +390,6 @@ public class ChatHook {
                     }
                 });
                 
-                // ★ 核心改动：增加 public 备用入口 B，防止私有方法被混淆导致 hook 失败
                 XposedBridge.hookAllMethods(replyViewClass, "B", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -443,7 +439,6 @@ public class ChatHook {
                     "com.hellotalk.talk.detail.widget.reply.ReplyHolderView", cl);
 
             if (replyHolderClass != null) {
-                // ★ 核心改动：增加 public 备用入口 f
                 XposedBridge.hookAllMethods(replyHolderClass, "f", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -558,12 +553,24 @@ public class ChatHook {
                     if (text.startsWith("[")) return;
                     if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
+                    // ★ 核心修复区：为你自己的消息恢复 🌐 图标追加逻辑！
                     if (isMine) {
                         String myChineseDraft = AITranslator.getDraftFuzzy(text);
-                        if (myChineseDraft != null) AITranslator.cacheResult(mid, text, myChineseDraft);
+                        if (myChineseDraft != null) {
+                            // 本次刚发出的，缓存草稿并附加地球图标
+                            AITranslator.cacheResult(mid, text, myChineseDraft);
+                            try { XposedHelpers.callMethod(bean, "setText", text + " 🌐"); } catch (Exception ignored) {}
+                        } else {
+                            // 加载历史缓存的自己发的消息，也附加地球图标
+                            String[] cached = AITranslator.getCached(mid);
+                            if (cached != null) {
+                                try { XposedHelpers.callMethod(bean, "setText", cached[0] + " 🌐"); } catch (Exception ignored) {}
+                            }
+                        }
                         return;
                     }
 
+                    // 对方发来的消息处理逻辑保持不变
                     String[] cached = AITranslator.getCached(mid);
                     if (cached != null) {
                         try { XposedHelpers.callMethod(bean, "setText", cached[1] + " 🔄"); } catch (Exception ignored) {}
@@ -881,7 +888,6 @@ public class ChatHook {
             String quoteText = null;
             try { quoteText = getQuoteReplyText(edit.getRootView()); } catch (Exception ignored) {}
 
-            // ★ 核心改动：立即生成状态快照并清空全局变量，防止残留污染！
             final String quotedImageSnapshot = currentQuotedImagePath;
             final boolean quotedMissingSnapshot = currentQuotedImageMissing;
 
@@ -905,7 +911,6 @@ public class ChatHook {
 
             List<String> recentImages = getRecentImagePaths(3);
 
-            // 用 snapshot 替代原来的全局变量
             if (quotedImageSnapshot != null) {
                 File quoted = new File(quotedImageSnapshot);
                 if (quoted.exists() && quoted.length() > 0) {
