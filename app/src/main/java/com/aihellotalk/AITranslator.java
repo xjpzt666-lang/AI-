@@ -67,7 +67,6 @@ public class AITranslator {
     private static final Pattern PURE_BRACKET_MODE_PATTERN = Pattern.compile("\\[PURE_BRACKET_MODE\\]");
     private static final Pattern QUOTED_IMAGE_MISSING_PATTERN = Pattern.compile("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]");
 
-    // ★ 核心改动：设置每次请求的总 Base64 字符上限 (约 675KB，保护网关)
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
 
     public static void init(String key, String url, String m) {
@@ -75,7 +74,6 @@ public class AITranslator {
         apiUrl = url;
         model = m;
 
-        // ★ 核心改动：放宽视觉大包上传的超时时间
         client = new OkHttpClient.Builder()
                 .connectTimeout(20, TimeUnit.SECONDS)
                 .readTimeout(90, TimeUnit.SECONDS)
@@ -108,7 +106,6 @@ public class AITranslator {
         }
     }
 
-    // ★ 核心改动：多轮阶梯压缩，死守 90KB 单图体积底线
     public static String encodeFileToBase64(String path) {
         try {
             File file = new File(path);
@@ -270,7 +267,6 @@ public class AITranslator {
 
         contentArray.put(createTextPart(clean));
 
-        // ★ 核心改动：引入总体积预算，超额则跳过图片，保住请求
         int totalB64Chars = 0;
 
         int qIdx = 1;
@@ -505,6 +501,7 @@ public class AITranslator {
                 default: sysPrompt = promptEN; break;
             }
 
+            // ★ 终极收官改动：将用户的严厉黑名单写死在最高系统协议里
             String universalProtocol = sysPrompt +
                     "\n\n【系统最高强制协议（多模态视觉与指令解析）】：" +
                     "\n1. 下方是【历史聊天剧本】。如果消息里附带了图片，你已经可以看到它们。" +
@@ -513,6 +510,12 @@ public class AITranslator {
                     "\n4. 如果提示中出现“当前回复目标是一张图片，但本地文件路径未获取到”，说明你不能把背景图误认为焦点图，必须保守回答。" +
                     "\n5. 剧本后，<translate> 标签内包裹的是我刚刚输入的【最新文字】。请严格判断格式，执行以下两种模式之一：" +
                     "\n6. 【绝对服从】：如果用户消息中出现【强制模式】MODE_A_ONLY，你必须无条件执行【模式A】，严禁出现任何翻译选项！" +
+                    "\n7. 【全局违禁黑名单（最高优先级）】：为了保证语气自然得体，你在任何语言的输出中，绝对禁止使用以下烂俗口头禅、油腻称呼及特定标点（一旦使用视为严重违规）：" +
+                    "\n   - 俄语违禁：Бро, Друг, Дружище, Братан, Дорогая, Милая, Солнышко, Зайка, честно говоря, если честно, на самом деле, собственно говоря, лол, о боже, капец, реально, клянусь, Ой" +
+                    "\n   - 乌语违禁：чесно кажучи, якщо чесно, відверто кажучи, насправді, взагалі-то, слухай, лол, о боже, капець, реально, клянуся, Тю" +
+                    "\n   - 英语违禁：lowkey, Jeez, wait, honestly, Bruh, Super, Man, bro, crap, dude, no cap, Yo, Fr, zero, Seriously, Let's be real, dudes, folks, chicks, Ugh" +
+                    "\n   - 标点违禁：破折号(—)、分号(;)、冒号(:)" +
+                    "\n   注意：无论是解答还是翻译，你都必须用更高级、地道的方式表达，全篇不得出现上述黑名单字符！" +
 
                     "\n\n【模式A：纯对话求助模式（不翻译）】" +
                     "\n► 触发条件（任一满足即可）：" +
@@ -642,7 +645,6 @@ public class AITranslator {
         }
     }
 
-    // ★ 核心改动：加入日志打印 Request Body 长度，方便查明网关是否超载
     private static String executeRequest(JSONObject body) throws IOException {
         String bodyStr = body.toString();
         Log.i(TAG, "request body chars = " + bodyStr.length());
