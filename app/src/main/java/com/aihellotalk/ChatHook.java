@@ -24,6 +24,7 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -643,7 +644,6 @@ public class ChatHook {
                 int iconStart = s.length() - 2;
                 if (offset < iconStart) return;
                 
-                // ★ 核心防误触修复：仅在手指抬起 (ACTION_UP) 时翻转，完美避开滑动误触！
                 if (ev.getAction() == MotionEvent.ACTION_UP) {
                     String clean = s.substring(0, iconStart).trim();
                     clean = clean.replaceAll("[\\s🌐🔄]+$", ""); 
@@ -662,7 +662,6 @@ public class ChatHook {
                     }
                     param.setResult(true);
                 } else if (ev.getAction() == MotionEvent.ACTION_DOWN) {
-                    // 按下时拦截原生事件，不让底层文本抢夺焦点，但不出发布局反转
                     param.setResult(true);
                 }
             }
