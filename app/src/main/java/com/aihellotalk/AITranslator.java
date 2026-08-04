@@ -410,6 +410,26 @@ public class AITranslator {
         return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
     }
 
+    /**
+     * ★ 新增：判断“较早历史”里哪些行值得保留
+     */
+    private static boolean isImportantHistoryLine(String content) {
+        if (content == null) return false;
+        String s = content.trim();
+        if (s.isEmpty()) return false;
+
+        if (s.length() >= 20) return true;
+        if (s.contains("[") || s.contains("]")) return true;
+        if (s.contains("(") || s.contains("（")) return true;
+
+        String lower = s.toLowerCase();
+        if (lower.contains("image") || lower.contains("photo") || lower.contains("picture")) return true;
+        if (s.contains("图片") || s.contains("动漫") || s.contains("角色") || s.contains("这张") || s.contains("那张")) return true;
+        if (s.contains("回复") || s.contains("原话")) return true;
+
+        return false;
+    }
+
     public static String toChinese(String text) throws IOException {
         return toChinese(text, "0");
     }
@@ -535,10 +555,37 @@ public class AITranslator {
             StringBuilder scriptBuilder = new StringBuilder();
             scriptBuilder.append("【历史聊天剧本】\n");
 
-            int maxChatMessages = 60;
-            int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
+            // ★ 优化：最近18条原文 + 更早最多12条重要历史
+            int recentRawCount = 18;
+            int earlyImportantLimit = 12;
+            int splitIdx = Math.max(0, fullHistory.length() - recentRawCount);
 
-            for (int i = startIdx; i < fullHistory.length(); i++) {
+            List<String> earlyImportant = new ArrayList<>();
+            for (int i = 0; i < splitIdx; i++) {
+                JSONObject msg = fullHistory.getJSONObject(i);
+                String role = msg.optString("role", "");
+                String content = msg.optString("content", "");
+
+                if (!isImportantHistoryLine(content)) continue;
+
+                if ("user".equals(role)) {
+                    earlyImportant.add("对方: " + content);
+                } else if ("assistant".equals(role)) {
+                    earlyImportant.add("我: " + content);
+                }
+            }
+
+            if (!earlyImportant.isEmpty()) {
+                scriptBuilder.append("【较早关键上下文】\n");
+                int startImportant = Math.max(0, earlyImportant.size() - earlyImportantLimit);
+                for (int i = startImportant; i < earlyImportant.size(); i++) {
+                    scriptBuilder.append(earlyImportant.get(i)).append("\n");
+                }
+                scriptBuilder.append("\n");
+            }
+
+            scriptBuilder.append("【最近对话原文】\n");
+            for (int i = splitIdx; i < fullHistory.length(); i++) {
                 JSONObject msg = fullHistory.getJSONObject(i);
                 String role = msg.optString("role", "");
                 String content = msg.optString("content", "");
@@ -551,7 +598,7 @@ public class AITranslator {
             }
 
             scriptBuilder.append("\n【我的最新输入】\n");
-            
+
             boolean forceModeA = text.contains("[PURE_BRACKET_MODE]");
             if (forceModeA) {
                 scriptBuilder.append("\n【强制模式】MODE_A_ONLY\n");
@@ -642,16 +689,24 @@ public class AITranslator {
 
     private static String executeRequest(JSONObject body) throws IOException {
         String bodyStr = body.toString();
+        Log.i(TAG, "model = " + model);
         Log.i(TAG, "request body chars = " + bodyStr.length());
-        
+        Log.i(TAG, "request body bytes = " + bodyStr.getBytes().length);
+
         Request req = new Request.Builder()
                 .url(fixUrl(apiUrl))
                 .header("Authorization", "Bearer " + apiKey)
                 .header("Content-Type", "application/json")
                 .post(RequestBody.create(bodyStr, JSON_TYPE))
                 .build();
+
         try (Response resp = client.newCall(req).execute()) {
-            if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
+            if (!resp.isSuccessful()) {
+                String err = resp.body() != null ? resp.body().string() : "";
+                Log.e(TAG, "HTTP " + resp.code() + " body=" + err);
+                throw new IOException("HTTP " + resp.code() + " " + err);
+            }
+
             return new JSONObject(resp.body().string())
                     .getJSONArray("choices")
                     .getJSONObject(0)
