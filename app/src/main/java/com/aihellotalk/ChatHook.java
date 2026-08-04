@@ -80,7 +80,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v61.0 (反转气泡满血复活版) ===");
+        log("=== Hook v62.0 (终极暴力清洗图标繁殖 Bug) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -219,7 +219,6 @@ public class ChatHook {
         File[] files = dir.listFiles();
         if (files == null || files.length == 0) return null;
 
-        // 第一轮：名字强匹配
         for (File f : files) {
             if (f == null || !f.exists() || f.length() <= 0) continue;
             String name = f.getName();
@@ -232,7 +231,6 @@ public class ChatHook {
             }
         }
 
-        // 第二轮：特征找
         synchronized (recentRenderedImages) {
             for (RenderedImageInfo info : recentRenderedImages) {
                 if (info == null || info.path == null) continue;
@@ -553,27 +551,28 @@ public class ChatHook {
                     if (text.startsWith("[")) return;
                     if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
-                    // ★ 核心修复区：为你自己的消息恢复 🌐 图标追加逻辑！
+                    // ★ 核心防繁殖修复：自己发的消息，清空末尾可能残留的所有图标，再贴新图标！
                     if (isMine) {
                         String myChineseDraft = AITranslator.getDraftFuzzy(text);
                         if (myChineseDraft != null) {
-                            // 本次刚发出的，缓存草稿并附加地球图标
                             AITranslator.cacheResult(mid, text, myChineseDraft);
-                            try { XposedHelpers.callMethod(bean, "setText", text + " 🌐"); } catch (Exception ignored) {}
+                            String cleanText = text.replaceAll("[\\s🌐🔄]+$", "");
+                            try { XposedHelpers.callMethod(bean, "setText", cleanText + " 🌐"); } catch (Exception ignored) {}
                         } else {
-                            // 加载历史缓存的自己发的消息，也附加地球图标
                             String[] cached = AITranslator.getCached(mid);
                             if (cached != null) {
-                                try { XposedHelpers.callMethod(bean, "setText", cached[0] + " 🌐"); } catch (Exception ignored) {}
+                                String cleanCached = cached[0].replaceAll("[\\s🌐🔄]+$", "");
+                                try { XposedHelpers.callMethod(bean, "setText", cleanCached + " 🌐"); } catch (Exception ignored) {}
                             }
                         }
                         return;
                     }
 
-                    // 对方发来的消息处理逻辑保持不变
+                    // ★ 核心防繁殖修复：对方发来的消息同样处理！
                     String[] cached = AITranslator.getCached(mid);
                     if (cached != null) {
-                        try { XposedHelpers.callMethod(bean, "setText", cached[1] + " 🔄"); } catch (Exception ignored) {}
+                        String cleanCached = cached[1].replaceAll("[\\s🌐🔄]+$", "");
+                        try { XposedHelpers.callMethod(bean, "setText", cleanCached + " 🔄"); } catch (Exception ignored) {}
                         return;
                     }
 
@@ -588,7 +587,9 @@ public class ChatHook {
                             String t = AITranslator.toChinese(finalText, thisChatId);
                             if (t != null && !t.trim().isEmpty() && !t.equals(finalText)) {
                                 AITranslator.cacheResult(finalMid, finalText, t);
-                                try { XposedHelpers.callMethod(finalBean, "setText", t + " 🔄"); } catch (Exception ignored) {}
+                                // ★ 核心防繁殖修复：刚翻译出来的结果也清空并贴标！
+                                String cleanResult = t.replaceAll("[\\s🌐🔄]+$", "");
+                                try { XposedHelpers.callMethod(finalBean, "setText", cleanResult + " 🔄"); } catch (Exception ignored) {}
                             }
                         } catch (Exception ignored) {
                         } finally {
@@ -646,12 +647,20 @@ public class ChatHook {
                 if (offset < iconStart) return;
                 if (ev.getAction() == MotionEvent.ACTION_DOWN) {
                     String clean = s.substring(0, iconStart).trim();
+                    // ★ 核心防繁殖修复：触控翻转时，强力清除字符串末尾可能挂着的任何残留图标和空格！
+                    clean = clean.replaceAll("[\\s🌐🔄]+$", ""); 
                     if (s.endsWith(" 🔄")) {
                         String orig = AITranslator.getForeignByChinese(clean);
-                        if (orig != null && !orig.equals(clean)) tv.setText(orig + " 🌐");
+                        if (orig != null && !orig.equals(clean)) {
+                            orig = orig.replaceAll("[\\s🌐🔄]+$", "");
+                            tv.setText(orig + " 🌐");
+                        }
                     } else if (s.endsWith(" 🌐")) {
                         String zh = AITranslator.getChineseByForeign(clean);
-                        if (zh != null && !zh.equals(clean)) tv.setText(zh + " 🔄");
+                        if (zh != null && !zh.equals(clean)) {
+                            zh = zh.replaceAll("[\\s🌐🔄]+$", "");
+                            tv.setText(zh + " 🔄");
+                        }
                     }
                 }
                 param.setResult(true);
@@ -1130,7 +1139,6 @@ public class ChatHook {
                 card.addView(tvChinese);
             }
 
-            // 单点点击：填入输入框
             card.setOnClickListener(v -> {
                 AITranslator.mySentDrafts.put(foreign.trim(), originalChineseInput.trim());
                 edit.setText(foreign);
@@ -1147,7 +1155,6 @@ public class ChatHook {
                 dialog.dismiss();
             });
 
-            // ★ 长按复制保留
             card.setOnLongClickListener(v -> {
                 try {
                     android.content.ClipboardManager clipboard = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
