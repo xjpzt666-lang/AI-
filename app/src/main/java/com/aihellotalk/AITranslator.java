@@ -46,6 +46,7 @@ public class AITranslator {
     public static final Map<String, String> chineseToForeign = new ConcurrentHashMap<>();
     public static final Map<String, String> mySentDrafts = new ConcurrentHashMap<>();
 
+    // 图片压缩结果缓存，避免重复压图拖慢
     private static final Map<String, String> imageBase64Cache = new ConcurrentHashMap<>();
 
     private static File cacheFile;
@@ -69,6 +70,7 @@ public class AITranslator {
     private static final Pattern PURE_BRACKET_MODE_PATTERN = Pattern.compile("\\[PURE_BRACKET_MODE\\]");
     private static final Pattern QUOTED_IMAGE_MISSING_PATTERN = Pattern.compile("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]");
 
+    // 保留你现在的多图预算
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
 
     public static void init(String key, String url, String m) {
@@ -289,6 +291,7 @@ public class AITranslator {
 
         int totalB64Chars = 0;
 
+        // 焦点图优先
         int qIdx = 1;
         for (String path : parsed.quotedImagePaths) {
             String b64 = encodeFileToBase64(path);
@@ -306,6 +309,7 @@ public class AITranslator {
             }
         }
 
+        // 背景图随后
         int cIdx = 1;
         for (String path : parsed.contextImagePaths) {
             String b64 = encodeFileToBase64(path);
@@ -406,14 +410,14 @@ public class AITranslator {
     public static boolean isChineseOnly(String text) {
         if (text == null || text.trim().isEmpty()) return false;
         if (containsJapanese(text)) return false;
-        
+
         boolean hasChinese = false;
         boolean hasForeignAlpha = false;
-        
+
         for (char c : text.toCharArray()) {
             if (!hasForeignAlpha && String.valueOf(c).matches("[a-zA-Zа-яА-ЯёЁіІїЇєЄґҐ\\uAC00-\\uD7AFáéíóúÁÉÍÓÚñÑüÜäöüßÄÖÜ]")) {
                 hasForeignAlpha = true;
-                break; 
+                break;
             }
             if (!hasChinese) {
                 Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
@@ -431,10 +435,10 @@ public class AITranslator {
     public static boolean needTranslateToChinese(String text) {
         if (text == null || text.trim().isEmpty()) return false;
         if (containsJapanese(text)) return false;
-        
+
         boolean hasChinese = false;
         boolean hasForeignAlpha = false;
-        
+
         for (char c : text.toCharArray()) {
             if (!hasForeignAlpha && String.valueOf(c).matches("[a-zA-Zа-яА-ЯёЁіІїЇєЄґҐ\\uAC00-\\uD7AFáéíóúÁÉÍÓÚñÑüÜäöüßÄÖÜ]")) {
                 hasForeignAlpha = true;
@@ -450,10 +454,9 @@ public class AITranslator {
             }
             if (hasChinese && hasForeignAlpha) break;
         }
-        
+
         if (!hasChinese) return true;
-        if (hasForeignAlpha) return true; 
-        
+        if (hasForeignAlpha) return true;
         return false;
     }
 
@@ -603,7 +606,7 @@ public class AITranslator {
             }
 
             scriptBuilder.append("\n【我的最新输入】\n");
-            
+
             boolean forceModeA = text.contains("[PURE_BRACKET_MODE]");
             if (forceModeA) {
                 scriptBuilder.append("\n【强制模式】MODE_A_ONLY\n");
@@ -695,43 +698,44 @@ public class AITranslator {
     private static String executeRequest(JSONObject body) throws IOException {
         String bodyStr = body.toString();
         Log.i(TAG, "request body chars = " + bodyStr.length());
-        
+
         Request req = new Request.Builder()
                 .url(fixUrl(apiUrl))
                 .header("Authorization", "Bearer " + apiKey)
                 .header("Content-Type", "application/json")
                 .post(RequestBody.create(bodyStr, JSON_TYPE))
                 .build();
+
         try (Response resp = client.newCall(req).execute()) {
             String responseBody = resp.body() != null ? resp.body().string() : "";
-            
+
             if (!resp.isSuccessful()) {
                 throw new IOException("HTTP状态码 " + resp.code() + "\n官方详细报错: " + responseBody);
             }
-            
+
             try {
                 JSONObject json = new JSONObject(responseBody);
                 JSONObject choice = json.getJSONArray("choices").getJSONObject(0);
-                
+
                 String finishReason = choice.optString("finish_reason", "unknown");
                 JSONObject message = choice.getJSONObject("message");
                 String content = message.optString("content", "").trim();
-                
+
                 if ("content_filter".equalsIgnoreCase(finishReason) || "safety".equalsIgnoreCase(finishReason)) {
                     throw new IOException("触发了底层【安全审查机制】(可能涉及敏感词汇)，被强行中断。");
                 }
-                
+
                 if (content.isEmpty()) {
                     throw new IOException("大模型返回了空数据 (finish_reason: " + finishReason + ")。");
                 }
-                
+
                 return content;
             } catch (Exception e) {
                 if (e instanceof IOException) throw e;
                 throw new IOException("JSON解析失败，API返回格式异常。\n内容: " + responseBody);
             }
         } catch (IOException e) {
-            throw e; 
+            throw e;
         } catch (Exception e) {
             throw new IOException("网络请求发生未知错误: " + e.getMessage());
         }
@@ -972,3 +976,6 @@ public class AITranslator {
         }
     }
 }
+
+                                  ```
+                                  </UploadFile>这是我目前模块的最新代码。我不知道它有没有被其它ai折腾废。因为有一次我在hellotalk输入框点击 “译”翻译的外语连带🌐一起发出去给对方了，本来🌐只是用来我翻转查看对方原文跟我的原文的，没想到它竟然带着翻译好的外语一块发给对方去了。然后我叫其它ai解决问题，没想到那个ai是智障越解决越倒退，我甚至都不知道它有没有阉割我的功能，欺负我是小白。然后的话我在输入框输入 中文点“译”经常什么反应都没有，弹窗也不弹窗，什么提示都没有，只是过一会“译”变回可点状态罢了，然后api后台明明是我显示已经调用了的，然后叫其它ai修改了一下，我好像发现是因为有敏感词隐藏被ai拒绝了，我也不确定。然后呢就是跟hellotalk好友聊天，这个模块经常搞混消息，比如我跟乌克兰语朋友聊天，模块经常把我跟之前说英语的好友聊天翻译过的话记到跟乌克兰好友聊天的这个记录来。我真的不敢再给其它ai弄了，我感觉我的模块都快被它们搞废了。快看看我的代码有没有被搞废，我现在只相信你，如果有必要可以分析hellotalk apk 一起核对，就是当前apk随时欢迎。
