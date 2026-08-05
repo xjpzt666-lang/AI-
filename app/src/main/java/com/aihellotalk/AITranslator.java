@@ -706,7 +706,7 @@ public class AITranslator {
             String responseBody = resp.body() != null ? resp.body().string() : "";
             
             if (!resp.isSuccessful()) {
-                throw new IOException("HTTP报错 " + resp.code() + "，请检查网络或API");
+                throw new IOException("HTTP状态码 " + resp.code() + "\n官方详细报错: " + responseBody);
             }
             
             try {
@@ -717,24 +717,23 @@ public class AITranslator {
                 JSONObject message = choice.getJSONObject("message");
                 String content = message.optString("content", "").trim();
                 
-                // 只做最安静的异常抛出，把提示压缩成一句话
                 if ("content_filter".equalsIgnoreCase(finishReason) || "safety".equalsIgnoreCase(finishReason)) {
-                    throw new IOException("内容触发了安全审查被拦截，请换个说法");
+                    throw new IOException("触发了底层【安全审查机制】(可能涉及敏感词汇)，被强行中断。");
                 }
                 
                 if (content.isEmpty()) {
-                    throw new IOException("大模型未返回内容，请稍后重试");
+                    throw new IOException("大模型返回了空数据 (finish_reason: " + finishReason + ")。");
                 }
                 
                 return content;
             } catch (Exception e) {
                 if (e instanceof IOException) throw e;
-                throw new IOException("API返回的数据格式异常");
+                throw new IOException("JSON解析失败，API返回格式异常。\n内容: " + responseBody);
             }
         } catch (IOException e) {
             throw e; 
         } catch (Exception e) {
-            throw new IOException("请求错误: " + e.getMessage());
+            throw new IOException("网络请求发生未知错误: " + e.getMessage());
         }
     }
 
