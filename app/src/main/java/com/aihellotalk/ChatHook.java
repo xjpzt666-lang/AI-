@@ -80,7 +80,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v67.0 (防静默崩溃终极版) ===");
+        log("=== Hook v68.0 (雷达全开捕获版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -978,7 +978,19 @@ public class ChatHook {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.88f);
-                        Toast.makeText(edit.getContext(), "翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        
+                        // ★★★ 终极拦截：无论什么错误，都必须用系统的强弹窗展示，彻底告别被吞掉的 Toast！ ★★★
+                        new AlertDialog.Builder(edit.getContext())
+                                .setTitle("🚨 底层 API 报错 (被抓现行)")
+                                .setMessage("翻译被强行中断！\n\n原因：\n" + e.getMessage() + "\n\n(之前你没看到提示，是因为手机系统拦截了悬浮 Toast，现在强制弹窗！)")
+                                .setPositiveButton("复制错误文本", (d, w) -> {
+                                    try {
+                                        android.content.ClipboardManager cm = (android.content.ClipboardManager) edit.getContext().getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                                        cm.setPrimaryClip(android.content.ClipData.newPlainText("Error", e.getMessage()));
+                                    } catch (Exception ignored) {}
+                                })
+                                .setNegativeButton("关闭", null)
+                                .show();
                     });
                 }
             }).start();
@@ -1023,7 +1035,18 @@ public class ChatHook {
     }
 
     private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput) {
-        if (result == null || result.trim().isEmpty()) return;
+        android.content.Context ctx = edit.getContext();
+
+        // ★★★ 终极拦截：大模型返回空数据，彻底杜绝无反应假死！ ★★★
+        if (result == null || result.trim().isEmpty()) {
+            new AlertDialog.Builder(ctx)
+                    .setTitle("🤬 离谱：大模型返回了空包弹！")
+                    .setMessage("后台 API 确实调用成功了，但大模型发神经，什么都没输出（返回了纯空白）。\n\n这通常是因为它触发了自我审查机制，或者单纯脑抽了。请稍微改几个字换个说法再试一次！")
+                    .setPositiveButton("知道了", null)
+                    .show();
+            return;
+        }
+
         String analysisText = "";
         String optionsText = "";
         String[] splitData = result.split("={3,}");
@@ -1062,8 +1085,6 @@ public class ChatHook {
                 if (!foreignText.isEmpty()) parsedItems.add(new String[]{foreignText, chineseMean, labelText});
             }
         }
-
-        android.content.Context ctx = edit.getContext();
 
         // ★★★ 核心修复：如果解析失败，不要静默崩溃，把大模型的原话弹出来当面审判！ ★★★
         if (parsedItems.isEmpty()) {
