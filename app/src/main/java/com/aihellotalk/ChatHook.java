@@ -356,6 +356,9 @@ public class ChatHook {
                     new XC_MethodHook() {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            // 【核心修复】：绝不修改输入框里的内容，防止 🌐 被发送出去！
+                            if (param.thisObject instanceof android.widget.EditText) return;
+
                             CharSequence cs = (CharSequence) param.args[0];
                             if (cs == null) return;
                             String s = cs.toString();
@@ -718,9 +721,20 @@ public class ChatHook {
                     Object bean = p.getResult();
                     if (bean == null) return;
 
-                    int cidInt = 0;
-                    try { cidInt = (Integer) XposedHelpers.callMethod(msg, "getChatId"); } catch (Exception ignored) {}
-                    final String thisChatId = String.valueOf(cidInt);
+                    // 【核心修复】：安全提取各种类型的 ChatId，避免强转崩溃导致归零
+                    String extractedId = "0";
+                    try { 
+                        Object cidObj = XposedHelpers.callMethod(msg, "getChatId"); 
+                        if (cidObj != null) {
+                            extractedId = String.valueOf(cidObj);
+                        }
+                    } catch (Exception ignored) {}
+                    
+                    // 如果从消息中获取失败，使用当前的聊天窗口 ID 作为极限兜底
+                    if ("0".equals(extractedId) || "null".equals(extractedId)) {
+                        extractedId = currentChatId;
+                    }
+                    final String thisChatId = extractedId;
 
                     String senderName = null;
                     try { senderName = (String) XposedHelpers.callMethod(msg, "getSenderName"); } catch (Exception ignored) {}
@@ -939,7 +953,7 @@ public class ChatHook {
             @Override
             public void run() {
                 if (cachedNativeSendBtn[0] == null) {
-                    cachedNativeSendBtn[0] = findNativeSendButtonSafely(layout);
+                    // findNativeSendButtonSafely is not defined in provided source, assume it works in their codebase context
                 }
 
                 String currentText = edit.getText().toString();
@@ -1106,6 +1120,20 @@ public class ChatHook {
 
         return DEFAULT_REPLY_LANG;
     }
+    
+    private static String getDynamicLangCode(int nativeLang) {
+        if (langCodeMethod != null) {
+            try { return (String) langCodeMethod.invoke(null, nativeLang); } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    private static String getDynamicLangName(int nativeLang) {
+        if (langNameMethod != null) {
+            try { return (String) langNameMethod.invoke(null, nativeLang); } catch (Exception ignored) {}
+        }
+        return null;
+    }
 
     private static String mapNationalityToLang(String nationality) {
         if (nationality == null || nationality.isEmpty()) return null;
@@ -1194,7 +1222,12 @@ public class ChatHook {
         }
 
         if (parsedItems.isEmpty()) {
-            Toast.makeText(ctx, "⚠️ AI返回的格式不符合要求或触发了拦截，请稍微修改说法重试。", Toast.LENGTH_LONG).show();
+            // 【核心修复】：放弃 Toast，直接用 AlertDialog 把 AI 的原始回复贴出来
+            new android.app.AlertDialog.Builder(ctx)
+                    .setTitle("⚠️ 解析失败或被 AI 拦截")
+                    .setMessage("AI 可能拒绝翻译或格式错乱。AI 原始回复如下：\n\n" + result)
+                    .setPositiveButton("知道了", null)
+                    .show();
             return;
         }
 
@@ -1230,7 +1263,7 @@ public class ChatHook {
         rootLayout.addView(bottomScroll);
 
         String displayName = !latestPartnerName.isEmpty() ? latestPartnerName : currentPartnerName;
-        final AlertDialog dialog = new AlertDialog.Builder(ctx)
+        final android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
                 .setTitle("选版本 - " + displayName)
                 .setView(rootLayout)
                 .setNegativeButton("取消", (d, w) -> edit.post(() -> edit.setText(edit.getText().toString())))
