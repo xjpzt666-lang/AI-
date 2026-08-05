@@ -1,6 +1,5 @@
 package com.aihellotalk;
 
-import android.app.AlertDialog;
 import android.content.ClipData;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -24,7 +23,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -37,10 +35,10 @@ public class ChatHook {
     private static final String TAG = "HT_AI";
     private static final String DEFAULT_REPLY_LANG = "en";
 
-    private static String currentChatId = "0";
-    private static int currentChatType = 1;
-    private static String currentPartnerName = "";
-    private static int partnerLang = 1;
+    private static volatile String currentChatId = "0";
+    private static volatile int currentChatType = 1;
+    private static volatile String currentPartnerName = "";
+    private static volatile int partnerLang = 1;
 
     private static volatile String latestNationality = "";
     private static volatile int latestNativeLang = 1;
@@ -50,19 +48,19 @@ public class ChatHook {
 
     private static final Set<String> translating = ConcurrentHashMap.newKeySet();
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
-    private static final Map<String, String> chatRequestMap = new ConcurrentHashMap<>();
-    private static final Map<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, String> chatRequestMap = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
 
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
 
     private static final int RECENT_IMAGE_LIMIT = 3;
-    private static final Map<String, String> imageUrlToPathMap = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, String> imageUrlToPathMap = new ConcurrentHashMap<>();
     private static final List<RenderedImageInfo> recentRenderedImages = Collections.synchronizedList(new ArrayList<>());
 
     private static volatile String latestRenderedImagePath = null;
     private static volatile long latestRenderedImageTime = 0;
-    
+
     private static volatile String currentQuotedImagePath = null;
     private static volatile boolean currentQuotedImageMissing = false;
 
@@ -81,7 +79,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v78.0 (最终修复版：无损UI渲染 + 绝对防同步) ===");
+        log("=== Hook v80.0 (止损稳态版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -98,40 +96,24 @@ public class ChatHook {
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         try { hookUltimateStealth(cl); } catch (Throwable ignored) {}
-        
+
         try { hookImageRenderLayer(cl); } catch (Throwable ignored) {}
         try { hookReplyMessageView(cl); } catch (Throwable ignored) {}
     }
 
-    // ★ 完美解法：只在本地 UI 绘制时，使用 Spannable 动态贴上 🌐，绝对不破坏富文本，也绝不同步到服务器！
-    private static void hookTextViewRender(ClassLoader cl) {
-        try {
-            XposedHelpers.findAndHookMethod("com.hellotalk.lib.ui.text.view.HTCompatTextView", cl, "setText", CharSequence.class, TextView.BufferType.class, new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                    CharSequence cs = (CharSequence) param.args[0];
-                    if (cs == null) return;
-                    String s = cs.toString();
+    // =========================================================
+    // 基础工具
+    // =========================================================
 
-                    if (s.endsWith(" 🌐") || s.endsWith(" 🔄")) return;
-
-                    // 只针对你发出去的消息（匹配到草稿），在本地视图上无损追加 🌐
-                    String myDraft = AITranslator.getDraftFuzzy(s);
-                    if (myDraft != null && !myDraft.equals(s)) {
-                        SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
-                        ssb.append(" 🌐");
-                        param.args[0] = ssb;
-                    }
-                }
-            });
-        } catch (Throwable ignored) {}
+    private static void log(String msg) {
+        XposedBridge.log("HT_AI " + msg);
     }
 
     private static boolean isPureBracketQuery(String text) {
         if (text == null) return false;
         String s = text.trim();
         return (s.startsWith("(") && s.endsWith(")")) ||
-               (s.startsWith("（") && s.endsWith("）"));
+                (s.startsWith("（") && s.endsWith("）"));
     }
 
     private static String safeCallString(Object obj, String methodName) {
@@ -213,6 +195,7 @@ public class ChatHook {
 
     private static List<String> getRecentImagePaths(int limit) {
         List<String> result = new ArrayList<>();
+        if (limit <= 0) return result;
         synchronized (recentRenderedImages) {
             for (RenderedImageInfo info : recentRenderedImages) {
                 if (info != null && info.path != null) {
@@ -245,6 +228,7 @@ public class ChatHook {
         File[] files = dir.listFiles();
         if (files == null || files.length == 0) return null;
 
+        // 第一轮：cache 目录文件名匹配
         for (File f : files) {
             if (f == null || !f.exists() || f.length() <= 0) continue;
             String name = f.getName();
@@ -257,6 +241,7 @@ public class ChatHook {
             }
         }
 
+        // 第二轮：最近渲染记录特征匹配
         synchronized (recentRenderedImages) {
             for (RenderedImageInfo info : recentRenderedImages) {
                 if (info == null || info.path == null) continue;
@@ -281,17 +266,23 @@ public class ChatHook {
             }
         }
 
+        // 不再做 latest 瞎兜底，宁可 missing 也不误认
         return null;
     }
 
+    // =========================================================
+    // 防同步/防已读/防 typing
+    // =========================================================
+
     private static void hookUltimateStealth(ClassLoader cl) {
         try {
-            Class<?> titleControllerClass = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
+            Class<?> titleControllerClass = XposedHelpers.findClassIfExists(
+                    "com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
             if (titleControllerClass != null) {
                 XposedBridge.hookAllMethods(titleControllerClass, "s0", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        param.setResult(null); 
+                        param.setResult(null);
                     }
                 });
             }
@@ -303,6 +294,7 @@ public class ChatHook {
                 param.setResult(null);
             }
         };
+
         try {
             Class<?> z10aClass = XposedHelpers.findClassIfExists("z10.a", cl);
             if (z10aClass != null) {
@@ -310,6 +302,7 @@ public class ChatHook {
                 XposedBridge.hookAllMethods(z10aClass, "c0", killReadHook);
                 XposedBridge.hookAllMethods(z10aClass, "f0", killReadHook);
             }
+
             Class<?> y10bClass = XposedHelpers.findClassIfExists("y10.b", cl);
             if (y10bClass != null) {
                 XposedBridge.hookAllMethods(y10bClass, "m", killReadHook);
@@ -326,7 +319,7 @@ public class ChatHook {
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                         if (param.args != null && param.args.length > 0 && param.args[0] != null) {
                             String packetClassName = param.args[0].getClass().getName();
-                            if (packetClassName.equals("tm.a") || packetClassName.equals("e20.c")) {
+                            if ("tm.a".equals(packetClassName) || "e20.c".equals(packetClassName)) {
                                 param.setResult(null);
                             }
                         }
@@ -341,12 +334,224 @@ public class ChatHook {
                 XposedBridge.hookAllMethods(e20cClass, "f", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                        param.setResult(new byte[0]); 
+                        param.setResult(new byte[0]);
                     }
                 });
             }
         } catch (Throwable ignored) {}
     }
+
+    // =========================================================
+    // 关键：本地 UI 渲染图标，不改底层发送内容
+    // =========================================================
+
+    private static void hookTextViewRender(ClassLoader cl) {
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.hellotalk.lib.ui.text.view.HTCompatTextView",
+                    cl,
+                    "setText",
+                    CharSequence.class,
+                    TextView.BufferType.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                            CharSequence cs = (CharSequence) param.args[0];
+                            if (cs == null) return;
+                            String s = cs.toString();
+
+                            // 已经有尾巴就别再贴
+                            if (s.endsWith(" 🌐") || s.endsWith(" 🔄")) return;
+
+                            // 只给“我发出去的、并且命中 draft 缓存”的显示文本贴 🌐
+                            String myDraft = AITranslator.getDraftFuzzy(s);
+                            if (myDraft != null && !myDraft.equals(s)) {
+                                SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
+                                ssb.append(" 🌐");
+                                param.args[0] = ssb;
+                            }
+                        }
+                    }
+            );
+        } catch (Throwable ignored) {}
+    }
+
+    private static void hookClipboard(ClassLoader cl) {
+        XC_MethodHook clipHook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                ClipData clip = (ClipData) param.args[0];
+                if (clip != null && clip.getItemCount() > 0) {
+                    CharSequence text = clip.getItemAt(0).getText();
+                    if (text != null) {
+                        String textStr = text.toString();
+
+                        // 模块自己主动复制的，不做反转
+                        if (clip.getDescription() != null &&
+                                "HT_AI_Copy".equals(clip.getDescription().getLabel())) {
+                            return;
+                        }
+
+                        boolean hasIcon = textStr.endsWith(" 🌐") || textStr.endsWith(" 🔄");
+                        boolean hasChinese = textStr.matches(".*[\\u4e00-\\u9fa5]+.*");
+                        if (!hasIcon && !hasChinese) return;
+
+                        try {
+                            String orig = AITranslator.getForeignFuzzy(textStr);
+                            if (orig != null && !orig.trim().isEmpty() && !orig.equals(textStr)) {
+                                param.args[0] = ClipData.newPlainText("HT_AI", orig);
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                }
+            }
+        };
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "android.content.ClipboardManager",
+                    cl,
+                    "setPrimaryClip",
+                    ClipData.class,
+                    clipHook
+            );
+        } catch (Throwable ignored) {}
+    }
+
+    private static void hookBubbleFlip(ClassLoader cl) throws Exception {
+        XposedHelpers.findAndHookMethod(
+                "com.hellotalk.lib.ui.text.view.HTCompatTextView",
+                cl,
+                "onTouchEvent",
+                MotionEvent.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                        TextView tv = (TextView) param.thisObject;
+                        MotionEvent ev = (MotionEvent) param.args[0];
+                        if (ev == null) return;
+
+                        CharSequence cs = tv.getText();
+                        if (cs == null) return;
+                        String s = cs.toString();
+
+                        if (!s.endsWith(" 🔄") && !s.endsWith(" 🌐")) return;
+
+                        Layout layout = tv.getLayout();
+                        if (layout == null) return;
+
+                        int line = layout.getLineForVertical((int) ev.getY());
+                        int offset = layout.getOffsetForHorizontal(line, ev.getX());
+                        int iconStart = s.length() - 2;
+                        if (offset < iconStart) return;
+
+                        if (ev.getAction() == MotionEvent.ACTION_UP) {
+                            String clean = s.substring(0, iconStart).trim();
+                            clean = clean.replaceAll("[\\s🌐🔄]+$", "");
+
+                            if (s.endsWith(" 🔄")) {
+                                String orig = AITranslator.getForeignByChinese(clean);
+                                if (orig != null && !orig.equals(clean)) {
+                                    orig = orig.replaceAll("[\\s🌐🔄]+$", "");
+                                    tv.setText(orig + " 🌐");
+                                }
+                            } else if (s.endsWith(" 🌐")) {
+                                String zh = AITranslator.getChineseByForeign(clean);
+                                if (zh != null && !zh.equals(clean)) {
+                                    zh = zh.replaceAll("[\\s🌐🔄]+$", "");
+                                    tv.setText(zh + " 🔄");
+                                }
+                            }
+                            param.setResult(true);
+                        } else if (ev.getAction() == MotionEvent.ACTION_DOWN) {
+                            param.setResult(true);
+                        }
+                    }
+                }
+        );
+    }
+
+    // =========================================================
+    // 会话上下文
+    // =========================================================
+
+    private static void hookStartChat(ClassLoader cl) throws Exception {
+        XposedHelpers.findAndHookMethod(
+                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
+                cl,
+                "startChat",
+                int.class,
+                int.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        currentChatId = String.valueOf(param.args[0]);
+                        currentChatType = (int) param.args[1];
+
+                        final Object vm = param.thisObject;
+                        new Thread(() -> {
+                            try {
+                                Field f = vm.getClass().getDeclaredField("chatUser");
+                                f.setAccessible(true);
+                                for (int i = 0; i < 6; i++) {
+                                    Object chatUser = f.get(vm);
+                                    if (chatUser != null) {
+                                        updateFromChatUser(chatUser);
+                                        return;
+                                    }
+                                    Thread.sleep(500);
+                                }
+                            } catch (Exception ignored) {}
+                        }).start();
+                    }
+                }
+        );
+    }
+
+    private static void updateFromChatUser(Object chatUser) {
+        try {
+            int nativeLang = (Integer) XposedHelpers.callMethod(chatUser, "getNativeLang");
+            String nationality = (String) XposedHelpers.callMethod(chatUser, "getNationality");
+            String nickName = (String) XposedHelpers.callMethod(chatUser, "getNickName");
+            String userName = (String) XposedHelpers.callMethod(chatUser, "getUserName");
+
+            latestNativeLang = nativeLang;
+            latestNationality = nationality != null ? nationality : "";
+            latestPartnerName = (nickName != null && !nickName.isEmpty()) ? nickName : (userName != null ? userName : "");
+            if (!latestPartnerName.isEmpty()) {
+                currentPartnerName = latestPartnerName;
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private static void hookLang(ClassLoader cl) throws Exception {
+        Class<?> vm = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+        Field uf = vm.getDeclaredField("chatUser");
+        uf.setAccessible(true);
+        Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
+
+        XposedHelpers.findAndHookMethod(
+                vm,
+                "generateChatMessage",
+                hm,
+                boolean.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) {
+                        try {
+                            Object u = uf.get(p.thisObject);
+                            if (u != null) {
+                                partnerLang = (Integer) XposedHelpers.callMethod(u, "getNativeLang");
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                }
+        );
+    }
+
+    // =========================================================
+    // 回复图片 / 渲染层
+    // =========================================================
 
     private static void hookImageRenderLayer(ClassLoader cl) {
         try {
@@ -409,11 +614,10 @@ public class ChatHook {
 
                         if ("image".equals(msgType) || "photo".equals(msgType)) {
                             currentQuotedImageMissing = true;
-                            log("【回复框状态】A入口检测到引用图片");
                         }
                     }
                 });
-                
+
                 XposedBridge.hookAllMethods(replyViewClass, "B", new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) throws Throwable {
@@ -424,7 +628,6 @@ public class ChatHook {
                                     String msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
                                     if ("image".equals(msgType)) {
                                         currentQuotedImageMissing = true;
-                                        log("【ReplyMessageView.B命中图片分支】");
                                     }
                                 }
                             }
@@ -445,14 +648,12 @@ public class ChatHook {
                             if (f.exists() && f.length() > 0) {
                                 currentQuotedImagePath = localPath;
                                 currentQuotedImageMissing = false;
-                                log("【ReplyMessageView命中本地图】" + localPath);
                                 return;
                             }
                         }
 
                         currentQuotedImagePath = null;
                         currentQuotedImageMissing = true;
-                        log("【ReplyMessageView未命中】回复图片存在，但本地路径仍未反推出");
                     }
                 });
             }
@@ -473,7 +674,6 @@ public class ChatHook {
                                     String msgType = (String) XposedHelpers.callMethod(msg, "getMsgType");
                                     if ("image".equals(msgType)) {
                                         currentQuotedImageMissing = true;
-                                        log("【ReplyHolderView.f命中图片分支】");
                                     }
                                 }
                             }
@@ -494,8 +694,6 @@ public class ChatHook {
                             if (f.exists() && f.length() > 0) {
                                 currentQuotedImagePath = localPath;
                                 currentQuotedImageMissing = false;
-                                log("【ReplyHolderView命中本地图】" + localPath);
-                                return;
                             }
                         }
                     }
@@ -504,8 +702,13 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
+    // =========================================================
+    // 自动接收翻译
+    // =========================================================
+
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
+
         XposedBridge.hookAllMethods(hm, "getMessageContent", new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam p) {
@@ -561,7 +764,9 @@ public class ChatHook {
                             if ("text".equals(rMsgType)) {
                                 Class<?> jsonBeanClass = XposedHelpers.findClass("com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
                                 Object contentBean = XposedHelpers.callMethod(replyInfo, "getMessageContent", jsonBeanClass, true);
-                                if (contentBean != null) quotedText = (String) XposedHelpers.callMethod(contentBean, "getText");
+                                if (contentBean != null) {
+                                    quotedText = (String) XposedHelpers.callMethod(contentBean, "getText");
+                                }
                             } else {
                                 quotedText = "[" + rMsgType + "]";
                             }
@@ -570,14 +775,17 @@ public class ChatHook {
 
                     boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
                     if (isNewMessage) {
-                        if (isMine) AITranslator.appendHistory(thisChatId, mid, "assistant", text, sendTime, null);
-                        else AITranslator.appendHistory(thisChatId, mid, "user", text, sendTime, quotedText);
+                        if (isMine) {
+                            AITranslator.appendHistory(thisChatId, mid, "assistant", text, sendTime, null);
+                        } else {
+                            AITranslator.appendHistory(thisChatId, mid, "user", text, sendTime, quotedText);
+                        }
                     }
 
                     if (text.startsWith("[")) return;
                     if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
-                    // ★ 你自己发出去的消息，绝对不修改底层 Bean，仅存入缓存供本地 TextView 渲染 🌐
+                    // 自己消息：只建立缓存，不再改底层文本
                     if (isMine) {
                         String myChineseDraft = AITranslator.getDraftFuzzy(text);
                         if (myChineseDraft != null) {
@@ -586,7 +794,7 @@ public class ChatHook {
                         return;
                     }
 
-                    // ====== 完美恢复：对方发来的消息，安全修改底层，立刻显示 🔄 ======
+                    // 对方消息：命中缓存则立即显示
                     String[] cached = AITranslator.getCached(mid);
                     if (cached != null) {
                         String cleanCached = cached[1].replaceAll("[\\s🌐🔄]+$", "");
@@ -606,7 +814,6 @@ public class ChatHook {
                             if (t != null && !t.trim().isEmpty() && !t.equals(finalText)) {
                                 AITranslator.cacheResult(finalMid, finalText, t);
                                 String cleanResult = t.replaceAll("[\\s🌐🔄]+$", "");
-                                // 对方消息翻译完成，安全写回底层
                                 try { XposedHelpers.callMethod(finalBean, "setText", cleanResult + " 🔄"); } catch (Exception ignored) {}
                             }
                         } catch (Exception ignored) {
@@ -620,165 +827,9 @@ public class ChatHook {
         });
     }
 
-    private static void hookClipboard(ClassLoader cl) {
-        XC_MethodHook clipHook = new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                ClipData clip = (ClipData) param.args[0];
-                if (clip != null && clip.getItemCount() > 0) {
-                    CharSequence text = clip.getItemAt(0).getText();
-                    if (text != null) {
-                        String textStr = text.toString();
-                        if (clip.getDescription() != null && "HT_AI_Copy".equals(clip.getDescription().getLabel())) return;
-                        boolean hasIcon = textStr.endsWith(" 🌐") || textStr.endsWith(" 🔄");
-                        boolean hasChinese = textStr.matches(".*[\\u4e00-\\u9fa5]+.*");
-                        if (!hasIcon && !hasChinese) return;
-                        try {
-                            String orig = AITranslator.getForeignFuzzy(textStr);
-                            if (orig != null && !orig.trim().isEmpty() && !orig.equals(textStr)) {
-                                param.args[0] = ClipData.newPlainText("HT_AI", orig);
-                            }
-                        } catch (Throwable ignored) {}
-                    }
-                }
-            }
-        };
-        try { XposedHelpers.findAndHookMethod("android.content.ClipboardManager", cl, "setPrimaryClip", ClipData.class, clipHook); } catch (Throwable ignored) {}
-    }
-
-    private static void hookBubbleFlip(ClassLoader cl) throws Exception {
-        XposedHelpers.findAndHookMethod("com.hellotalk.lib.ui.text.view.HTCompatTextView", cl, "onTouchEvent", MotionEvent.class, new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                TextView tv = (TextView) param.thisObject;
-                MotionEvent ev = (MotionEvent) param.args[0];
-                if (ev == null) return;
-                CharSequence cs = tv.getText();
-                if (cs == null) return;
-                String s = cs.toString();
-                if (!s.endsWith(" 🔄") && !s.endsWith(" 🌐")) return;
-                Layout layout = tv.getLayout();
-                if (layout == null) return;
-                int line = layout.getLineForVertical((int) ev.getY());
-                int offset = layout.getOffsetForHorizontal(line, ev.getX());
-                int iconStart = s.length() - 2;
-                if (offset < iconStart) return;
-                
-                if (ev.getAction() == MotionEvent.ACTION_UP) {
-                    String clean = s.substring(0, iconStart).trim();
-                    clean = clean.replaceAll("[\\s🌐🔄]+$", ""); 
-                    if (s.endsWith(" 🔄")) {
-                        String orig = AITranslator.getForeignByChinese(clean);
-                        if (orig != null && !orig.equals(clean)) {
-                            orig = orig.replaceAll("[\\s🌐🔄]+$", "");
-                            tv.setText(orig + " 🌐"); 
-                        }
-                    } else if (s.endsWith(" 🌐")) {
-                        String zh = AITranslator.getChineseByForeign(clean);
-                        if (zh != null && !zh.equals(clean)) {
-                            zh = zh.replaceAll("[\\s🌐🔄]+$", "");
-                            tv.setText(zh + " 🔄"); 
-                        }
-                    }
-                    param.setResult(true);
-                } else if (ev.getAction() == MotionEvent.ACTION_DOWN) {
-                    param.setResult(true);
-                }
-            }
-        });
-    }
-
-    private static void hookStartChat(ClassLoader cl) throws Exception {
-        XposedHelpers.findAndHookMethod("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl, "startChat", int.class, int.class, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam param) {
-                currentChatId = String.valueOf(param.args[0]);
-                currentChatType = (int) param.args[1];
-                final Object vm = param.thisObject;
-                new Thread(() -> {
-                    try {
-                        Field f = vm.getClass().getDeclaredField("chatUser");
-                        f.setAccessible(true);
-                        for (int i = 0; i < 6; i++) {
-                            Object chatUser = f.get(vm);
-                            if (chatUser != null) { updateFromChatUser(chatUser); return; }
-                            Thread.sleep(500);
-                        }
-                    } catch (Exception ignored) {}
-                }).start();
-            }
-        });
-    }
-
-    private static void updateFromChatUser(Object chatUser) {
-        try {
-            int nativeLang = (Integer) XposedHelpers.callMethod(chatUser, "getNativeLang");
-            String nationality = (String) XposedHelpers.callMethod(chatUser, "getNationality");
-            String nickName = (String) XposedHelpers.callMethod(chatUser, "getNickName");
-            String userName = (String) XposedHelpers.callMethod(chatUser, "getUserName");
-            latestNativeLang = nativeLang;
-            latestNationality = nationality != null ? nationality : "";
-            latestPartnerName = (nickName != null && !nickName.isEmpty()) ? nickName : (userName != null ? userName : "");
-            if (!latestPartnerName.isEmpty()) currentPartnerName = latestPartnerName;
-        } catch (Throwable ignored) {}
-    }
-
-    private static void hookLang(ClassLoader cl) throws Exception {
-        Class<?> vm = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
-        Field uf = vm.getDeclaredField("chatUser");
-        uf.setAccessible(true);
-        Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
-        XposedHelpers.findAndHookMethod(vm, "generateChatMessage", hm, boolean.class, new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) {
-                try {
-                    Object u = uf.get(p.thisObject);
-                    if (u != null) partnerLang = (Integer) XposedHelpers.callMethod(u, "getNativeLang");
-                } catch (Throwable ignored) {}
-            }
-        });
-    }
-
-    private static String getQuoteReplyText(View rootView) {
-        if (rootView == null) return null;
-        if (rootView instanceof TextView) {
-            TextView tv = (TextView) rootView;
-            try {
-                String idName = tv.getResources().getResourceEntryName(tv.getId());
-                if (idName != null && idName.equalsIgnoreCase("tvReplyDesc")) {
-                    if (tv.getVisibility() == View.VISIBLE) return tv.getText().toString();
-                }
-            } catch (Exception ignored) {}
-        }
-        if (rootView instanceof ViewGroup) {
-            ViewGroup vg = (ViewGroup) rootView;
-            for (int i = 0; i < vg.getChildCount(); i++) {
-                String res = getQuoteReplyText(vg.getChildAt(i));
-                if (res != null) return res;
-            }
-        }
-        return null;
-    }
-
-    private static View findNativeSendButtonSafely(ViewGroup root) {
-        if (root == null) return null;
-        ArrayList<View> views = new ArrayList<>();
-        views.add(root);
-        for (int i = 0; i < views.size(); i++) {
-            View current = views.get(i);
-            try {
-                if (current.getId() != View.NO_ID) {
-                    String idName = current.getResources().getResourceEntryName(current.getId());
-                    if (idName != null && idName.toLowerCase().contains("send")) return current;
-                }
-            } catch (Exception ignored) {}
-            if (current instanceof ViewGroup) {
-                ViewGroup vg = (ViewGroup) current;
-                for (int j = 0; j < vg.getChildCount(); j++) views.add(vg.getChildAt(j));
-            }
-        }
-        return null;
-    }
+    // =========================================================
+    // 输入栏按钮
+    // =========================================================
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
         Class<?> boxClass = XposedHelpers.findClass("com.hellotalk.chat.ui.ChatInputBoxView", cl);
@@ -820,6 +871,7 @@ public class ChatHook {
                 if (val instanceof EditText) return (EditText) val;
             }
         } catch (Exception ignored) {}
+
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
             for (int i = 0; i < group.getChildCount(); i++) {
@@ -827,6 +879,27 @@ public class ChatHook {
                 if (child instanceof EditText) return (EditText) child;
                 EditText found = findEditTextInView(child);
                 if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static String getQuoteReplyText(View rootView) {
+        if (rootView == null) return null;
+        if (rootView instanceof TextView) {
+            TextView tv = (TextView) rootView;
+            try {
+                String idName = tv.getResources().getResourceEntryName(tv.getId());
+                if (idName != null && idName.equalsIgnoreCase("tvReplyDesc")) {
+                    if (tv.getVisibility() == View.VISIBLE) return tv.getText().toString();
+                }
+            } catch (Exception ignored) {}
+        }
+        if (rootView instanceof ViewGroup) {
+            ViewGroup vg = (ViewGroup) rootView;
+            for (int i = 0; i < vg.getChildCount(); i++) {
+                String res = getQuoteReplyText(vg.getChildAt(i));
+                if (res != null) return res;
             }
         }
         return null;
@@ -868,8 +941,10 @@ public class ChatHook {
                 if (cachedNativeSendBtn[0] == null) {
                     cachedNativeSendBtn[0] = findNativeSendButtonSafely(layout);
                 }
+
                 String currentText = edit.getText().toString();
                 String textWithoutAt = currentText.replace("@", "");
+
                 if (!currentText.trim().isEmpty() && AITranslator.isChineseOnly(textWithoutAt)) {
                     if (!isTranslatingAPI) {
                         btn.setVisibility(View.VISIBLE);
@@ -880,7 +955,9 @@ public class ChatHook {
                     if (cachedNativeSendBtn[0] != null) cachedNativeSendBtn[0].setVisibility(View.GONE);
                 } else {
                     if (!isTranslatingAPI) btn.setVisibility(View.GONE);
-                    if (cachedNativeSendBtn[0] != null && !currentText.trim().isEmpty()) cachedNativeSendBtn[0].setVisibility(View.VISIBLE);
+                    if (cachedNativeSendBtn[0] != null && !currentText.trim().isEmpty()) {
+                        cachedNativeSendBtn[0].setVisibility(View.VISIBLE);
+                    }
                 }
             }
         };
@@ -914,6 +991,13 @@ public class ChatHook {
             btn.setText("...");
             btn.setAlpha(1.0f);
 
+            // ★ 点译时做上下文快照，避免串好友
+            final String chatIdSnapshot = currentChatId;
+            final int chatTypeSnapshot = currentChatType;
+            final String partnerNameSnapshot = currentPartnerName;
+            final String nationalitySnapshot = latestNationality;
+            final int nativeLangSnapshot = latestNativeLang;
+
             String quoteText = null;
             try { quoteText = getQuoteReplyText(edit.getRootView()); } catch (Exception ignored) {}
 
@@ -933,13 +1017,12 @@ public class ChatHook {
             } else {
                 textToTranslate = text;
             }
-            
+
             if (pureBracketMode) {
                 textToTranslate = "[PURE_BRACKET_MODE]\n" + textToTranslate;
             }
 
-            List<String> recentImages = getRecentImagePaths(0); 
-
+            // 当前版本保持 0 张背景图
             if (quotedImageSnapshot != null) {
                 File quoted = new File(quotedImageSnapshot);
                 if (quoted.exists() && quoted.length() > 0) {
@@ -949,94 +1032,115 @@ public class ChatHook {
                 textToTranslate += "\n[QUOTED_IMAGE_BUT_PATH_MISSING]";
             }
 
-            for (String p : recentImages) {
-                if (p == null || p.isEmpty()) continue;
-                if (quotedImageSnapshot != null && quotedImageSnapshot.equals(p)) continue;
-                File f = new File(p);
-                if (f.exists() && f.length() > 0) {
-                    textToTranslate += "\n[LOCAL_IMAGE:" + p + "]";
-                }
-            }
-
             final String finalTextToTranslate = textToTranslate;
+            final String rawChineseInput = text;
 
             new Thread(() -> {
                 try {
-                    String targetLang = determineSmartTargetLang();
-                    if (currentChatType == 1) AITranslator.registerFriend(currentChatId, currentPartnerName, targetLang);
+                    String targetLang = determineSmartTargetLang(nationalitySnapshot, nativeLangSnapshot, chatIdSnapshot);
 
-                    String lastReq = chatRequestMap.get(currentChatId);
-                    int retryCount = chatRetryCountMap.getOrDefault(currentChatId, 0);
+                    if (chatTypeSnapshot == 1) {
+                        AITranslator.registerFriend(chatIdSnapshot, partnerNameSnapshot, targetLang);
+                    }
+
+                    String lastReq = chatRequestMap.get(chatIdSnapshot);
+                    int retryCount = chatRetryCountMap.getOrDefault(chatIdSnapshot, 0);
                     boolean isRetry = finalTextToTranslate.equals(lastReq);
                     if (isRetry) {
                         retryCount++;
-                        chatRetryCountMap.put(currentChatId, retryCount);
+                        chatRetryCountMap.put(chatIdSnapshot, retryCount);
                     } else {
-                        chatRequestMap.put(currentChatId, finalTextToTranslate);
-                        chatRetryCountMap.put(currentChatId, 0);
+                        chatRequestMap.put(chatIdSnapshot, finalTextToTranslate);
+                        chatRetryCountMap.put(chatIdSnapshot, 0);
                     }
 
                     String finalPromptText = finalTextToTranslate;
                     if (isRetry) {
-                        finalPromptText = finalTextToTranslate + "\n\n【系统强制指令】：用户要求重新生成。请给出完全不同的表达方式！";
+                        finalPromptText = finalTextToTranslate +
+                                "\n\n【系统强制指令】：用户要求重新生成。请给出完全不同的表达方式！";
                     }
 
-                    String result = AITranslator.translateWithHistory(finalPromptText, targetLang, currentChatId);
+                    String result = AITranslator.translateWithHistory(finalPromptText, targetLang, chatIdSnapshot);
 
                     isTranslatingAPI = false;
+                    String finalResult = result;
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.92f);
-                        showPicker(edit, btn, result, text);
+                        showPicker(edit, btn, finalResult, rawChineseInput);
                     });
                 } catch (Exception e) {
                     isTranslatingAPI = false;
+                    String err = e.getMessage() != null ? e.getMessage() : "未知错误";
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.88f);
-                        Toast.makeText(edit.getContext(), "⚠️ 翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                        Toast.makeText(edit.getContext(), "⚠️ 翻译失败: " + err, Toast.LENGTH_LONG).show();
                     });
                 }
             }).start();
         });
     }
 
-    private static String determineSmartTargetLang() {
-        String nationality = latestNationality.toLowerCase();
-        if (!nationality.isEmpty()) {
-            String mappedLang = mapNationalityToLang(nationality);
+    private static String determineSmartTargetLang(String nationality, int nativeLang, String chatId) {
+        String nat = nationality == null ? "" : nationality.toLowerCase();
+
+        if (!nat.isEmpty()) {
+            String mappedLang = mapNationalityToLang(nat);
             if (mappedLang != null) return mappedLang;
         }
-        int nativeLang = latestNativeLang;
+
         String langCode = getDynamicLangCode(nativeLang);
         String langName = getDynamicLangName(nativeLang);
+
         if (langName != null && langName.contains("Chinese")) return DEFAULT_REPLY_LANG;
         if (langCode != null && !langCode.isEmpty() && !"en".equals(langCode)) return langCode;
 
-        String friendLang = AITranslator.getFriendLang(currentChatId);
+        String friendLang = AITranslator.getFriendLang(chatId);
         if (friendLang != null && !friendLang.isEmpty()) {
             if (friendLang.equalsIgnoreCase("zh") || friendLang.startsWith("zh")) return DEFAULT_REPLY_LANG;
             return friendLang;
         }
+
         return DEFAULT_REPLY_LANG;
     }
 
     private static String mapNationalityToLang(String nationality) {
         if (nationality == null || nationality.isEmpty()) return null;
         switch (nationality) {
-            case "china": case "taiwan": case "hong kong": case "macau": return "zh";
-            case "russia": case "belarus": case "kazakhstan": case "kyrgyzstan": return "ru";
-            case "japan": return "ja";
-            case "korea": case "south korea": return "ko";
-            case "france": return "fr";
-            case "germany": return "de";
-            case "spain": return "es";
-            case "italy": return "it";
-            case "portugal": case "brazil": return "pt";
-            case "arabia": case "egypt": return "ar";
-            default: return null;
+            case "china":
+            case "taiwan":
+            case "hong kong":
+            case "macau":
+                return "zh";
+            case "russia":
+            case "belarus":
+            case "kazakhstan":
+            case "kyrgyzstan":
+                return "ru";
+            case "japan":
+                return "ja";
+            case "korea":
+            case "south korea":
+                return "ko";
+            case "france":
+                return "fr";
+            case "germany":
+                return "de";
+            case "spain":
+                return "es";
+            case "italy":
+                return "it";
+            case "portugal":
+            case "brazil":
+                return "pt";
+            case "arabia":
+            case "egypt":
+                return "ar";
+            default:
+                return null;
         }
     }
 
@@ -1073,12 +1177,19 @@ public class ChatHook {
             String cleanLine = line.trim().replace("*", "");
             if (cleanLine.isEmpty() || cleanLine.matches("^[=+\\-]{3,}.*$")) continue;
             if (cleanLine.contains("|")) {
-                cleanLine = cleanLine.replaceFirst("^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\-\\d一二三四五]+[\\.\\)、：:\\s]*)", "").trim();
+                cleanLine = cleanLine.replaceFirst(
+                        "^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\-\\d一二三四五]+[\\.\\)、：:\\s]*)",
+                        ""
+                ).trim();
+
                 String[] parts = cleanLine.split("\\|");
                 String foreignText = parts[0].trim().replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
                 String chineseMean = parts.length > 1 ? parts[1].trim() : "";
                 String labelText = parts.length > 2 ? parts[2].trim() : "";
-                if (!foreignText.isEmpty()) parsedItems.add(new String[]{foreignText, chineseMean, labelText});
+
+                if (!foreignText.isEmpty()) {
+                    parsedItems.add(new String[]{foreignText, chineseMean, labelText});
+                }
             }
         }
 
@@ -1092,10 +1203,12 @@ public class ChatHook {
 
         if (!analysisText.isEmpty()) {
             android.widget.ScrollView topScroll = new android.widget.ScrollView(ctx);
-            android.widget.LinearLayout.LayoutParams topParams = new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
+            android.widget.LinearLayout.LayoutParams topParams =
+                    new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
             topParams.setMargins(0, 10, 0, 10);
             topScroll.setLayoutParams(topParams);
             topScroll.setPadding(40, 20, 40, 10);
+
             TextView tvAnalysis = new TextView(ctx);
             tvAnalysis.setText(analysisText);
             tvAnalysis.setTextColor(Color.parseColor("#6C757D"));
@@ -1106,7 +1219,8 @@ public class ChatHook {
         }
 
         android.widget.ScrollView bottomScroll = new android.widget.ScrollView(ctx);
-        android.widget.LinearLayout.LayoutParams bottomParams = new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 2.0f);
+        android.widget.LinearLayout.LayoutParams bottomParams =
+                new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 2.0f);
         bottomScroll.setLayoutParams(bottomParams);
 
         android.widget.LinearLayout container = new android.widget.LinearLayout(ctx);
@@ -1131,7 +1245,8 @@ public class ChatHook {
             android.widget.LinearLayout card = new android.widget.LinearLayout(ctx);
             card.setOrientation(android.widget.LinearLayout.VERTICAL);
             card.setPadding(35, 35, 35, 35);
-            android.widget.LinearLayout.LayoutParams params = new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            android.widget.LinearLayout.LayoutParams params =
+                    new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             params.setMargins(0, 10, 0, 15);
             card.setLayoutParams(params);
 
@@ -1163,11 +1278,13 @@ public class ChatHook {
                 AITranslator.mySentDrafts.put(foreign.trim(), originalChineseInput.trim());
                 edit.setText(foreign);
                 edit.setSelection(foreign.length());
-                
+
                 try {
-                    android.content.ClipboardManager clipboard = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                    android.content.ClipboardManager clipboard =
+                            (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
                     if (clipboard != null) {
-                        android.content.ClipData clip = android.content.ClipData.newPlainText("HT_AI_Copy", foreign);
+                        android.content.ClipData clip =
+                                android.content.ClipData.newPlainText("HT_AI_Copy", foreign);
                         clipboard.setPrimaryClip(clip);
                     }
                 } catch (Exception ignored) {}
@@ -1177,36 +1294,21 @@ public class ChatHook {
 
             card.setOnLongClickListener(v -> {
                 try {
-                    android.content.ClipboardManager clipboard = (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                    android.content.ClipboardManager clipboard =
+                            (android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
                     if (clipboard != null) {
-                        android.content.ClipData clip = android.content.ClipData.newPlainText("HT_AI_Copy", foreign);
+                        android.content.ClipData clip =
+                                android.content.ClipData.newPlainText("HT_AI_Copy", foreign);
                         clipboard.setPrimaryClip(clip);
                         Toast.makeText(ctx, "✅ 已复制到剪贴板，可直接粘贴", Toast.LENGTH_SHORT).show();
                     }
                 } catch (Exception ignored) {}
-                return true; 
+                return true;
             });
 
             container.addView(card);
         }
+
         dialog.show();
-    }
-
-    private static String getDynamicLangCode(int langId) {
-        if (langCodeMethod != null) {
-            try { return ((String) langCodeMethod.invoke(null, langId)).toLowerCase(); } catch (Exception ignored) {}
-        }
-        return "en";
-    }
-
-    private static String getDynamicLangName(int langId) {
-        if (langNameMethod != null) {
-            try { return (String) langNameMethod.invoke(null, langId); } catch (Exception ignored) {}
-        }
-        return "Unknown";
-    }
-
-    private static void log(String msg) {
-        XposedBridge.log("HT_AI " + msg);
     }
 }
