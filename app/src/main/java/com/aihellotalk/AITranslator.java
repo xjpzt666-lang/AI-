@@ -692,7 +692,7 @@ public class AITranslator {
         }
     }
 
-    // ★ 终极修复：彻底废弃原来的无用抛出，捕捉所有API代理商各种奇葩报错，并全部作为报错信息往外甩！
+    // ★ v70 核心修复：深度解析 JSON，拦截内容审查（Content Filter）导致的空数据
     private static String executeRequest(JSONObject body) throws IOException {
         String bodyStr = body.toString();
         Log.i(TAG, "request body chars = " + bodyStr.length());
@@ -711,13 +711,27 @@ public class AITranslator {
             }
             
             try {
-                return new JSONObject(responseBody)
-                        .getJSONArray("choices")
-                        .getJSONObject(0)
-                        .getJSONObject("message")
-                        .getString("content")
-                        .trim();
+                JSONObject json = new JSONObject(responseBody);
+                JSONObject choice = json.getJSONArray("choices").getJSONObject(0);
+                
+                // ★ 抓取结束原因
+                String finishReason = choice.optString("finish_reason", "unknown");
+                JSONObject message = choice.getJSONObject("message");
+                String content = message.optString("content", "").trim();
+                
+                // ★ 检查内容是否被安全策略阉割
+                if (content.isEmpty()) {
+                    if ("content_filter".equalsIgnoreCase(finishReason) || "safety".equalsIgnoreCase(finishReason)) {
+                        throw new IOException("🚫 触发大模型底层【安全审查机制】(可能包含涉政、暴力、抑郁、自残等敏感词汇)，被强行掐断！\n\n请修改你的措辞(如使用拼音代替敏感词)后再试！");
+                    } else {
+                        throw new IOException("🚫 大模型返回了空数据 (finish_reason: " + finishReason + ")。\n请换一种说法再试！");
+                    }
+                }
+                
+                return content;
             } catch (Exception e) {
+                // 如果本来就是我自己抛出的异常，直接往外扔
+                if (e instanceof IOException) throw e;
                 throw new IOException("JSON解析失败，API返回的格式不对。\n内容: " + responseBody);
             }
         } catch (IOException e) {
