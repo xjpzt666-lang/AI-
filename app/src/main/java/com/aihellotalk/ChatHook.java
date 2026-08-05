@@ -1,5 +1,6 @@
 package com.aihellotalk;
 
+import android.app.AlertDialog;
 import android.content.ClipData;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -492,11 +493,12 @@ public class ChatHook {
                     try { cidInt = (Integer) XposedHelpers.callMethod(msg, "getChatId"); } catch (Exception ignored) {}
                     final String thisChatId = String.valueOf(cidInt);
                     
-                    // 已切断污染当前界面的代码，彻底物理防串台
+                    // 已彻底移除污染 currentChatId 的代码，绝对防串台
 
                     String senderName = null;
                     try { senderName = (String) XposedHelpers.callMethod(msg, "getSenderName"); } catch (Exception ignored) {}
                     if (senderName != null && !senderName.isEmpty() && !isMine) {
+                        // 已彻底移除污染 currentPartnerName 的代码
                         String existingLang = AITranslator.getFriendLang(thisChatId);
                         AITranslator.registerFriend(thisChatId, senderName, existingLang);
                     }
@@ -672,7 +674,7 @@ public class ChatHook {
         XposedHelpers.findAndHookMethod("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl, "startChat", int.class, int.class, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
-                // 这里是正常打开界面的唯一入口
+                // 只有当用户点进当前聊天室，才给全局的 currentChatId 赋值
                 currentChatId = String.valueOf(param.args[0]);
                 currentChatType = (int) param.args[1];
                 final Object vm = param.thisObject;
@@ -977,7 +979,7 @@ public class ChatHook {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.88f);
-                        // ★ 完全不再触碰 edit.setText，使用系统原生的轻量级文本提示 Toast
+                        // ★ 仅保留一行安静的灰色系统提示，绝对不破坏你的输入框内容
                         Toast.makeText(edit.getContext(), "⚠️ 翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
                     });
                 }
@@ -1064,7 +1066,7 @@ public class ChatHook {
             }
         }
 
-        // ★ 核心清理：如果格式错误，放弃弹窗，不碰输入框，只在屏幕下方弹一个原生的灰条提示。
+        // ★ 核心清理：如果格式错误，不碰输入框，只在屏幕下方弹一个原生的灰条提示。
         if (parsedItems.isEmpty()) {
             Toast.makeText(ctx, "⚠️ AI返回的格式不符合要求或触发了拦截，请稍微修改说法重试。", Toast.LENGTH_LONG).show();
             return;
