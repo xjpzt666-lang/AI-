@@ -46,7 +46,6 @@ public class AITranslator {
     public static final Map<String, String> chineseToForeign = new ConcurrentHashMap<>();
     public static final Map<String, String> mySentDrafts = new ConcurrentHashMap<>();
 
-    // ★ 核心性能优化：新增图片 Base64 内存缓存字典
     private static final Map<String, String> imageBase64Cache = new ConcurrentHashMap<>();
 
     private static File cacheFile;
@@ -109,7 +108,6 @@ public class AITranslator {
         }
     }
 
-    // ★ 核心性能优化：生成图片缓存的唯一 Key（路径 + 修改时间 + 文件大小）
     private static String buildImageCacheKey(String path) {
         try {
             File f = new File(path);
@@ -121,7 +119,6 @@ public class AITranslator {
     }
 
     public static String encodeFileToBase64(String path) {
-        // ★ 核心性能优化：先查缓存，有就直接秒回，省去所有解码压缩步骤！
         String cacheKey = buildImageCacheKey(path);
         String cached = imageBase64Cache.get(cacheKey);
         if (cached != null && !cached.isEmpty()) {
@@ -174,7 +171,6 @@ public class AITranslator {
             if (bestBytes == null || bestBytes.length == 0) return null;
 
             String result = Base64.encodeToString(bestBytes, Base64.NO_WRAP);
-            // ★ 核心性能优化：把费了九牛二虎之力压好的 Base64 存进冰箱
             imageBase64Cache.put(cacheKey, result);
             return result;
         } catch (Throwable e) {
@@ -407,26 +403,60 @@ public class AITranslator {
         return JAPANESE_PATTERN.matcher(s).find();
     }
 
-    public static boolean isChineseOnly(String s) {
-        if (s == null || s.isEmpty()) return false;
-        if (containsJapanese(s)) return false;
-        for (char c : s.toCharArray()) {
-            Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
-            if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-                    || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
-                return true;
+    // ★ 修复 Bug 2: 严格判定是否为纯中文，只要混入外语字母，立刻判定为非纯中文，放行翻译！
+    public static boolean isChineseOnly(String text) {
+        if (text == null || text.trim().isEmpty()) return false;
+        if (containsJapanese(text)) return false;
+        
+        boolean hasChinese = false;
+        boolean hasForeignAlpha = false;
+        
+        for (char c : text.toCharArray()) {
+            if (!hasForeignAlpha && String.valueOf(c).matches("[a-zA-Zа-яА-ЯёЁіІїЇєЄґҐ\\uAC00-\\uD7AFáéíóúÁÉÍÓÚñÑüÜäöüßÄÖÜ]")) {
+                hasForeignAlpha = true;
+                break; 
+            }
+            if (!hasChinese) {
+                Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
+                if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
+                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+                        || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
+                    hasChinese = true;
+                }
             }
         }
-        return false;
+        return hasChinese && !hasForeignAlpha;
     }
 
+    // ★ 修复 Bug 2: 对接收到的消息进行混排判定
     public static boolean needTranslateToChinese(String text) {
         if (text == null || text.trim().isEmpty()) return false;
         if (containsJapanese(text)) return false;
-        if (isChineseOnly(text)) return false;
-        return true;
+        
+        boolean hasChinese = false;
+        boolean hasForeignAlpha = false;
+        
+        for (char c : text.toCharArray()) {
+            if (!hasForeignAlpha && String.valueOf(c).matches("[a-zA-Zа-яА-ЯёЁіІїЇєЄґҐ\\uAC00-\\uD7AFáéíóúÁÉÍÓÚñÑüÜäöüßÄÖÜ]")) {
+                hasForeignAlpha = true;
+            }
+            if (!hasChinese) {
+                Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
+                if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
+                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+                        || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
+                    hasChinese = true;
+                }
+            }
+            if (hasChinese && hasForeignAlpha) break;
+        }
+        
+        if (!hasChinese) return true;
+        if (hasForeignAlpha) return true; 
+        
+        return false;
     }
 
     private static String stripFlipMarks(String s) {
@@ -724,6 +754,7 @@ public class AITranslator {
         return result;
     }
 
+    // ★ 修复 Bug 1: 完美解决重启后带换行符的外语记录缓存直接损坏的致命漏洞！
     private static void loadCache() {
         if (!cacheFile.exists()) return;
         try (BufferedReader r = new BufferedReader(new FileReader(cacheFile))) {
@@ -731,8 +762,8 @@ public class AITranslator {
             while ((line = r.readLine()) != null) {
                 String[] parts = line.split("\\|\\|\\|");
                 if (parts.length >= 3) {
-                    String foreign = stripFlipMarks(parts[1]);
-                    String chinese = stripFlipMarks(parts[2]);
+                    String foreign = stripFlipMarks(parts[1]).replace("\\n", "\n");
+                    String chinese = stripFlipMarks(parts[2]).replace("\\n", "\n");
                     cache.put(parts[0], new String[]{foreign, chinese});
                     foreignToChinese.put(foreign, chinese);
                     chineseToForeign.put(chinese, foreign);
@@ -746,8 +777,8 @@ public class AITranslator {
             cacheFile.getParentFile().mkdirs();
             try (BufferedWriter w = new BufferedWriter(new FileWriter(cacheFile))) {
                 for (Map.Entry<String, String[]> e : cache.entrySet()) {
-                    String foreign = stripFlipMarks(e.getValue()[0]);
-                    String chinese = stripFlipMarks(e.getValue()[1]);
+                    String foreign = stripFlipMarks(e.getValue()[0]).replace("\n", "\\n");
+                    String chinese = stripFlipMarks(e.getValue()[1]).replace("\n", "\\n");
                     w.write(e.getKey() + "|||" + foreign + "|||" + chinese);
                     w.newLine();
                 }
