@@ -5,8 +5,8 @@ import android.content.ClipData;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
-import android.text.Layout;
 import android.text.TextWatcher;
+import android.text.Layout;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -16,6 +16,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URLDecoder;
@@ -65,6 +66,9 @@ public class ChatHook {
     private static volatile String currentQuotedImagePath = null;
     private static volatile boolean currentQuotedImageMissing = false;
 
+    // ★ 新增：用于在本地界面无痕刷新翻译结果，绝不触碰底层服务器数据
+    private static final Map<String, WeakReference<TextView>> activeTextViews = new ConcurrentHashMap<>();
+
     private static class RenderedImageInfo {
         final String path;
         final String url;
@@ -80,7 +84,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v75.0 (纯净防打断保洁版) ===");
+        log("=== Hook v76.0 (纯净视觉欺骗版 - 杜绝发送污染) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -88,6 +92,7 @@ public class ChatHook {
             langNameMethod = avClass.getMethod("b", int.class);
         } catch (Throwable ignored) {}
 
+        try { hookTextViewRender(cl); } catch (Throwable ignored) {} // ★ 新增拦截本地文字渲染
         try { hookClipboard(cl); } catch (Throwable ignored) {}
         try { hookBubbleFlip(cl); } catch (Throwable ignored) {}
         try { hookStartChat(cl); } catch (Throwable ignored) {}
@@ -99,6 +104,38 @@ public class ChatHook {
         
         try { hookImageRenderLayer(cl); } catch (Throwable ignored) {}
         try { hookReplyMessageView(cl); } catch (Throwable ignored) {}
+    }
+
+    // ★ 核心修复：纯本地 UI 渲染，将界面显示与底层数据完美剥离
+    private static void hookTextViewRender(ClassLoader cl) {
+        XposedHelpers.findAndHookMethod("com.hellotalk.lib.ui.text.view.HTCompatTextView", cl, "setText", CharSequence.class, TextView.BufferType.class, new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                CharSequence cs = (CharSequence) param.args[0];
+                if (cs == null) return;
+                String s = cs.toString();
+
+                // 缓存当前屏幕上可见的 TextView，便于翻译完成后在本地刷新
+                activeTextViews.put(s, new WeakReference<>((TextView) param.thisObject));
+
+                // 防止我们在本地点击反转时造成无限死循环
+                if (s.endsWith(" 🌐") || s.endsWith(" 🔄")) return;
+
+                // 1. 如果这是别人发来的外语，且我们已经翻译好了，本地替换为中文视图
+                String chinese = AITranslator.getChineseByForeign(s);
+                if (chinese != null && !chinese.equals(s)) {
+                    param.args[0] = chinese + " 🔄";
+                    return;
+                }
+
+                // 2. 如果这是我们刚发出去的外语，匹配到了草稿，本地替换为带 🌐 的视图
+                String myDraft = AITranslator.getDraftFuzzy(s);
+                if (myDraft != null && !myDraft.equals(s)) {
+                    param.args[0] = s + " 🌐";
+                    return;
+                }
+            }
+        });
     }
 
     private static boolean isPureBracketQuery(String text) {
@@ -493,12 +530,9 @@ public class ChatHook {
                     try { cidInt = (Integer) XposedHelpers.callMethod(msg, "getChatId"); } catch (Exception ignored) {}
                     final String thisChatId = String.valueOf(cidInt);
                     
-                    // 已彻底移除污染 currentChatId 的代码，绝对防串台
-
                     String senderName = null;
                     try { senderName = (String) XposedHelpers.callMethod(msg, "getSenderName"); } catch (Exception ignored) {}
                     if (senderName != null && !senderName.isEmpty() && !isMine) {
-                        // 已彻底移除污染 currentPartnerName 的代码
                         String existingLang = AITranslator.getFriendLang(thisChatId);
                         AITranslator.registerFriend(thisChatId, senderName, existingLang);
                     }
@@ -554,42 +588,34 @@ public class ChatHook {
                     if (text.startsWith("[")) return;
                     if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
-                    if (isMine) {
-                        String myChineseDraft = AITranslator.getDraftFuzzy(text);
-                        if (myChineseDraft != null) {
-                            AITranslator.cacheResult(mid, text, myChineseDraft);
-                            String cleanText = text.replaceAll("[\\s🌐🔄]+$", "");
-                            try { XposedHelpers.callMethod(bean, "setText", cleanText + " 🌐"); } catch (Exception ignored) {}
-                        } else {
-                            String[] cached = AITranslator.getCached(mid);
-                            if (cached != null) {
-                                String cleanCached = cached[0].replaceAll("[\\s🌐🔄]+$", "");
-                                try { XposedHelpers.callMethod(bean, "setText", cleanCached + " 🌐"); } catch (Exception ignored) {}
-                            }
-                        }
-                        return;
-                    }
+                    // ★ 删除了所有强制篡改底层 bean.setText(...) 的代码
+                    // UI 层会自动通过 hookTextViewRender 实现欺骗显示
+                    
+                    if (isMine) return; // 自己发送的消息无需在这里发去翻译，它会在本地 UI 缓存被拦截
 
                     String[] cached = AITranslator.getCached(mid);
-                    if (cached != null) {
-                        String cleanCached = cached[1].replaceAll("[\\s🌐🔄]+$", "");
-                        try { XposedHelpers.callMethod(bean, "setText", cleanCached + " 🔄"); } catch (Exception ignored) {}
-                        return;
-                    }
+                    if (cached != null) return; 
 
                     if (!translating.add(mid)) return;
 
                     final String finalText = text;
                     final String finalMid = mid;
-                    final Object finalBean = bean;
 
                     new Thread(() -> {
                         try {
                             String t = AITranslator.toChinese(finalText, thisChatId);
                             if (t != null && !t.trim().isEmpty() && !t.equals(finalText)) {
                                 AITranslator.cacheResult(finalMid, finalText, t);
-                                String cleanResult = t.replaceAll("[\\s🌐🔄]+$", "");
-                                try { XposedHelpers.callMethod(finalBean, "setText", cleanResult + " 🔄"); } catch (Exception ignored) {}
+                                
+                                // 翻译完成后，在本地查找当前可见的 TextView，让它纯视觉刷新
+                                WeakReference<TextView> wr = activeTextViews.get(finalText);
+                                if (wr != null) {
+                                    TextView tv = wr.get();
+                                    if (tv != null) {
+                                        String cleanResult = t.replaceAll("[\\s🌐🔄]+$", "");
+                                        tv.post(() -> tv.setText(cleanResult + " 🔄"));
+                                    }
+                                }
                             }
                         } catch (Exception ignored) {
                         } finally {
@@ -653,13 +679,13 @@ public class ChatHook {
                         String orig = AITranslator.getForeignByChinese(clean);
                         if (orig != null && !orig.equals(clean)) {
                             orig = orig.replaceAll("[\\s🌐🔄]+$", "");
-                            tv.setText(orig + " 🌐");
+                            tv.setText(orig + " 🌐"); // 这是纯本地视图更新
                         }
                     } else if (s.endsWith(" 🌐")) {
                         String zh = AITranslator.getChineseByForeign(clean);
                         if (zh != null && !zh.equals(clean)) {
                             zh = zh.replaceAll("[\\s🌐🔄]+$", "");
-                            tv.setText(zh + " 🔄");
+                            tv.setText(zh + " 🔄"); // 这是纯本地视图更新
                         }
                     }
                     param.setResult(true);
@@ -674,7 +700,6 @@ public class ChatHook {
         XposedHelpers.findAndHookMethod("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl, "startChat", int.class, int.class, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
-                // 只有当用户点进当前聊天室，才给全局的 currentChatId 赋值
                 currentChatId = String.valueOf(param.args[0]);
                 currentChatType = (int) param.args[1];
                 final Object vm = param.thisObject;
@@ -979,7 +1004,6 @@ public class ChatHook {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.88f);
-                        // ★ 仅保留一行安静的灰色系统提示，绝对不破坏你的输入框内容
                         Toast.makeText(edit.getContext(), "⚠️ 翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
                     });
                 }
@@ -1066,7 +1090,6 @@ public class ChatHook {
             }
         }
 
-        // ★ 核心清理：如果格式错误，不碰输入框，只在屏幕下方弹一个原生的灰条提示。
         if (parsedItems.isEmpty()) {
             Toast.makeText(ctx, "⚠️ AI返回的格式不符合要求或触发了拦截，请稍微修改说法重试。", Toast.LENGTH_LONG).show();
             return;
