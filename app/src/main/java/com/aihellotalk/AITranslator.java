@@ -403,7 +403,6 @@ public class AITranslator {
         return JAPANESE_PATTERN.matcher(s).find();
     }
 
-    // ★ 修复 Bug 2: 严格判定是否为纯中文，只要混入外语字母，立刻判定为非纯中文，放行翻译！
     public static boolean isChineseOnly(String text) {
         if (text == null || text.trim().isEmpty()) return false;
         if (containsJapanese(text)) return false;
@@ -429,7 +428,6 @@ public class AITranslator {
         return hasChinese && !hasForeignAlpha;
     }
 
-    // ★ 修复 Bug 2: 对接收到的消息进行混排判定
     public static boolean needTranslateToChinese(String text) {
         if (text == null || text.trim().isEmpty()) return false;
         if (containsJapanese(text)) return false;
@@ -694,6 +692,7 @@ public class AITranslator {
         }
     }
 
+    // ★ 终极修复：彻底废弃原来的无用抛出，捕捉所有API代理商各种奇葩报错，并全部作为报错信息往外甩！
     private static String executeRequest(JSONObject body) throws IOException {
         String bodyStr = body.toString();
         Log.i(TAG, "request body chars = " + bodyStr.length());
@@ -705,15 +704,26 @@ public class AITranslator {
                 .post(RequestBody.create(bodyStr, JSON_TYPE))
                 .build();
         try (Response resp = client.newCall(req).execute()) {
-            if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
-            return new JSONObject(resp.body().string())
-                    .getJSONArray("choices")
-                    .getJSONObject(0)
-                    .getJSONObject("message")
-                    .getString("content")
-                    .trim();
-        } catch (JSONException e) {
-            throw new IOException("JSON:" + e.getMessage());
+            String responseBody = resp.body() != null ? resp.body().string() : "";
+            
+            if (!resp.isSuccessful()) {
+                throw new IOException("HTTP状态码 " + resp.code() + "\n官方详细报错: " + responseBody);
+            }
+            
+            try {
+                return new JSONObject(responseBody)
+                        .getJSONArray("choices")
+                        .getJSONObject(0)
+                        .getJSONObject("message")
+                        .getString("content")
+                        .trim();
+            } catch (Exception e) {
+                throw new IOException("JSON解析失败，API返回的格式不对。\n内容: " + responseBody);
+            }
+        } catch (IOException e) {
+            throw e; 
+        } catch (Exception e) {
+            throw new IOException("执行请求时发生未知错误: " + e.getMessage());
         }
     }
 
@@ -754,7 +764,6 @@ public class AITranslator {
         return result;
     }
 
-    // ★ 修复 Bug 1: 完美解决重启后带换行符的外语记录缓存直接损坏的致命漏洞！
     private static void loadCache() {
         if (!cacheFile.exists()) return;
         try (BufferedReader r = new BufferedReader(new FileReader(cacheFile))) {
