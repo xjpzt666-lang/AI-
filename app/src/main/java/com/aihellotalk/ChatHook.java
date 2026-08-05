@@ -357,7 +357,6 @@ public class ChatHook {
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                             if (param.thisObject instanceof android.widget.EditText) return;
 
-                            // ★ 性能优化：只处理 HTCompatTextView 实例，过滤掉其他 TextView
                             String className = param.thisObject.getClass().getName();
                             if (!className.equals(HT_TEXT_VIEW_CLASS)) return;
 
@@ -705,15 +704,12 @@ public class ChatHook {
     }
 
     // =========================================================
-    // 自动接收翻译（★ 性能优化：只挂 getMessageContent(Class,boolean) 重载）
+    // 自动接收翻译（性能优化：只挂 getMessageContent(Class,boolean) 重载）
     // =========================================================
 
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
 
-        // ★ 关键改动：从 hookAllMethods 改为 findAndHookMethod，只挂 (Class,boolean) 重载
-        // 之前 hookAllMethods 会同时挂住 getMessageContent() 返回 String 的版本，
-        // 导致每次消息渲染都白白走一遍反射然后失败
         XposedHelpers.findAndHookMethod(hm, "getMessageContent",
                 Class.class, boolean.class,
                 new XC_MethodHook() {
@@ -1193,7 +1189,6 @@ public class ChatHook {
         }
     }
 
-    // ★ 改动：增加 partnerName 参数，不再用全局 latestPartnerName
     private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput, String partnerName) {
         android.content.Context ctx = edit.getContext();
 
@@ -1244,11 +1239,7 @@ public class ChatHook {
         }
 
         if (parsedItems.isEmpty()) {
-            new android.app.AlertDialog.Builder(ctx)
-                    .setTitle("⚠️ 解析失败或被 AI 拦截")
-                    .setMessage("AI 可能拒绝翻译或格式错乱。AI 原始回复如下：\n\n" + result)
-                    .setPositiveButton("知道了", null)
-                    .show();
+            Toast.makeText(ctx, "⚠️ AI 返回格式异常或被拦截，请修改说法重试", Toast.LENGTH_LONG).show();
             return;
         }
 
@@ -1283,7 +1274,6 @@ public class ChatHook {
         bottomScroll.addView(container);
         rootLayout.addView(bottomScroll);
 
-        // ★ 改动：使用快照变量而不是全局 latestPartnerName
         String displayName = !partnerName.isEmpty() ? partnerName : currentPartnerName;
         final android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
                 .setTitle("选版本 - " + displayName)
