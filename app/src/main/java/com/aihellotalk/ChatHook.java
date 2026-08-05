@@ -1233,7 +1233,7 @@ public class ChatHook {
                 ).trim();
 
                 String[] parts = cleanLine.split("\\|");
-                String foreignText = parts[0].trim().replaceAll("^[\""'']+|[\""'']+$", "").trim();
+                String foreignText = parts[0].trim().replaceAll("^[\"']+|[\"']+$", "").trim();
                 String chineseMean = parts.length > 1 ? parts[1].trim() : "";
                 String labelText = parts.length > 2 ? parts[2].trim() : "";
 
