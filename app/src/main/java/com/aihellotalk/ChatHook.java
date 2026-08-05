@@ -80,7 +80,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v65.0 (终极无错收官版) ===");
+        log("=== Hook v67.0 (防静默崩溃终极版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -917,7 +917,6 @@ public class ChatHook {
                 textToTranslate = "[PURE_BRACKET_MODE]\n" + textToTranslate;
             }
 
-            // 0张背景图限制，极致提速
             List<String> recentImages = getRecentImagePaths(0); 
 
             if (quotedImageSnapshot != null) {
@@ -1064,9 +1063,19 @@ public class ChatHook {
             }
         }
 
-        if (parsedItems.isEmpty()) return;
-
         android.content.Context ctx = edit.getContext();
+
+        // ★★★ 核心修复：如果解析失败，不要静默崩溃，把大模型的原话弹出来当面审判！ ★★★
+        if (parsedItems.isEmpty()) {
+            new AlertDialog.Builder(ctx)
+                    .setTitle("⚠️ AI 格式崩盘 或 拒绝回复")
+                    .setMessage("它没有按要求的【|】格式输出，以下是它的原话：\n\n" + result)
+                    .setPositiveButton("再试一次", (d, w) -> edit.post(() -> translateBtn.performClick()))
+                    .setNegativeButton("关闭", null)
+                    .show();
+            return;
+        }
+
         android.widget.LinearLayout rootLayout = new android.widget.LinearLayout(ctx);
         rootLayout.setOrientation(android.widget.LinearLayout.VERTICAL);
 
