@@ -1,6 +1,5 @@
 package com.aihellotalk;
 
-import android.app.AlertDialog;
 import android.content.ClipData;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
@@ -80,7 +79,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v70.0 (深层透视·绝对强注版) ===");
+        log("=== Hook v75.0 (纯净防打断保洁版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -492,12 +491,14 @@ public class ChatHook {
                     int cidInt = 0;
                     try { cidInt = (Integer) XposedHelpers.callMethod(msg, "getChatId"); } catch (Exception ignored) {}
                     final String thisChatId = String.valueOf(cidInt);
-                    currentChatId = thisChatId;
+                    
+                    // 已切断污染当前界面的代码，彻底物理防串台
 
                     String senderName = null;
                     try { senderName = (String) XposedHelpers.callMethod(msg, "getSenderName"); } catch (Exception ignored) {}
                     if (senderName != null && !senderName.isEmpty() && !isMine) {
-                        currentPartnerName = senderName;
+                        String existingLang = AITranslator.getFriendLang(thisChatId);
+                        AITranslator.registerFriend(thisChatId, senderName, existingLang);
                     }
 
                     String text = null;
@@ -671,6 +672,7 @@ public class ChatHook {
         XposedHelpers.findAndHookMethod("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl, "startChat", int.class, int.class, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam param) {
+                // 这里是正常打开界面的唯一入口
                 currentChatId = String.valueOf(param.args[0]);
                 currentChatType = (int) param.args[1];
                 final Object vm = param.thisObject;
@@ -923,11 +925,9 @@ public class ChatHook {
                 File quoted = new File(quotedImageSnapshot);
                 if (quoted.exists() && quoted.length() > 0) {
                     textToTranslate += "\n[QUOTED_LOCAL_IMAGE:" + quotedImageSnapshot + "]";
-                    log("【焦点图】已附带回复目标图: " + quotedImageSnapshot);
                 }
             } else if (quotedMissingSnapshot) {
                 textToTranslate += "\n[QUOTED_IMAGE_BUT_PATH_MISSING]";
-                log("【焦点图缺失】回复的是图片，但本地路径未拿到，已显式告知AI");
             }
 
             for (String p : recentImages) {
@@ -940,7 +940,6 @@ public class ChatHook {
             }
 
             final String finalTextToTranslate = textToTranslate;
-            final String rawChineseInput = text;
 
             new Thread(() -> {
                 try {
@@ -970,7 +969,7 @@ public class ChatHook {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.92f);
-                        showPicker(edit, btn, result, rawChineseInput);
+                        showPicker(edit, btn, result, text);
                     });
                 } catch (Exception e) {
                     isTranslatingAPI = false;
@@ -978,10 +977,8 @@ public class ChatHook {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.88f);
-                        
-                        // ★★★ 终极拦截：无论什么错误，强行把报错写入你的打字框！！！绝对防吞！！！ ★★★
-                        edit.setText("【🚨 API 异常拦截】\n" + e.getMessage() + "\n\n【你的原文】\n" + rawChineseInput);
-                        edit.setSelection(edit.getText().length());
+                        // ★ 完全不再触碰 edit.setText，使用系统原生的轻量级文本提示 Toast
+                        Toast.makeText(edit.getContext(), "⚠️ 翻译失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
                     });
                 }
             }).start();
@@ -1067,10 +1064,9 @@ public class ChatHook {
             }
         }
 
-        // ★★★ 核心修复：如果格式解析失败，抛弃弹窗，直接把大模型的原话拍在打字框里！ ★★★
+        // ★ 核心清理：如果格式错误，放弃弹窗，不碰输入框，只在屏幕下方弹一个原生的灰条提示。
         if (parsedItems.isEmpty()) {
-            edit.setText("【🚨 AI 格式崩盘，这是它的原话】\n" + result + "\n\n【你的原文】\n" + originalChineseInput);
-            edit.setSelection(edit.getText().length());
+            Toast.makeText(ctx, "⚠️ AI返回的格式不符合要求或触发了拦截，请稍微修改说法重试。", Toast.LENGTH_LONG).show();
             return;
         }
 
