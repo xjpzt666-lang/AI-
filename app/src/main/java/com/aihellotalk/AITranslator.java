@@ -46,7 +46,6 @@ public class AITranslator {
     public static final Map<String, String> chineseToForeign = new ConcurrentHashMap<>();
     public static final Map<String, String> mySentDrafts = new ConcurrentHashMap<>();
 
-    // 图片压缩结果缓存，避免重复压图拖慢
     private static final Map<String, String> imageBase64Cache = new ConcurrentHashMap<>();
 
     private static File cacheFile;
@@ -70,7 +69,6 @@ public class AITranslator {
     private static final Pattern PURE_BRACKET_MODE_PATTERN = Pattern.compile("\\[PURE_BRACKET_MODE\\]");
     private static final Pattern QUOTED_IMAGE_MISSING_PATTERN = Pattern.compile("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]");
 
-    // 保留你现在的多图预算
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
 
     public static void init(String key, String url, String m) {
@@ -291,7 +289,6 @@ public class AITranslator {
 
         int totalB64Chars = 0;
 
-        // 焦点图优先
         int qIdx = 1;
         for (String path : parsed.quotedImagePaths) {
             String b64 = encodeFileToBase64(path);
@@ -309,7 +306,6 @@ public class AITranslator {
             }
         }
 
-        // 背景图随后
         int cIdx = 1;
         for (String path : parsed.contextImagePaths) {
             String b64 = encodeFileToBase64(path);
@@ -407,29 +403,22 @@ public class AITranslator {
         return JAPANESE_PATTERN.matcher(s).find();
     }
 
+    // ★★★ 核心修复：只要包含中文字符就算中文，不管有没有夹杂外语字母 ★★★
+    // 例如"我想去Paris玩"，虽然有个P，但仍然是中文，应该显示"译"按钮
     public static boolean isChineseOnly(String text) {
         if (text == null || text.trim().isEmpty()) return false;
         if (containsJapanese(text)) return false;
 
-        boolean hasChinese = false;
-        boolean hasForeignAlpha = false;
-
         for (char c : text.toCharArray()) {
-            if (!hasForeignAlpha && String.valueOf(c).matches("[a-zA-Zа-яА-ЯёЁіІїЇєЄґҐ\\uAC00-\\uD7AFáéíóúÁÉÍÓÚñÑüÜäöüßÄÖÜ]")) {
-                hasForeignAlpha = true;
-                break;
-            }
-            if (!hasChinese) {
-                Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
-                if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-                        || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
-                    hasChinese = true;
-                }
+            Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
+            if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
+                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+                    || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
+                return true;
             }
         }
-        return hasChinese && !hasForeignAlpha;
+        return false;
     }
 
     public static boolean needTranslateToChinese(String text) {
@@ -561,7 +550,7 @@ public class AITranslator {
                     "\n1. 下方是【历史聊天剧本】。如果消息里附带了图片，你已经可以看到它们。" +
                     "\n2. [背景上下文图片] = 最近聊天背景，仅用于帮助理解上下文。" +
                     "\n3. [当前回复目标图] = 我此刻正在回复的焦点图，优先分析这张。" +
-                    "\n4. 如果提示中出现“当前回复目标是一张图片，但本地文件路径未获取到”，说明你不能把背景图误认为焦点图，必须保守回答。" +
+                    "\n4. 如果提示中出现"当前回复目标是一张图片，但本地文件路径未获取到"，说明你不能把背景图误认为焦点图，必须保守回答。" +
                     "\n5. 剧本后，<translate> 标签内包裹的是我刚刚输入的【最新文字】。请严格判断格式，执行以下两种模式之一：" +
                     "\n6. 【绝对服从】：如果用户消息中出现【强制模式】MODE_A_ONLY，你必须无条件执行【模式A】，严禁出现任何翻译选项！" +
                     "\n7. 【全局违禁黑名单】：绝对禁止使用：Бро, Друг, Дружище, Братан, Дорогая, Милая, Солнышко, Зайка, честно говоря, если честно, на самом деле, собственно говоря, лол, о боже, капец, реально, клянусь, Ой, чесно кажучи, якщо чесно, відверто кажучи, насправді, взагалі-то, слухай, капець, клянуся, Тю, lowkey, Jeez, wait, honestly, Bruh, Super, Man, bro, crap, dude, no cap, Yo, Fr, zero, Seriously, Let's be real, dudes, folks, chicks, Ugh。严禁使用破折号(—)、分号(;)、冒号(:)。" +
