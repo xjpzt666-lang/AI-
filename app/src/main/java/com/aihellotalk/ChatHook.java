@@ -64,6 +64,8 @@ public class ChatHook {
     private static volatile String currentQuotedImagePath = null;
     private static volatile boolean currentQuotedImageMissing = false;
 
+    private static final String HT_TEXT_VIEW_CLASS = "com.hellotalk.lib.ui.text.view.HTCompatTextView";
+
     private static class RenderedImageInfo {
         final String path;
         final String url;
@@ -79,7 +81,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v80.1 (止损稳态版-修复) ===");
+        log("=== Hook v81.0 (性能优化版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -345,7 +347,7 @@ public class ChatHook {
     private static void hookTextViewRender(ClassLoader cl) {
         try {
             XposedHelpers.findAndHookMethod(
-                    "com.hellotalk.lib.ui.text.view.HTCompatTextView",
+                    HT_TEXT_VIEW_CLASS,
                     cl,
                     "setText",
                     CharSequence.class,
@@ -354,6 +356,10 @@ public class ChatHook {
                         @Override
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                             if (param.thisObject instanceof android.widget.EditText) return;
+
+                            // ★ 性能优化：只处理 HTCompatTextView 实例，过滤掉其他 TextView
+                            String className = param.thisObject.getClass().getName();
+                            if (!className.equals(HT_TEXT_VIEW_CLASS)) return;
 
                             CharSequence cs = (CharSequence) param.args[0];
                             if (cs == null) return;
@@ -416,7 +422,7 @@ public class ChatHook {
 
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
         XposedHelpers.findAndHookMethod(
-                "com.hellotalk.lib.ui.text.view.HTCompatTextView",
+                HT_TEXT_VIEW_CLASS,
                 cl,
                 "onTouchEvent",
                 MotionEvent.class,
@@ -699,135 +705,140 @@ public class ChatHook {
     }
 
     // =========================================================
-    // 自动接收翻译
+    // 自动接收翻译（★ 性能优化：只挂 getMessageContent(Class,boolean) 重载）
     // =========================================================
 
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
 
-        XposedBridge.hookAllMethods(hm, "getMessageContent", new XC_MethodHook() {
-            @Override
-            protected void afterHookedMethod(MethodHookParam p) {
-                try {
-                    Object msg = p.thisObject;
-                    boolean isMine = (Boolean) XposedHelpers.callMethod(msg, "isSender");
-                    Object bean = p.getResult();
-                    if (bean == null) return;
-
-                    String extractedId = "0";
-                    try {
-                        Object cidObj = XposedHelpers.callMethod(msg, "getChatId");
-                        if (cidObj != null) {
-                            extractedId = String.valueOf(cidObj);
-                        }
-                    } catch (Exception ignored) {}
-
-                    if ("0".equals(extractedId) || "null".equals(extractedId)) {
-                        extractedId = currentChatId;
-                    }
-                    final String thisChatId = extractedId;
-
-                    String senderName = null;
-                    try { senderName = (String) XposedHelpers.callMethod(msg, "getSenderName"); } catch (Exception ignored) {}
-                    if (senderName != null && !senderName.isEmpty() && !isMine) {
-                        String existingLang = AITranslator.getFriendLang(thisChatId);
-                        AITranslator.registerFriend(thisChatId, senderName, existingLang);
-                    }
-
-                    String text = null;
-                    try { text = (String) XposedHelpers.callMethod(bean, "getText"); } catch (Exception ignored) {}
-
-                    String msgType = null;
-                    try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Exception ignored) {}
-
-                    if (text == null || text.isEmpty()) {
-                        if ("image".equals(msgType) || "photo".equals(msgType)) {
-                            text = "[对方发送了一张图片]";
-                        } else if ("voice".equals(msgType) || "audio".equals(msgType)) {
-                            text = "[对方发送了一条语音]";
-                        } else if ("video".equals(msgType)) {
-                            text = "[对方发送了一段视频]";
-                        } else if ("emoji".equals(msgType) || "sticker".equals(msgType)) {
-                            text = "[对方发送了一个表情包]";
-                        } else {
-                            return;
-                        }
-                    }
-
-                    String mid = null;
-                    try { mid = (String) XposedHelpers.callMethod(msg, "getMsgId"); } catch (Exception ignored) {}
-                    if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
-
-                    long sendTime = System.currentTimeMillis();
-                    try { sendTime = (Long) XposedHelpers.callMethod(msg, "getSendTime"); } catch (Exception ignored) {}
-
-                    String quotedText = null;
-                    try {
-                        Object replyInfo = XposedHelpers.callMethod(msg, "getReplyInfo");
-                        if (replyInfo != null && !isMine) {
-                            String rMsgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
-                            if ("text".equals(rMsgType)) {
-                                Class<?> jsonBeanClass = XposedHelpers.findClass("com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
-                                Object contentBean = XposedHelpers.callMethod(replyInfo, "getMessageContent", jsonBeanClass, true);
-                                if (contentBean != null) {
-                                    quotedText = (String) XposedHelpers.callMethod(contentBean, "getText");
-                                }
-                            } else {
-                                quotedText = "[" + rMsgType + "]";
-                            }
-                        }
-                    } catch (Exception ignored) {}
-
-                    boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
-                    if (isNewMessage) {
-                        if (isMine) {
-                            AITranslator.appendHistory(thisChatId, mid, "assistant", text, sendTime, null);
-                        } else {
-                            AITranslator.appendHistory(thisChatId, mid, "user", text, sendTime, quotedText);
-                        }
-                    }
-
-                    if (text.startsWith("[")) return;
-                    if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
-
-                    if (isMine) {
-                        String myChineseDraft = AITranslator.getDraftFuzzy(text);
-                        if (myChineseDraft != null) {
-                            AITranslator.cacheResult(mid, text, myChineseDraft);
-                        }
-                        return;
-                    }
-
-                    String[] cached = AITranslator.getCached(mid);
-                    if (cached != null) {
-                        String cleanCached = cached[1].replaceAll("[\\s🌐🔄]+$", "");
-                        try { XposedHelpers.callMethod(bean, "setText", cleanCached + " 🔄"); } catch (Exception ignored) {}
-                        return;
-                    }
-
-                    if (!translating.add(mid)) return;
-
-                    final String finalText = text;
-                    final String finalMid = mid;
-                    final Object finalBean = bean;
-
-                    new Thread(() -> {
+        // ★ 关键改动：从 hookAllMethods 改为 findAndHookMethod，只挂 (Class,boolean) 重载
+        // 之前 hookAllMethods 会同时挂住 getMessageContent() 返回 String 的版本，
+        // 导致每次消息渲染都白白走一遍反射然后失败
+        XposedHelpers.findAndHookMethod(hm, "getMessageContent",
+                Class.class, boolean.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) {
                         try {
-                            String t = AITranslator.toChinese(finalText, thisChatId);
-                            if (t != null && !t.trim().isEmpty() && !t.equals(finalText)) {
-                                AITranslator.cacheResult(finalMid, finalText, t);
-                                String cleanResult = t.replaceAll("[\\s🌐🔄]+$", "");
-                                try { XposedHelpers.callMethod(finalBean, "setText", cleanResult + " 🔄"); } catch (Exception ignored) {}
-                            }
-                        } catch (Exception ignored) {
-                        } finally {
-                            translating.remove(finalMid);
-                        }
-                    }).start();
+                            Object msg = p.thisObject;
+                            boolean isMine = (Boolean) XposedHelpers.callMethod(msg, "isSender");
+                            Object bean = p.getResult();
+                            if (bean == null) return;
 
-                } catch (Throwable ignored) {}
-            }
-        });
+                            String extractedId = "0";
+                            try {
+                                Object cidObj = XposedHelpers.callMethod(msg, "getChatId");
+                                if (cidObj != null) {
+                                    extractedId = String.valueOf(cidObj);
+                                }
+                            } catch (Exception ignored) {}
+
+                            if ("0".equals(extractedId) || "null".equals(extractedId)) {
+                                extractedId = currentChatId;
+                            }
+                            final String thisChatId = extractedId;
+
+                            String senderName = null;
+                            try { senderName = (String) XposedHelpers.callMethod(msg, "getSenderName"); } catch (Exception ignored) {}
+                            if (senderName != null && !senderName.isEmpty() && !isMine) {
+                                String existingLang = AITranslator.getFriendLang(thisChatId);
+                                AITranslator.registerFriend(thisChatId, senderName, existingLang);
+                            }
+
+                            String text = null;
+                            try { text = (String) XposedHelpers.callMethod(bean, "getText"); } catch (Exception ignored) {}
+
+                            String msgType = null;
+                            try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Exception ignored) {}
+
+                            if (text == null || text.isEmpty()) {
+                                if ("image".equals(msgType) || "photo".equals(msgType)) {
+                                    text = "[对方发送了一张图片]";
+                                } else if ("voice".equals(msgType) || "audio".equals(msgType)) {
+                                    text = "[对方发送了一条语音]";
+                                } else if ("video".equals(msgType)) {
+                                    text = "[对方发送了一段视频]";
+                                } else if ("emoji".equals(msgType) || "sticker".equals(msgType)) {
+                                    text = "[对方发送了一个表情包]";
+                                } else {
+                                    return;
+                                }
+                            }
+
+                            String mid = null;
+                            try { mid = (String) XposedHelpers.callMethod(msg, "getMsgId"); } catch (Exception ignored) {}
+                            if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
+
+                            long sendTime = System.currentTimeMillis();
+                            try { sendTime = (Long) XposedHelpers.callMethod(msg, "getSendTime"); } catch (Exception ignored) {}
+
+                            String quotedText = null;
+                            try {
+                                Object replyInfo = XposedHelpers.callMethod(msg, "getReplyInfo");
+                                if (replyInfo != null && !isMine) {
+                                    String rMsgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
+                                    if ("text".equals(rMsgType)) {
+                                        Class<?> jsonBeanClass = XposedHelpers.findClass("com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
+                                        Object contentBean = XposedHelpers.callMethod(replyInfo, "getMessageContent", jsonBeanClass, true);
+                                        if (contentBean != null) {
+                                            quotedText = (String) XposedHelpers.callMethod(contentBean, "getText");
+                                        }
+                                    } else {
+                                        quotedText = "[" + rMsgType + "]";
+                                    }
+                                }
+                            } catch (Exception ignored) {}
+
+                            boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
+                            if (isNewMessage) {
+                                if (isMine) {
+                                    AITranslator.appendHistory(thisChatId, mid, "assistant", text, sendTime, null);
+                                } else {
+                                    AITranslator.appendHistory(thisChatId, mid, "user", text, sendTime, quotedText);
+                                }
+                            }
+
+                            if (text.startsWith("[")) return;
+                            if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
+
+                            if (isMine) {
+                                String myChineseDraft = AITranslator.getDraftFuzzy(text);
+                                if (myChineseDraft != null) {
+                                    AITranslator.cacheResult(mid, text, myChineseDraft);
+                                }
+                                return;
+                            }
+
+                            String[] cached = AITranslator.getCached(mid);
+                            if (cached != null) {
+                                String cleanCached = cached[1].replaceAll("[\\s🌐🔄]+$", "");
+                                try { XposedHelpers.callMethod(bean, "setText", cleanCached + " 🔄"); } catch (Exception ignored) {}
+                                return;
+                            }
+
+                            if (!translating.add(mid)) return;
+
+                            final String finalText = text;
+                            final String finalMid = mid;
+                            final Object finalBean = bean;
+
+                            new Thread(() -> {
+                                try {
+                                    String t = AITranslator.toChinese(finalText, thisChatId);
+                                    if (t != null && !t.trim().isEmpty() && !t.equals(finalText)) {
+                                        AITranslator.cacheResult(finalMid, finalText, t);
+                                        String cleanResult = t.replaceAll("[\\s🌐🔄]+$", "");
+                                        try { XposedHelpers.callMethod(finalBean, "setText", cleanResult + " 🔄"); } catch (Exception ignored) {}
+                                    }
+                                } catch (Exception ignored) {
+                                } finally {
+                                    translating.remove(finalMid);
+                                }
+                            }).start();
+
+                        } catch (Throwable ignored) {}
+                    }
+                });
     }
 
     // =========================================================
@@ -908,7 +919,6 @@ public class ChatHook {
         return null;
     }
 
-    // ★ 补回的方法：安全查找原生发送按钮
     private static View findNativeSendButtonSafely(ViewGroup root) {
         if (root == null) return null;
         ArrayList<View> views = new ArrayList<>();
@@ -1090,7 +1100,7 @@ public class ChatHook {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.92f);
-                        showPicker(edit, btn, finalResult, rawChineseInput);
+                        showPicker(edit, btn, finalResult, rawChineseInput, partnerNameSnapshot);
                     });
                 } catch (Exception e) {
                     isTranslatingAPI = false;
@@ -1129,7 +1139,6 @@ public class ChatHook {
         return DEFAULT_REPLY_LANG;
     }
 
-    // ★ 修复：加了 .toLowerCase()
     private static String getDynamicLangCode(int nativeLang) {
         if (langCodeMethod != null) {
             try {
@@ -1184,7 +1193,8 @@ public class ChatHook {
         }
     }
 
-    private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput) {
+    // ★ 改动：增加 partnerName 参数，不再用全局 latestPartnerName
+    private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput, String partnerName) {
         android.content.Context ctx = edit.getContext();
 
         String analysisText = "";
@@ -1223,7 +1233,7 @@ public class ChatHook {
                 ).trim();
 
                 String[] parts = cleanLine.split("\\|");
-                String foreignText = parts[0].trim().replaceAll("^[\"“'‘]+|[\"”'’]+$", "").trim();
+                String foreignText = parts[0].trim().replaceAll("^[\""'']+|[\""'']+$", "").trim();
                 String chineseMean = parts.length > 1 ? parts[1].trim() : "";
                 String labelText = parts.length > 2 ? parts[2].trim() : "";
 
@@ -1273,7 +1283,8 @@ public class ChatHook {
         bottomScroll.addView(container);
         rootLayout.addView(bottomScroll);
 
-        String displayName = !latestPartnerName.isEmpty() ? latestPartnerName : currentPartnerName;
+        // ★ 改动：使用快照变量而不是全局 latestPartnerName
+        String displayName = !partnerName.isEmpty() ? partnerName : currentPartnerName;
         final android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
                 .setTitle("选版本 - " + displayName)
                 .setView(rootLayout)
