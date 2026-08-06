@@ -2,8 +2,11 @@ package com.aihellotalk;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Base64;
 import android.util.Log;
+import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -16,6 +19,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -28,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import de.robv.android.xposed.AndroidAppHelper;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -79,6 +84,48 @@ public class AITranslator {
 
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
 
+    // =========================================================
+    // ★ 记忆系统 2.0：档案 + 蒸馏 + 备份仓库 + 主号/一次性
+    // =========================================================
+
+    /** 保险箱目录（在 HelloTalk 数据目录之外，清数据不会波及） */
+    private static final String STORE_DIR = "/data/local/tmp/htai_store";
+    /** 模式标记文件：main=主账号 / temp=一次性 / pending=待认领 */
+    private static final String MARKER_FILE = "/data/local/tmp/htai_mem_mode.txt";
+
+    private static volatile String memMode = "main";
+    private static volatile boolean memPending = false;
+    private static volatile boolean pendingToastShown = false;
+    private static volatile long lastModeRecheckTs = 0;
+    private static volatile long lastBackupTs = 0;
+    private static volatile long lastDistillFailTs = 0;
+
+    /** 历史保留目标条数（蒸馏后回到这个规模） */
+    private static final int HISTORY_SOFT_CAP = 100;
+    /** 攒够这么多条旧消息才蒸馏一次 */
+    private static final int DISTILL_BATCH_MIN = 30;
+    /** 蒸馏连续失败时的强制裁剪红线，防文件无限膨胀 */
+    private static final int HISTORY_HARD_CAP = 180;
+    /** 蒸馏失败后的冷却时间 */
+    private static final long DISTILL_COOLDOWN_MS = 5 * 60_000;
+    /** 档案硬上限（字符） */
+    private static final int PROFILE_HARD_CAP = 800;
+    /** 备份间隔 */
+    private static final long BACKUP_INTERVAL_MS = 3 * 60_000;
+    /** 待认领状态下重读标记文件的间隔 */
+    private static final long MODE_RECHECK_MS = 60_000;
+
+    private static volatile OkHttpClient distillClient = null;
+
+    private static final String DISTILL_SYSTEM_PROMPT =
+            "你是语言交换聊天助手的记忆档案管理员。我会给你一份现有档案和一批即将归档的旧聊天记录，你的任务是把它们合并成一份更新后的好友档案。\n" +
+            "规则：\n" +
+            "1. 只记录有长期价值的信息：对方的基本事实（名字、城市、职业、学习、爱好、家庭等）、双方关系阶段与熟悉程度、长期话题与尚未兑现的约定、对方的忌讳与偏好、对方的说话风格。\n" +
+            "2. 新信息与旧档案冲突时，以新信息为准；已结束的话题、已过期或已兑现的约定、过时的状态要删掉。\n" +
+            "3. 不要记录琐碎闲聊细节，不要逐条复述聊天内容。\n" +
+            "4. 输出纯文本档案，分小节、每行一条，总长度严格控制在500字以内。\n" +
+            "5. 只输出档案正文本身，不要任何前缀、后缀、解释。";
+
     public static void init(String key, String url, String m) {
         apiKey = key;
         apiUrl = url;
@@ -98,6 +145,9 @@ public class AITranslator {
         loadFriends();
         loadPrompts();
         loadDrafts();
+
+        // ★ 最后初始化记忆模式（主账号/一次性/待认领）
+        initMemoryMode();
     }
 
     public static void initForFetch(String key, String url) {
@@ -119,10 +169,345 @@ public class AITranslator {
     }
 
     // =========================================================
+    // ★ 记忆模式：检测 / 认领复核 / 备份
+    // =========================================================
+
+    private static String runRoot(String cmd) {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
+            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String l;
+            while ((l = r.readLine()) != null) {
+                sb.append(l).append("\n");
+            }
+            p.waitFor();
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static boolean sandboxHasMemory() {
+        try {
+            File dir = new File("/data/data/com.hellotalk/files");
+            String[] names = dir.list();
+            if (names == null) return false;
+            for (String n : names) {
+                if (n != null && n.startsWith("htai_")) return true;
+            }
+        } catch (Throwable ignored) {}
+        return false;
+    }
+
+    private static boolean storeHasBackup() {
+        try {
+            String out = runRoot("ls " + STORE_DIR + "/htai_* 2>/dev/null");
+            return out != null && !out.trim().isEmpty();
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    private static String readMarker() {
+        try {
+            File f = new File(MARKER_FILE);
+            if (!f.exists()) return null;
+            BufferedReader r = new BufferedReader(new FileReader(f));
+            String s = r.readLine();
+            r.close();
+            return s == null ? null : s.trim();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static void writeMarker(String mode) {
+        try {
+            runRoot("echo " + mode + " > " + MARKER_FILE + " && chmod 644 " + MARKER_FILE);
+        } catch (Throwable ignored) {}
+    }
+
+    private static void initMemoryMode() {
+        try {
+            String marker = readMarker();
+
+            // 上次已判定待认领、还没去遥控器选择
+            if ("pending".equals(marker)) {
+                memPending = true;
+                toastPending();
+                Log.w(TAG, "记忆模式：待认领（等待遥控器选择）");
+                return;
+            }
+
+            // 正常状态：沙箱里有记忆文件
+            if (sandboxHasMemory()) {
+                memPending = false;
+                memMode = "temp".equals(marker) ? "temp" : "main";
+                if (marker == null || marker.isEmpty()) writeMarker("main");
+                Log.i(TAG, "记忆模式：" + memMode);
+                return;
+            }
+
+            // 沙箱空了，但保险箱有存货 = 数据被清空过 → 待认领
+            if (storeHasBackup()) {
+                memPending = true;
+                writeMarker("pending");
+                toastPending();
+                Log.w(TAG, "检测到数据清空，进入待认领状态");
+                return;
+            }
+
+            // 全新安装
+            memPending = false;
+            memMode = "main";
+            if (marker == null || marker.isEmpty()) writeMarker("main");
+            Log.i(TAG, "记忆模式：main（全新开始）");
+        } catch (Throwable t) {
+            memPending = false;
+            memMode = "main";
+        }
+    }
+
+    private static void toastPending() {
+        if (pendingToastShown) return;
+        pendingToastShown = true;
+        try {
+            new Handler(Looper.getMainLooper()).post(() -> {
+                try {
+                    android.app.Application app = AndroidAppHelper.currentApplication();
+                    if (app != null) {
+                        Toast.makeText(app,
+                                "HT AI：检测到HelloTalk数据被清空，记忆已暂停。\n请打开遥控器选择【主账号】或【一次性】",
+                                Toast.LENGTH_LONG).show();
+                    }
+                } catch (Throwable ignored) {}
+            });
+        } catch (Throwable ignored) {}
+    }
+
+    /** 待认领状态下，定期看看用户是否已经在遥控器里做了选择 */
+    private static void maybeRecheckMode() {
+        if (!memPending) return;
+        long now = System.currentTimeMillis();
+        if (now - lastModeRecheckTs < MODE_RECHECK_MS) return;
+        lastModeRecheckTs = now;
+        try {
+            String marker = readMarker();
+            if ("temp".equals(marker)) {
+                memPending = false;
+                memMode = "temp";
+                Log.i(TAG, "已认领：一次性模式");
+            } else if ("main".equals(marker)) {
+                memPending = false;
+                memMode = "main";
+                loadFriends();
+                loadCache();
+                loadDrafts();
+                Log.i(TAG, "已认领：主账号模式");
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    /** 主账号模式下，定期把全部记忆复制到保险箱 */
+    private static void maybeBackup() {
+        try {
+            if (memPending || !"main".equals(memMode)) return;
+            long now = System.currentTimeMillis();
+            if (now - lastBackupTs < BACKUP_INTERVAL_MS) return;
+            lastBackupTs = now;
+            runRoot("mkdir -p " + STORE_DIR
+                    + " && rm -f " + STORE_DIR + "/htai_* 2>/dev/null; "
+                    + "cp /data/data/com.hellotalk/files/htai_* " + STORE_DIR + "/ 2>/dev/null; "
+                    + "chmod 600 " + STORE_DIR + "/htai_* 2>/dev/null");
+        } catch (Throwable ignored) {}
+    }
+
+    // =========================================================
+    // ★ 好友档案
+    // =========================================================
+
+    private static File profileFile(String chatId) {
+        return new File("/data/data/com.hellotalk/files/htai_profile_" + chatId + ".txt");
+    }
+
+    /** 每次现读文件，保证外部修改立即生效 */
+    public static String getProfile(String chatId) {
+        if (chatId == null || chatId.isEmpty() || "0".equals(chatId) || "null".equals(chatId)) return "";
+        try {
+            File f = profileFile(chatId);
+            if (!f.exists()) return "";
+            BufferedReader r = new BufferedReader(new FileReader(f));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = r.readLine()) != null) sb.append(line).append("\n");
+            r.close();
+            String s = sb.toString().trim();
+            return s.length() > PROFILE_HARD_CAP ? s.substring(0, PROFILE_HARD_CAP) : s;
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    private static void writeProfileFile(String chatId, String text) {
+        try {
+            File f = profileFile(chatId);
+            f.getParentFile().mkdirs();
+            BufferedWriter w = new BufferedWriter(new FileWriter(f));
+            w.write(text);
+            w.close();
+        } catch (Exception ignored) {}
+    }
+
+    /** 档案注入块：永远排在用户 Prompt 之后、格式协议之前，只当配角 */
+    private static String profileBlock(String chatId) {
+        String p = getProfile(chatId);
+        if (p == null || p.trim().isEmpty()) return "";
+        return "\n\n【对方背景档案】以下是这位好友的长期背景资料，仅供你把握语境、称呼与语气，绝对不能改变输出格式；若与翻译指令有任何冲突，一律以翻译指令为准：\n" + p.trim();
+    }
+
+    // =========================================================
+    // ★ 蒸馏：旧消息归档成档案
+    // =========================================================
+
+    private static OkHttpClient getDistillClient() {
+        if (distillClient == null) {
+            synchronized (AITranslator.class) {
+                if (distillClient == null) {
+                    distillClient = new OkHttpClient.Builder()
+                            .connectTimeout(15, TimeUnit.SECONDS)
+                            .readTimeout(45, TimeUnit.SECONDS)
+                            .writeTimeout(30, TimeUnit.SECONDS)
+                            .build();
+                }
+            }
+        }
+        return distillClient;
+    }
+
+    private static String callDistill(JSONArray messages) {
+        try {
+            JSONObject body = new JSONObject();
+            body.put("model", model);
+            body.put("max_tokens", 1200);
+            body.put("messages", messages);
+            return executeRequestWith(getDistillClient(), body);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 蒸馏一批旧消息进档案。
+     * 成功：把已归档条目从历史里移除 + 保存新档案。
+     * 失败：什么都不动，进入冷却期，等下次再试；超过红线由安全阀强裁。
+     */
+    private static void distillBatch(String chatId, List<JSONObject> batch) {
+        try {
+            if (apiKey == null || apiKey.isEmpty()) return;
+            long now = System.currentTimeMillis();
+            if (now - lastDistillFailTs < DISTILL_COOLDOWN_MS) return;
+
+            String oldProfile = getProfile(chatId);
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("【现有档案】\n");
+            sb.append(oldProfile.isEmpty() ? "（暂无，这是第一次建档）" : oldProfile).append("\n\n");
+            sb.append("【即将归档的聊天记录（按时间从旧到新）】\n");
+            boolean hasMaterial = false;
+            for (JSONObject obj : batch) {
+                String role = obj.optString("role", "");
+                String content = obj.optString("content", "");
+                if (content == null || content.isEmpty()) continue;
+                if ("user".equals(role)) {
+                    sb.append(scriptLine("对方", content, "中文意思"));
+                    hasMaterial = true;
+                } else if ("assistant".equals(role)) {
+                    sb.append(scriptLine("我", content, "中文原意"));
+                    hasMaterial = true;
+                }
+            }
+            if (!hasMaterial) {
+                // 这批全是占位消息，直接丢弃即可，不值得调用 API
+                removeBatchFromHistory(chatId, batch);
+                return;
+            }
+
+            JSONArray messages = new JSONArray();
+            messages.put(createRawMessage("system", DISTILL_SYSTEM_PROMPT));
+            messages.put(createRawMessage("user", sb.toString()));
+
+            String result = callDistill(messages);
+            if (result == null) {
+                lastDistillFailTs = now;
+                Log.w(TAG, "蒸馏失败（网络/API），进入冷却");
+                return;
+            }
+            String newProfile = result.trim();
+            if (newProfile.isEmpty() || isRefusalResponse(newProfile)) {
+                lastDistillFailTs = now;
+                Log.w(TAG, "蒸馏返回异常内容，进入冷却");
+                return;
+            }
+            if (newProfile.length() > PROFILE_HARD_CAP) {
+                newProfile = newProfile.substring(0, PROFILE_HARD_CAP);
+            }
+
+            removeBatchFromHistory(chatId, batch);
+            writeProfileFile(chatId, newProfile);
+            lastDistillFailTs = 0;
+            Log.i(TAG, "蒸馏完成，档案更新：" + newProfile.length() + " 字");
+
+            // 档案刚更新，立即备份一次
+            lastBackupTs = 0;
+            maybeBackup();
+        } catch (Throwable t) {
+            lastDistillFailTs = System.currentTimeMillis();
+        }
+    }
+
+    private static void removeBatchFromHistory(String chatId, List<JSONObject> batch) {
+        synchronized (fileLock) {
+            try {
+                JSONArray history = loadHistory(chatId);
+                Set<String> batchIds = new HashSet<>();
+                for (JSONObject b : batch) {
+                    String id = b.optString("msgId", "");
+                    if (!id.isEmpty()) batchIds.add(id);
+                }
+
+                JSONArray kept = new JSONArray();
+                for (int i = 0; i < history.length(); i++) {
+                    JSONObject obj = history.getJSONObject(i);
+                    String id = obj.optString("msgId", "");
+                    boolean drop = false;
+                    if (!id.isEmpty() && batchIds.contains(id)) {
+                        drop = true;
+                    } else {
+                        for (JSONObject b : batch) {
+                            if (b.optLong("timestamp", -1) == obj.optLong("timestamp", -2)
+                                    && b.optString("content", "").equals(obj.optString("content", "\u0000"))) {
+                                drop = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!drop) kept.put(obj);
+                }
+                writeHistoryLocked(chatId, kept);
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private static JSONObject createRawMessage(String role, String content) throws JSONException {
+        JSONObject m = new JSONObject();
+        m.put("role", role);
+        m.put("content", content);
+        return m;
+    }
+
+    // =========================================================
     // ★ v82.4：剧本双语注记
-    // 对方的外语行 → 附上缓存里的中文翻译
-    // 我的外语行   → 附上当初输入的中文原意
-    // 让 AI 像在传统 AI 里一样，清清楚楚看到整段对话的来龙去脉
     // =========================================================
 
     private static String scriptLine(String who, String content, String noteLabel) {
@@ -763,6 +1148,7 @@ public class AITranslator {
     }
 
     public static String toChinese(String text, String chatId) throws IOException {
+        maybeRecheckMode();
         text = text.trim();
         if (text.isEmpty()) return text;
         if (!needTranslateToChinese(text)) return text;
@@ -770,7 +1156,7 @@ public class AITranslator {
         try {
             JSONArray messages = new JSONArray();
 
-            String sysPrompt = receivePrompt +
+            String sysPrompt = receivePrompt + profileBlock(chatId) +
                     "\n\n【系统隐性协议（多模态）】：" +
                     "\n1. 你可能会同时看到文本和图片。" +
                     "\n2. 如果消息中带有[背景上下文图片]，那是最近聊天背景，用于帮助理解上下文。" +
@@ -797,7 +1183,6 @@ public class AITranslator {
                 String content = msg.optString("content", "");
                 if (content != null && content.equals(text)) continue;
                 if ("user".equals(role)) {
-                    // ★ v82.4：双语注记剧本
                     scriptBuilder.append(scriptLine("对方", content, "中文意思"));
                     hasContext = true;
                 } else if ("assistant".equals(role)) {
@@ -844,6 +1229,7 @@ public class AITranslator {
     }
 
     public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
+        maybeRecheckMode();
         try {
             JSONArray messages = new JSONArray();
 
@@ -856,7 +1242,7 @@ public class AITranslator {
                 default: sysPrompt = promptEN; break;
             }
 
-            String universalProtocol = sysPrompt +
+            String universalProtocol = sysPrompt + profileBlock(chatId) +
                     "\n\n【系统最高强制协议（多模态视觉与指令解析）】：" +
                     "\n1. 下方是【历史聊天剧本】（带中文注记）。如果消息里附带了图片，你已经可以看到它们。" +
                     "\n2. [背景上下文图片] = 最近聊天背景，仅用于帮助理解上下文。" +
@@ -906,7 +1292,6 @@ public class AITranslator {
                 String content = msg.optString("content", "");
 
                 if ("user".equals(role)) {
-                    // ★ v82.4：双语注记剧本
                     scriptBuilder.append(scriptLine("对方", content, "中文意思"));
                 } else if ("assistant".equals(role)) {
                     scriptBuilder.append(scriptLine("我", content, "中文原意"));
@@ -1023,6 +1408,10 @@ public class AITranslator {
     }
 
     private static String executeRequest(JSONObject body) throws IOException {
+        return executeRequestWith(client, body);
+    }
+
+    private static String executeRequestWith(OkHttpClient useClient, JSONObject body) throws IOException {
         String bodyStr = body.toString();
         Log.i(TAG, "request body chars = " + bodyStr.length());
 
@@ -1033,7 +1422,7 @@ public class AITranslator {
                 .post(RequestBody.create(bodyStr, JSON_TYPE))
                 .build();
 
-        try (Response resp = client.newCall(req).execute()) {
+        try (Response resp = useClient.newCall(req).execute()) {
             String responseBody = resp.body() != null ? resp.body().string() : "";
 
             if (!resp.isSuccessful()) {
@@ -1250,7 +1639,7 @@ public class AITranslator {
     }
 
     // =========================================================
-    // 历史记录
+    // 历史记录（★ 记忆系统 2.0 重写版）
     // =========================================================
 
     private static File historyFile(String chatId) {
@@ -1270,12 +1659,27 @@ public class AITranslator {
         }
     }
 
+    /** 必须在持有 fileLock 时调用 */
+    private static void writeHistoryLocked(String chatId, JSONArray history) {
+        try {
+            File f = historyFile(chatId);
+            f.getParentFile().mkdirs();
+            BufferedWriter w = new BufferedWriter(new FileWriter(f));
+            w.write(history.toString());
+            w.close();
+        } catch (Exception ignored) {}
+    }
+
     public static void appendHistory(String chatId, String msgId, String role, String content) {
         appendHistory(chatId, msgId, role, content, System.currentTimeMillis(), null);
     }
 
     public static void appendHistory(String chatId, String msgId, String role, String content, long timestamp, String quotedText) {
         if (content == null || content.isEmpty()) return;
+
+        maybeRecheckMode();
+
+        List<JSONObject> distillBatch = null;
 
         synchronized (fileLock) {
             try {
@@ -1305,18 +1709,28 @@ public class AITranslator {
                 for (JSONObject obj : list) sortedHistory.put(obj);
                 history = sortedHistory;
 
-                if (history.length() > 100) {
+                if (history.length() > HISTORY_HARD_CAP) {
+                    // ★ 安全阀：蒸馏长时间失败，强制裁剪防膨胀（极端情况才走到）
                     JSONArray trimmed = new JSONArray();
-                    for (int i = history.length() - 100; i < history.length(); i++) trimmed.put(history.get(i));
-                    history = trimmed;
-                }
-
-                File f = historyFile(chatId);
-                f.getParentFile().mkdirs();
-                try (BufferedWriter w = new BufferedWriter(new FileWriter(f))) {
-                    w.write(history.toString());
+                    for (int i = history.length() - HISTORY_SOFT_CAP; i < history.length(); i++) trimmed.put(history.get(i));
+                    writeHistoryLocked(chatId, trimmed);
+                    Log.w(TAG, "蒸馏长期失败，触发安全阀强制裁剪: " + chatId);
+                } else if (history.length() >= HISTORY_SOFT_CAP + DISTILL_BATCH_MIN) {
+                    // ★ 攒够一批旧消息：先整份落盘，随后在锁外蒸馏归档
+                    int batchCount = history.length() - HISTORY_SOFT_CAP;
+                    distillBatch = new ArrayList<>();
+                    for (int i = 0; i < batchCount; i++) distillBatch.add(history.getJSONObject(i));
+                    writeHistoryLocked(chatId, history);
+                } else {
+                    writeHistoryLocked(chatId, history);
                 }
             } catch (Exception ignored) {}
         }
+
+        if (distillBatch != null && !distillBatch.isEmpty()) {
+            distillBatch(chatId, distillBatch);
+        }
+
+        maybeBackup();
     }
 }
