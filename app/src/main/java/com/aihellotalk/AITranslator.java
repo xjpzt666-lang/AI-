@@ -119,6 +119,37 @@ public class AITranslator {
     }
 
     // =========================================================
+    // ★ 拒绝话术识别
+    // =========================================================
+
+    public static boolean isRefusalResponse(String raw) {
+        if (raw == null) return false;
+        String t = raw.trim();
+        if (t.isEmpty()) return false;
+        if (t.length() > 500) return false;
+        String low = t.toLowerCase();
+        String[] marks = {
+                "i'm sorry", "i am sorry", "im sorry", "sorry, but", "sorry, i",
+                "i can't", "i cannot", "i'm unable", "i am unable", "not able to",
+                "i apologize", "as an ai", "as a language model",
+                "can't assist", "cannot assist", "unable to assist", "decline",
+                "against my", "violat", "content policy", "safety guideline", "guidelines",
+                "inappropriate", "offensive", "explicit",
+                "抱歉", "对不起", "无法", "我不能", "作为ai", "作为人工智能",
+                "敏感", "不合适", "违反", "政策", "准则", "拒绝"
+        };
+        for (String m : marks) {
+            if (low.contains(m)) return true;
+        }
+        return false;
+    }
+
+    private static String refuseGuard(String result, String fallback) {
+        if (result == null) return fallback;
+        return isRefusalResponse(result) ? fallback : result;
+    }
+
+    // =========================================================
     // ★ 我的中文原文草稿：持久化（翻转按钮的数据来源）
     // =========================================================
 
@@ -171,7 +202,6 @@ public class AITranslator {
         } catch (Exception ignored) {}
     }
 
-    /** 选中某个翻译版本时调用：记住 外语 -> 我的中文原文，并落盘 */
     public static void rememberDraft(String foreign, String chinese) {
         try {
             String f = stripFlipMarks(foreign);
@@ -187,7 +217,6 @@ public class AITranslator {
         } catch (Exception ignored) {}
     }
 
-    /** 翻转时用：根据我的中文原文反查外语 */
     public static String getForeignByDraftChinese(String zh) {
         if (zh == null || zh.trim().isEmpty()) return null;
         String clean = stripFlipMarks(zh);
@@ -578,7 +607,7 @@ public class AITranslator {
     }
 
     // =========================================================
-    // ★ 翻译结果清洗：干掉破折号、分号这些 AI 味标点
+    // ★ 翻译结果清洗：干掉破折号、分号
     // =========================================================
 
     public static String sanitizeForeignText(String s) {
@@ -682,7 +711,6 @@ public class AITranslator {
         return items;
     }
 
-    /** 提取上半部分的分析文字（用于弹窗顶部展示） */
     public static String extractAnalysis(String result) {
         if (result == null) return "";
         String[] splitData = result.split("={3,}");
@@ -762,16 +790,19 @@ public class AITranslator {
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
             try {
-                return callChatMessages(messages);
+                String r = callChatMessages(messages);
+                return refuseGuard(r, text);
             } catch (IOException e) {
                 if (e.getMessage() != null && e.getMessage().contains("400")) {
-                    return fallbackToPureTextRequest(messages);
+                    String r = fallbackToPureTextRequest(messages);
+                    return refuseGuard(r, text);
                 } else {
                     throw e;
                 }
             }
         } catch (JSONException e) {
-            return callChatSimple(receivePrompt + "\n\n需要翻译的外语消息：\n" + text);
+            String r = callChatSimple(receivePrompt + "\n\n需要翻译的外语消息：\n" + text);
+            return refuseGuard(r, text);
         }
     }
 
@@ -838,6 +869,7 @@ public class AITranslator {
             StringBuilder scriptBuilder = new StringBuilder();
             scriptBuilder.append("【历史聊天剧本】\n");
 
+            // ★ 上下文保持 60 条，不做改动
             int maxChatMessages = 60;
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
 
@@ -879,38 +911,25 @@ public class AITranslator {
     }
 
     /**
-     * ★ 弹窗专用翻译入口：自动重试，尽最大努力凑齐恰好4个选项。
-     * 括号求助模式（模式A）不做选项重试。
+     * ★ 弹窗专用翻译入口（v82.3 最终版）：
+     * 按「译」= 只调用一次 API，无论什么结果都绝不自动重试。
+     * - 成功但不足4个选项 → 有几个显示几个（下次按「译」会自动附带补齐提醒）
+     * - 检测到 AI 拒绝话术 → 立刻报错，由用户亲自用（）指令或换说法解决
+     * - 纯括号求助模式（模式A）→ 直接返回，不做拒绝判定
      */
     public static String translateForPicker(String text, String langCode, String chatId) throws IOException {
+        String raw = translateWithHistory(text, langCode, chatId);
+
         if (text != null && text.contains("[PURE_BRACKET_MODE]")) {
-            return translateWithHistory(text, langCode, chatId);
+            return raw;
         }
 
-        String bestRaw = null;
-        int bestCount = -1;
-        String currentText = text;
-
-        for (int attempt = 1; attempt <= 3; attempt++) {
-            String raw = translateWithHistory(currentText, langCode, chatId);
-            int count = parseTranslateOptions(raw).size();
-
-            if (count > bestCount) {
-                bestCount = count;
-                bestRaw = raw;
-            }
-
-            if (count >= 4) {
-                return raw;
-            }
-
-            Log.w(TAG, "选项不足4个(本次" + count + "个)，第" + attempt + "次尝试，准备强制补全");
-            currentText = text +
-                    "\n【系统强制补全指令】：你上一次只输出了" + count + "个有效选项，不符合要求，系统已报错。" +
-                    "本次必须【恰好输出4行】翻译版本，每行严格为：外语|中文大意|语气标签。禁止合并行，禁止遗漏，禁止加序号，禁止使用破折号和分号。";
+        if (parseTranslateOptions(raw).isEmpty() && isRefusalResponse(raw)) {
+            Log.w(TAG, "检测到AI安全审查拒绝话术，直接报错，不自动重试");
+            throw new IOException("内容被AI安全审查拦截（可能是你的输入或引用的对方原话含敏感词）。请用（）括号加入辅助指令，或换个说法后亲自重试。");
         }
 
-        return bestRaw != null ? bestRaw : "";
+        return raw;
     }
 
     private static String fallbackToPureTextRequest(JSONArray originalMessages) throws IOException {
@@ -1005,7 +1024,7 @@ public class AITranslator {
                 String content = message.optString("content", "").trim();
 
                 if ("content_filter".equalsIgnoreCase(finishReason) || "safety".equalsIgnoreCase(finishReason)) {
-                    throw new IOException("触发了底层【安全审查机制】(可能涉及敏感词汇)，被强行中断。");
+                    throw new IOException("内容被AI安全审查拦截（可能涉及敏感词汇）。请用（）括号加入辅助指令，或换个说法后亲自重试。");
                 }
 
                 if (content.isEmpty()) {
