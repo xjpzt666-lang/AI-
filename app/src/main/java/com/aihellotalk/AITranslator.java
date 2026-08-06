@@ -412,9 +412,9 @@ public class AITranslator {
         for (char c : text.toCharArray()) {
             Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
             if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-                    || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+| block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
                 return true;
             }
         }
@@ -435,9 +435,9 @@ public class AITranslator {
             if (!hasChinese) {
                 Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
                 if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-                        || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+| block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
                     hasChinese = true;
                 }
             }
@@ -553,7 +553,7 @@ public class AITranslator {
                     "\n4. 如果提示中出现【当前回复目标是一张图片，但本地文件路径未获取到】，说明你不能把背景图误认为焦点图，必须保守回答。" +
                     "\n5. 剧本后，<translate> 标签内包裹的是我刚刚输入的【最新文字】。请严格判断格式，执行以下两种模式之一：" +
                     "\n6. 【绝对服从】：如果用户消息中出现【强制模式】MODE_A_ONLY，你必须无条件执行【模式A】，严禁出现任何翻译选项！" +
-                    "\n7. 【全局违禁黑名单】：绝对禁止使用：Бро, Друг, Дружище, Братан, Дорогая, Милая, Солнышко, Зайка, честно говоря, если честно, на самом деле, собственно говоря, лол, о боже, капец, реально, клянусь, Ой, чесно кажучи, якщо чесно, відверто кажучи, насправді, взагалі-то, слухай, капець, клянуся, Тю, lowkey, Jeez, wait, honestly, Bruh, Super, Man, bro, crap, dude, no cap, Yo, Fr, zero, Seriously, Let's be real, dudes, folks, chicks, Ugh。严禁使用破折号(—)、分号(;)、冒号(:)。" +
+                    "\n7. 【绝对死刑标点黑名单】：在任何翻译结果中，绝对禁止使用破折号(—)、分号(;)、冒号(:)。只能使用逗号(,)、句号(.)、问号(?)、感叹号(!)和省略号(...)。如果你在翻译中使用了破折号、分号或冒号，整个回复将被系统直接丢弃并报错！" +
 
                     "\n\n【模式A：纯对话求助模式（不翻译）】" +
                     "\n► 触发条件：文字全部被括号包裹，或明确包含 MODE_A_ONLY。" +
@@ -563,13 +563,13 @@ public class AITranslator {
 
                     "\n\n【模式B：标准翻译 + 附加指令/提问模式】" +
                     "\n► 触发条件：存在正常中文正文，且不是模式A。" +
-                    "\n► 任务：严格结合上下文，把括号外正文翻译成地道语言（避开黑名单词汇）。" +
+                    "\n► 任务：严格结合上下文，把括号外正文翻译成地道语言（避开黑名单词汇，绝对不使用破折号、分号、冒号）。" +
                     "\n► 【输出排版绝对红线】（必须严格分成上下两段，中间用 `==========` 分割，这是维持系统不崩溃的底线）：" +
                     "\n\n【上半部分：分析与解答区】" +
                     "\n（如果你想做任何语境分析、多盘思考，或者回答括号内的提问，请尽情在这里废话。你想写多少解析都可以，但必须全部放在上半部分！）" +
                     "\n\n==========" +
                     "\n\n【下半部分：严格的选项区】" +
-                    "\n（在此分隔线下方，绝对、永远、严禁写任何废话说明！必须且只能输出正好 4 行翻译版本！）" +
+                    "\n（在此分隔线下方，绝对、永远、严禁写任何废话说明！必须且只能输出【绝对恰好 4 行】翻译版本，不可多一行也不可少一行！如果你只输出3行或2行，系统将判定为严重错误并拒绝接收！）" +
                     "\n每行的格式必须严格为：外语|中文大意|语气标签" +
                     "\n注意：绝对不准加数字序号（如 1. 2.），绝不准用Markdown表格，必须且只能用 `|` 分割！";
 
