@@ -81,7 +81,7 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v81.0 (性能优化版) ===");
+        log("=== Hook v81.1 (翻转修复版) ===");
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -357,8 +357,17 @@ public class ChatHook {
                         protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                             if (param.thisObject instanceof android.widget.EditText) return;
 
-                            String className = param.thisObject.getClass().getName();
-                            if (!className.equals(HT_TEXT_VIEW_CLASS)) return;
+                            // ★ 修复：支持 HTCompatTextView 的子类
+                            Class<?> currentClass = param.thisObject.getClass();
+                            boolean isHTCompatTextView = false;
+                            while (currentClass != null) {
+                                if (currentClass.getName().equals(HT_TEXT_VIEW_CLASS)) {
+                                    isHTCompatTextView = true;
+                                    break;
+                                }
+                                currentClass = currentClass.getSuperclass();
+                            }
+                            if (!isHTCompatTextView) return;
 
                             CharSequence cs = (CharSequence) param.args[0];
                             if (cs == null) return;
@@ -704,7 +713,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // 自动接收翻译（性能优化：只挂 getMessageContent(Class,boolean) 重载）
+    // 自动接收翻译
     // =========================================================
 
     private static void hookRecv(ClassLoader cl) throws Exception {
