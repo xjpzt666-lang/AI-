@@ -81,8 +81,63 @@ public class ChatHook {
         }
     }
 
+    // =========================================================
+    // ★ 性能优化：Method 对象只查一次，之后直接调用
+    // =========================================================
+
+    private static volatile boolean msgMethodsReady = false;
+    private static Method mIsSender, mGetChatId, mGetSenderName, mGetMsgType,
+            mGetMsgId, mGetSendTime, mGetReplyInfo, mGetMsgContentTyped;
+    private static volatile Method mBeanGetText = null;
+
+    private static void ensureMsgMethods(Object msg) {
+        if (msgMethodsReady || msg == null) return;
+        try {
+            Class<?> c = msg.getClass();
+            mIsSender = c.getMethod("isSender");
+            mGetChatId = c.getMethod("getChatId");
+            mGetSenderName = c.getMethod("getSenderName");
+            mGetMsgType = c.getMethod("getMsgType");
+            mGetMsgId = c.getMethod("getMsgId");
+            mGetSendTime = c.getMethod("getSendTime");
+            mGetReplyInfo = c.getMethod("getReplyInfo");
+            mGetMsgContentTyped = c.getMethod("getMessageContent", Class.class, boolean.class);
+            msgMethodsReady = true;
+        } catch (Throwable ignored) {}
+    }
+
+    private static Method ensureBeanGetText(Object bean) {
+        Method m = mBeanGetText;
+        if (m != null) return m;
+        if (bean == null) return null;
+        try {
+            m = bean.getClass().getMethod("getText");
+            mBeanGetText = m;
+            return m;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private static Object invokeQuiet(Method m, Object target, Object... args) {
+        if (m == null || target == null) return null;
+        try {
+            return (args == null || args.length == 0) ? m.invoke(target) : m.invoke(target, args);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    // ★ 历史记录写入改为后台低优先级单线程，不再卡渲染
+    private static final java.util.concurrent.ExecutorService historyExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "HT_AI_HistWriter");
+                t.setPriority(Thread.MIN_PRIORITY + 1);
+                return t;
+            });
+
     public static void install(ClassLoader cl) {
-        log("=== Hook v82.0 (翻转恢复 + 四选项强制版) ===");
+        log("=== Hook v82.1 (翻转恢复 + 四选项强制 + 性能优化版) ===");
 
         try {
             htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl);
@@ -723,7 +778,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // 自动接收翻译
+    // 自动接收翻译（性能优化版：反射缓存 + 历史异步写入）
     // =========================================================
 
     private static void hookRecv(ClassLoader cl) throws Exception {
@@ -736,35 +791,37 @@ public class ChatHook {
                     protected void afterHookedMethod(MethodHookParam p) {
                         try {
                             Object msg = p.thisObject;
-                            boolean isMine = (Boolean) XposedHelpers.callMethod(msg, "isSender");
+                            ensureMsgMethods(msg);
+
+                            Object isSenderObj = invokeQuiet(mIsSender, msg);
+                            if (!(isSenderObj instanceof Boolean)) return;
+                            boolean isMine = (Boolean) isSenderObj;
+
                             Object bean = p.getResult();
                             if (bean == null) return;
 
                             String extractedId = "0";
-                            try {
-                                Object cidObj = XposedHelpers.callMethod(msg, "getChatId");
-                                if (cidObj != null) {
-                                    extractedId = String.valueOf(cidObj);
-                                }
-                            } catch (Exception ignored) {}
-
+                            Object cidObj = invokeQuiet(mGetChatId, msg);
+                            if (cidObj != null) extractedId = String.valueOf(cidObj);
                             if ("0".equals(extractedId) || "null".equals(extractedId)) {
                                 extractedId = currentChatId;
                             }
                             final String thisChatId = extractedId;
 
                             String senderName = null;
-                            try { senderName = (String) XposedHelpers.callMethod(msg, "getSenderName"); } catch (Exception ignored) {}
+                            Object snObj = invokeQuiet(mGetSenderName, msg);
+                            if (snObj != null) senderName = String.valueOf(snObj);
                             if (senderName != null && !senderName.isEmpty() && !isMine) {
                                 String existingLang = AITranslator.getFriendLang(thisChatId);
                                 AITranslator.registerFriend(thisChatId, senderName, existingLang);
                             }
 
-                            String text = null;
-                            try { text = (String) XposedHelpers.callMethod(bean, "getText"); } catch (Exception ignored) {}
+                            Method getTextM = ensureBeanGetText(bean);
+                            Object textObj = invokeQuiet(getTextM, bean);
+                            String text = (textObj != null) ? String.valueOf(textObj) : null;
 
-                            String msgType = null;
-                            try { msgType = (String) XposedHelpers.callMethod(msg, "getMsgType"); } catch (Exception ignored) {}
+                            Object mtObj = invokeQuiet(mGetMsgType, msg);
+                            String msgType = (mtObj != null) ? String.valueOf(mtObj) : null;
 
                             if (text == null || text.isEmpty()) {
                                 if ("image".equals(msgType) || "photo".equals(msgType)) {
@@ -780,25 +837,30 @@ public class ChatHook {
                                 }
                             }
 
-                            String mid = null;
-                            try { mid = (String) XposedHelpers.callMethod(msg, "getMsgId"); } catch (Exception ignored) {}
+                            Object midObj = invokeQuiet(mGetMsgId, msg);
+                            String mid = (midObj != null) ? String.valueOf(midObj) : null;
                             if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
 
                             long sendTime = System.currentTimeMillis();
-                            try { sendTime = (Long) XposedHelpers.callMethod(msg, "getSendTime"); } catch (Exception ignored) {}
+                            Object stObj = invokeQuiet(mGetSendTime, msg);
+                            if (stObj instanceof Long) sendTime = (Long) stObj;
 
                             String quotedText = null;
                             try {
-                                Object replyInfo = XposedHelpers.callMethod(msg, "getReplyInfo");
+                                Object replyInfo = invokeQuiet(mGetReplyInfo, msg);
                                 if (replyInfo != null && !isMine) {
-                                    String rMsgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
+                                    Object rMt = invokeQuiet(mGetMsgType, replyInfo);
+                                    String rMsgType = (rMt != null) ? String.valueOf(rMt) : null;
                                     if ("text".equals(rMsgType)) {
-                                        Class<?> jsonBeanClass = XposedHelpers.findClass("com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
-                                        Object contentBean = XposedHelpers.callMethod(replyInfo, "getMessageContent", jsonBeanClass, true);
+                                        Class<?> jsonBeanClass = XposedHelpers.findClass(
+                                                "com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
+                                        Object contentBean = invokeQuiet(mGetMsgContentTyped, replyInfo, jsonBeanClass, true);
                                         if (contentBean != null) {
-                                            quotedText = (String) XposedHelpers.callMethod(contentBean, "getText");
+                                            Method cbGetText = ensureBeanGetText(contentBean);
+                                            Object qt = invokeQuiet(cbGetText, contentBean);
+                                            if (qt != null) quotedText = String.valueOf(qt);
                                         }
-                                    } else {
+                                    } else if (rMsgType != null) {
                                         quotedText = "[" + rMsgType + "]";
                                     }
                                 }
@@ -806,11 +868,18 @@ public class ChatHook {
 
                             boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
                             if (isNewMessage) {
-                                if (isMine) {
-                                    AITranslator.appendHistory(thisChatId, mid, "assistant", text, sendTime, null);
-                                } else {
-                                    AITranslator.appendHistory(thisChatId, mid, "user", text, sendTime, quotedText);
-                                }
+                                final String fMid = mid;
+                                final String fText = text;
+                                final String fQuoted = quotedText;
+                                final long fTime = sendTime;
+                                final boolean fMine = isMine;
+                                historyExecutor.execute(() -> {
+                                    if (fMine) {
+                                        AITranslator.appendHistory(thisChatId, fMid, "assistant", fText, fTime, null);
+                                    } else {
+                                        AITranslator.appendHistory(thisChatId, fMid, "user", fText, fTime, fQuoted);
+                                    }
+                                });
                             }
 
                             if (text.startsWith("[")) return;
