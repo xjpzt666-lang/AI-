@@ -119,6 +119,24 @@ public class AITranslator {
     }
 
     // =========================================================
+    // ★ v82.4：剧本双语注记
+    // 对方的外语行 → 附上缓存里的中文翻译
+    // 我的外语行   → 附上当初输入的中文原意
+    // 让 AI 像在传统 AI 里一样，清清楚楚看到整段对话的来龙去脉
+    // =========================================================
+
+    private static String scriptLine(String who, String content, String noteLabel) {
+        try {
+            String clean = stripFlipMarks(content);
+            String zh = (clean == null) ? null : foreignToChinese.get(clean);
+            if (zh != null && !zh.isEmpty() && !zh.equals(clean)) {
+                return who + ": " + content + "（" + noteLabel + "：" + zh + "）\n";
+            }
+        } catch (Throwable ignored) {}
+        return who + ": " + content + "\n";
+    }
+
+    // =========================================================
     // ★ 拒绝话术识别
     // =========================================================
 
@@ -758,7 +776,10 @@ public class AITranslator {
                     "\n2. 如果消息中带有[背景上下文图片]，那是最近聊天背景，用于帮助理解上下文。" +
                     "\n3. 如果消息中带有[当前回复目标图]，那是当前重点图，优先关注这张。" +
                     "\n4. 你只需要把最后一条外语消息翻译成中文，必要时结合图片消歧。" +
-                    "\n5. 不要描述你收到了图片，也不要解释协议。";
+                    "\n5. 不要描述你收到了图片，也不要解释协议。" +
+                    "\n6. 【语境对齐】翻译前先在心里判断：对方这句话是在回应剧本里我的哪一句话、或延续哪个话题。" +
+                    "翻译时必须与该语境连贯（代词、指代、称呼、时态都要对得上），" +
+                    "但绝对不要输出任何分析过程，只给最终的1个中文翻译。";
 
             messages.put(createMessageObj("system", sysPrompt));
 
@@ -776,10 +797,11 @@ public class AITranslator {
                 String content = msg.optString("content", "");
                 if (content != null && content.equals(text)) continue;
                 if ("user".equals(role)) {
-                    scriptBuilder.append("对方: ").append(content).append("\n");
+                    // ★ v82.4：双语注记剧本
+                    scriptBuilder.append(scriptLine("对方", content, "中文意思"));
                     hasContext = true;
                 } else if ("assistant".equals(role)) {
-                    scriptBuilder.append("我: ").append(content).append("\n");
+                    scriptBuilder.append(scriptLine("我", content, "中文原意"));
                     hasContext = true;
                 }
             }
@@ -836,13 +858,18 @@ public class AITranslator {
 
             String universalProtocol = sysPrompt +
                     "\n\n【系统最高强制协议（多模态视觉与指令解析）】：" +
-                    "\n1. 下方是【历史聊天剧本】。如果消息里附带了图片，你已经可以看到它们。" +
+                    "\n1. 下方是【历史聊天剧本】（带中文注记）。如果消息里附带了图片，你已经可以看到它们。" +
                     "\n2. [背景上下文图片] = 最近聊天背景，仅用于帮助理解上下文。" +
                     "\n3. [当前回复目标图] = 我此刻正在回复的焦点图，优先分析这张。" +
                     "\n4. 如果提示中出现【当前回复目标是一张图片，但本地文件路径未获取到】，说明你不能把背景图误认为焦点图，必须保守回答。" +
                     "\n5. 剧本后，<translate> 标签内包裹的是我刚刚输入的【最新文字】。请严格判断格式，执行以下两种模式之一：" +
                     "\n6. 【绝对服从】：如果用户消息中出现【强制模式】MODE_A_ONLY，你必须无条件执行【模式A】，严禁出现任何翻译选项！" +
                     "\n7. 【绝对死刑标点黑名单】：在任何翻译结果中，绝对禁止使用破折号(—)、半角分号(;)、全角分号(；)。只能使用逗号(,)、句号(.)、问号(?)、感叹号(!)和省略号(...)。违反即整条作废！" +
+                    "\n8. 【回复目标推理（必须执行）】剧本里可能有多条对方消息，而我可能没有使用引用功能。翻译前必须先判断：" +
+                    "\n  ① 我的最新输入是在回复对方的哪一条消息（或哪个话题）？判断出来后，在上半部分写一行：判断：你在回复对方的\"xxx\"；" +
+                    "\n  ② 或者，我的输入是不是在续写/补充我自己上一条没说完的话？如果是，写一行：判断：你在续写自己的上一条话，并且译文必须与我上一条外语消息自然衔接（时态、代词、逻辑连贯，像同一句话说完）；" +
+                    "\n  ③ 实在无法判断时，写一行：判断：未定位到具体回复目标，按通用语气翻译，然后正常翻译。" +
+                    "\n  翻译时必须贴合所判断的语境：称呼、语气、用词习惯都要与那段对话一致，严禁脱离上下文孤立翻译。" +
 
                     "\n\n【模式A：纯对话求助模式（不翻译）】" +
                     "\n► 触发条件：文字全部被括号包裹，或明确包含 MODE_A_ONLY。" +
@@ -852,10 +879,10 @@ public class AITranslator {
 
                     "\n\n【模式B：标准翻译 + 附加指令/提问模式】" +
                     "\n► 触发条件：存在正常中文正文，且不是模式A。" +
-                    "\n► 任务：严格结合上下文，把括号外正文翻译成地道语言（避开黑名单词汇，绝对不使用破折号、分号）。" +
+                    "\n► 任务：先执行第8条【回复目标推理】，把判断结果写在上半部分；然后严格结合该语境，把括号外正文翻译成地道语言（避开黑名单词汇，绝对不使用破折号、分号）。" +
                     "\n► 【输出排版绝对红线】（必须严格分成上下两段，中间用 `==========` 分割，这是维持系统不崩溃的底线）：" +
                     "\n\n【上半部分：分析与解答区】" +
-                    "\n（如果你想做任何语境分析、多盘思考，或者回答括号内的提问，请尽情在这里废话。你想写多少解析都可以，但必须全部放在上半部分！）" +
+                    "\n（第一行必须先写第8条要求的\"判断：……\"，之后如果你想做任何语境分析、或者回答括号内的提问，请尽情写，但必须全部放在上半部分！）" +
                     "\n\n==========" +
                     "\n\n【下半部分：严格的选项区】" +
                     "\n（在此分隔线下方，绝对、永远、严禁写任何废话说明！必须且只能输出【绝对恰好 4 行】翻译版本，不可多一行也不可少一行！如果你只输出3行或2行，系统将直接判定为严重错误并拒绝接收！）" +
@@ -879,9 +906,10 @@ public class AITranslator {
                 String content = msg.optString("content", "");
 
                 if ("user".equals(role)) {
-                    scriptBuilder.append("对方: ").append(content).append("\n");
+                    // ★ v82.4：双语注记剧本
+                    scriptBuilder.append(scriptLine("对方", content, "中文意思"));
                 } else if ("assistant".equals(role)) {
-                    scriptBuilder.append("我: ").append(content).append("\n");
+                    scriptBuilder.append(scriptLine("我", content, "中文原意"));
                 }
             }
 
@@ -911,11 +939,8 @@ public class AITranslator {
     }
 
     /**
-     * ★ 弹窗专用翻译入口（v82.3 最终版）：
+     * ★ 弹窗专用翻译入口（v82.3 规则不变）：
      * 按「译」= 只调用一次 API，无论什么结果都绝不自动重试。
-     * - 成功但不足4个选项 → 有几个显示几个（下次按「译」会自动附带补齐提醒）
-     * - 检测到 AI 拒绝话术 → 立刻报错，由用户亲自用（）指令或换说法解决
-     * - 纯括号求助模式（模式A）→ 直接返回，不做拒绝判定
      */
     public static String translateForPicker(String text, String langCode, String chatId) throws IOException {
         String raw = translateWithHistory(text, langCode, chatId);
