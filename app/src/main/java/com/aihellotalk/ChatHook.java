@@ -51,6 +51,9 @@ public class ChatHook {
     private static final ConcurrentHashMap<String, String> chatRequestMap = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
 
+    // ★ v82.3：记住每个聊天上次只给了几个选项（不足4个时，下次按「译」自动附带补齐提醒）
+    private static final ConcurrentHashMap<String, Integer> chatShortCountMap = new ConcurrentHashMap<>();
+
     private static Method langCodeMethod = null;
     private static Method langNameMethod = null;
 
@@ -137,7 +140,7 @@ public class ChatHook {
             });
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v82.1 (翻转恢复 + 四选项强制 + 性能优化版) ===");
+        log("=== Hook v82.3 (绝不自动重试 + 选项不足记忆 + 单聊加固版) ===");
 
         try {
             htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl);
@@ -401,9 +404,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // ★ 渲染层加 🌐 图标（重写版）
-    // 原理：HTCompatTextView 没有重写 setText(CharSequence,BufferType)，
-    // 所以直接钩框架 TextView 的总漏斗，再过滤出气泡视图。
+    // ★ 渲染层加 🌐 图标
     // 图标只存在于屏幕显示，不进入输入框、不进入发送数据，永远不会被发出去。
     // =========================================================
 
@@ -562,6 +563,15 @@ public class ChatHook {
                     protected void afterHookedMethod(MethodHookParam param) {
                         currentChatId = String.valueOf(param.args[0]);
                         currentChatType = (int) param.args[1];
+
+                        // ★ 切换聊天：立刻清空上一位的临时状态，
+                        //   防止"快速切人后秒按译"时用错国籍/名字/引用图
+                        latestNationality = "";
+                        latestNativeLang = 1;
+                        latestPartnerName = "";
+                        currentPartnerName = "";
+                        currentQuotedImagePath = null;
+                        currentQuotedImageMissing = false;
 
                         final Object vm = param.thisObject;
                         new Thread(() -> {
@@ -778,7 +788,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // 自动接收翻译（性能优化版：反射缓存 + 历史异步写入）
+    // 自动接收翻译（反射缓存 + 历史异步写入 + 失败自动重试一次）
     // =========================================================
 
     private static void hookRecv(ClassLoader cl) throws Exception {
@@ -909,7 +919,20 @@ public class ChatHook {
 
                             new Thread(() -> {
                                 try {
-                                    String t = AITranslator.toChinese(finalText, thisChatId);
+                                    String t = null;
+                                    try {
+                                        t = AITranslator.toChinese(finalText, thisChatId);
+                                    } catch (Exception firstErr) {
+                                        // ★ 接收翻译失败时，隔1.5秒自动重试一次
+                                        //   （这是"外语→中文"接收方向，与按「译」的中翻外无关；
+                                        //     Key没配置等配置问题不重试）
+                                        String m = firstErr.getMessage() == null ? "" : firstErr.getMessage();
+                                        boolean configProblem = m.contains("Key未配置") || m.contains("未初始化");
+                                        if (!configProblem) {
+                                            try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
+                                            t = AITranslator.toChinese(finalText, thisChatId);
+                                        }
+                                    }
                                     if (t != null && !t.trim().isEmpty() && !t.equals(finalText)) {
                                         AITranslator.cacheResult(finalMid, finalText, t);
                                         String cleanResult = t.replaceAll("[\\s🌐🔄]+$", "");
@@ -1105,12 +1128,22 @@ public class ChatHook {
             String text = edit.getText().toString().trim();
             if (text.isEmpty() || !AITranslator.isChineseOnly(text)) return;
 
+            // ★ 预检：会话ID必须有效，杜绝写错好友档案的可能（黑框提示，不弹窗）
+            String chatIdCheck = currentChatId;
+            if (chatIdCheck == null || chatIdCheck.isEmpty()
+                    || "0".equals(chatIdCheck) || "null".equals(chatIdCheck)) {
+                Toast.makeText(edit.getContext(),
+                        "⚠️ 会话尚未就绪，请退出聊天重新进入后再试",
+                        Toast.LENGTH_SHORT).show();
+                return;
+            }
+
             isTranslatingAPI = true;
             btn.setEnabled(false);
             btn.setText("...");
             btn.setAlpha(1.0f);
 
-            final String chatIdSnapshot = currentChatId;
+            final String chatIdSnapshot = chatIdCheck;
             final int chatTypeSnapshot = currentChatType;
             final String partnerNameSnapshot = currentPartnerName;
             final String nationalitySnapshot = latestNationality;
@@ -1177,8 +1210,29 @@ public class ChatHook {
                                 "\n\n【系统强制指令】：用户要求重新生成。请给出完全不同的表达方式！";
                     }
 
-                    // ★ 用带自动补全新机制的入口：凑不够4个会自动重试
+                    // ★ v82.3：上次选项不足4个时，这次（用户亲手按的）自动附带补齐提醒
+                    Integer lastShortCount = chatShortCountMap.get(chatIdSnapshot);
+                    if (lastShortCount != null && !finalTextToTranslate.contains("[PURE_BRACKET_MODE]")) {
+                        if (lastShortCount > 0) {
+                            finalPromptText += "\n【系统强制格式提醒】：你上一次只输出了" + lastShortCount +
+                                    "个翻译版本，用户不满意。本次必须【恰好输出4行】翻译版本，每行严格为：外语|中文大意|语气标签，不多不少！";
+                        } else {
+                            finalPromptText += "\n【系统强制格式提醒】：你上一次没有输出任何有效翻译选项，用户不满意。本次必须【恰好输出4行】翻译版本，每行严格为：外语|中文大意|语气标签，不多不少！";
+                        }
+                    }
+
+                    // ★ 只调用一次 API，绝不自动重试
                     String result = AITranslator.translateForPicker(finalPromptText, targetLang, chatIdSnapshot);
+
+                    // ★ v82.3：记录本次选项数量。给满4个→解除提醒；不足→下次按「译」继续提醒
+                    if (!finalTextToTranslate.contains("[PURE_BRACKET_MODE]")) {
+                        int optCount = AITranslator.parseTranslateOptions(result).size();
+                        if (optCount >= 4) {
+                            chatShortCountMap.remove(chatIdSnapshot);
+                        } else {
+                            chatShortCountMap.put(chatIdSnapshot, optCount);
+                        }
+                    }
 
                     isTranslatingAPI = false;
                     String finalResult = result;
@@ -1190,11 +1244,17 @@ public class ChatHook {
                     });
                 } catch (Exception e) {
                     isTranslatingAPI = false;
+
+                    // ★ 失败后清空"换一批"误判标记，下次再按「译」按全新首次请求处理
+                    chatRequestMap.remove(chatIdSnapshot);
+                    chatRetryCountMap.put(chatIdSnapshot, 0);
+
                     String err = e.getMessage() != null ? e.getMessage() : "未知错误";
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.88f);
+                        // ★ 报错只走黑框Toast，绝不弹窗
                         Toast.makeText(edit.getContext(), "⚠️ 翻译失败: " + err, Toast.LENGTH_LONG).show();
                     });
                 }
@@ -1280,7 +1340,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // ★ 选版本弹窗（新版解析，恰好4个 + 标点清洗）
+    // ★ 选版本弹窗（新版解析 + 标点清洗）
     // =========================================================
 
     private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput, String partnerName) {
@@ -1290,12 +1350,13 @@ public class ChatHook {
         List<String[]> parsedItems = AITranslator.parseTranslateOptions(result);
 
         if (parsedItems.isEmpty()) {
-            Toast.makeText(ctx, "⚠️ AI 返回格式异常或被拦截，请修改说法重试", Toast.LENGTH_LONG).show();
+            // ★ 黑框Toast提示，不弹窗
+            Toast.makeText(ctx, "⚠️ AI 返回格式异常或被拦截，请用（）括号加指令或修改说法后亲自重试", Toast.LENGTH_LONG).show();
             return;
         }
 
         if (parsedItems.size() < 4) {
-            log("警告：重试后仍只有 " + parsedItems.size() + " 个选项，先展示现有的");
+            log("提示：本次只有 " + parsedItems.size() + " 个选项，已记住，下次按「译」会自动要求补齐4个");
         }
 
         android.widget.LinearLayout rootLayout = new android.widget.LinearLayout(ctx);
@@ -1330,8 +1391,9 @@ public class ChatHook {
         rootLayout.addView(bottomScroll);
 
         String displayName = (partnerName != null && !partnerName.isEmpty()) ? partnerName : currentPartnerName;
+        String dialogTitle = (displayName != null && !displayName.isEmpty()) ? ("选版本 - " + displayName) : "选版本";
         final android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
-                .setTitle("选版本 - " + displayName)
+                .setTitle(dialogTitle)
                 .setView(rootLayout)
                 .setNegativeButton("取消", (d, w) -> edit.post(() -> edit.setText(edit.getText().toString())))
                 .setPositiveButton("🔄 换一批", (d, w) -> edit.post(() -> translateBtn.performClick()))
