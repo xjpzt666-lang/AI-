@@ -65,6 +65,7 @@ public class ChatHook {
     private static volatile boolean currentQuotedImageMissing = false;
 
     private static final String HT_TEXT_VIEW_CLASS = "com.hellotalk.lib.ui.text.view.HTCompatTextView";
+    private static Class<?> htTextViewClass = null;
 
     private static class RenderedImageInfo {
         final String path;
@@ -81,7 +82,11 @@ public class ChatHook {
     }
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v81.1 (翻转修复版) ===");
+        log("=== Hook v82.0 (翻转恢复 + 四选项强制版) ===");
+
+        try {
+            htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl);
+        } catch (Throwable ignored) {}
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
@@ -89,7 +94,7 @@ public class ChatHook {
             langNameMethod = avClass.getMethod("b", int.class);
         } catch (Throwable ignored) {}
 
-        try { hookTextViewRender(cl); } catch (Throwable ignored) {}
+        try { hookTextViewRender(cl); } catch (Throwable t) { log("渲染钩子失败: " + t.getMessage()); }
         try { hookClipboard(cl); } catch (Throwable ignored) {}
         try { hookBubbleFlip(cl); } catch (Throwable ignored) {}
         try { hookStartChat(cl); } catch (Throwable ignored) {}
@@ -341,50 +346,49 @@ public class ChatHook {
     }
 
     // =========================================================
-    // 本地 UI 渲染图标，不改底层发送内容
+    // ★ 渲染层加 🌐 图标（重写版）
+    // 原理：HTCompatTextView 没有重写 setText(CharSequence,BufferType)，
+    // 所以直接钩框架 TextView 的总漏斗，再过滤出气泡视图。
+    // 图标只存在于屏幕显示，不进入输入框、不进入发送数据，永远不会被发出去。
     // =========================================================
 
     private static void hookTextViewRender(ClassLoader cl) {
+        if (htTextViewClass == null) {
+            log("找不到 HTCompatTextView，渲染钩子跳过");
+            return;
+        }
         try {
             XposedHelpers.findAndHookMethod(
-                    HT_TEXT_VIEW_CLASS,
-                    cl,
-                    "setText",
-                    CharSequence.class,
-                    TextView.BufferType.class,
+                    "android.widget.TextView", null,
+                    "setText", CharSequence.class, TextView.BufferType.class,
                     new XC_MethodHook() {
                         @Override
-                        protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
-                            if (param.thisObject instanceof android.widget.EditText) return;
+                        protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (param.thisObject instanceof EditText) return;
+                                if (htTextViewClass == null || !htTextViewClass.isInstance(param.thisObject)) return;
 
-                            // ★ 修复：支持 HTCompatTextView 的子类
-                            Class<?> currentClass = param.thisObject.getClass();
-                            boolean isHTCompatTextView = false;
-                            while (currentClass != null) {
-                                if (currentClass.getName().equals(HT_TEXT_VIEW_CLASS)) {
-                                    isHTCompatTextView = true;
-                                    break;
+                                CharSequence cs = (CharSequence) param.args[0];
+                                if (cs == null) return;
+                                String s = cs.toString();
+                                if (s.isEmpty() || s.length() > 5000) return;
+
+                                if (s.endsWith(" 🌐") || s.endsWith(" 🔄")) return;
+
+                                String myDraft = AITranslator.getDraftFuzzy(s);
+                                if (myDraft != null && !myDraft.equals(s)) {
+                                    SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
+                                    ssb.append(" 🌐");
+                                    param.args[0] = ssb;
                                 }
-                                currentClass = currentClass.getSuperclass();
-                            }
-                            if (!isHTCompatTextView) return;
-
-                            CharSequence cs = (CharSequence) param.args[0];
-                            if (cs == null) return;
-                            String s = cs.toString();
-
-                            if (s.endsWith(" 🌐") || s.endsWith(" 🔄")) return;
-
-                            String myDraft = AITranslator.getDraftFuzzy(s);
-                            if (myDraft != null && !myDraft.equals(s)) {
-                                SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
-                                ssb.append(" 🌐");
-                                param.args[0] = ssb;
-                            }
+                            } catch (Throwable ignored) {}
                         }
                     }
             );
-        } catch (Throwable ignored) {}
+            log("渲染钩子(框架漏斗版)安装成功");
+        } catch (Throwable t) {
+            log("渲染钩子安装失败: " + t.getMessage());
+        }
     }
 
     private static void hookClipboard(ClassLoader cl) {
@@ -428,6 +432,10 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
+    // =========================================================
+    // ★ 气泡点击翻转：🌐(外语) <-> 🔄(中文原文)
+    // =========================================================
+
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
         XposedHelpers.findAndHookMethod(
                 HT_TEXT_VIEW_CLASS,
@@ -461,12 +469,14 @@ public class ChatHook {
 
                             if (s.endsWith(" 🔄")) {
                                 String orig = AITranslator.getForeignByChinese(clean);
+                                if (orig == null) orig = AITranslator.getForeignByDraftChinese(clean);
                                 if (orig != null && !orig.equals(clean)) {
                                     orig = orig.replaceAll("[\\s🌐🔄]+$", "");
                                     tv.setText(orig + " 🌐");
                                 }
                             } else if (s.endsWith(" 🌐")) {
                                 String zh = AITranslator.getChineseByForeign(clean);
+                                if (zh == null) zh = AITranslator.getDraftFuzzy(clean);
                                 if (zh != null && !zh.equals(clean)) {
                                     zh = zh.replaceAll("[\\s🌐🔄]+$", "");
                                     tv.setText(zh + " 🔄");
@@ -807,6 +817,7 @@ public class ChatHook {
                             if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
                             if (isMine) {
+                                // ★ 我自己发的外语：记住 外语->中文原文 映射（供翻转用），绝不修改消息内容
                                 String myChineseDraft = AITranslator.getDraftFuzzy(text);
                                 if (myChineseDraft != null) {
                                     AITranslator.cacheResult(mid, text, myChineseDraft);
@@ -1097,7 +1108,8 @@ public class ChatHook {
                                 "\n\n【系统强制指令】：用户要求重新生成。请给出完全不同的表达方式！";
                     }
 
-                    String result = AITranslator.translateWithHistory(finalPromptText, targetLang, chatIdSnapshot);
+                    // ★ 用带自动补全新机制的入口：凑不够4个会自动重试
+                    String result = AITranslator.translateForPicker(finalPromptText, targetLang, chatIdSnapshot);
 
                     isTranslatingAPI = false;
                     String finalResult = result;
@@ -1198,64 +1210,29 @@ public class ChatHook {
         }
     }
 
+    // =========================================================
+    // ★ 选版本弹窗（新版解析，恰好4个 + 标点清洗）
+    // =========================================================
+
     private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput, String partnerName) {
         android.content.Context ctx = edit.getContext();
 
-        String analysisText = "";
-        String optionsText = "";
-        String[] splitData = result.split("={3,}");
-        if (splitData.length >= 2) {
-            analysisText = splitData[0].trim();
-            optionsText = splitData[splitData.length - 1].trim();
-        } else {
-            StringBuilder anBuilder = new StringBuilder();
-            StringBuilder opBuilder = new StringBuilder();
-            boolean inOptions = false;
-            for (String line : result.split("\n")) {
-                String trimmed = line.trim();
-                if (trimmed.isEmpty()) continue;
-                if (trimmed.contains("下半部分") || trimmed.matches("^[=+\\-]{3,}.*$")) {
-                    inOptions = true;
-                    continue;
-                }
-                if (inOptions) opBuilder.append(trimmed).append("\n");
-                else anBuilder.append(trimmed).append("\n\n");
-            }
-            analysisText = anBuilder.toString().trim();
-            optionsText = opBuilder.toString().trim();
-        }
-
-        analysisText = analysisText.replace("*", "");
-        List<String[]> parsedItems = new ArrayList<>();
-        for (String line : optionsText.split("\n")) {
-            String cleanLine = line.trim().replace("*", "");
-            if (cleanLine.isEmpty() || cleanLine.matches("^[=+\\-]{3,}.*$")) continue;
-            if (cleanLine.contains("|")) {
-                cleanLine = cleanLine.replaceFirst(
-                        "^(版本\\d*[：:\\s]*|Option\\s*\\d*[：:\\s]*|[\\-\\d一二三四五]+[\\.\\)、：:\\s]*)",
-                        ""
-                ).trim();
-
-                String[] parts = cleanLine.split("\\|");
-                String foreignText = parts[0].trim().replaceAll("^[\"']+|[\"']+$", "").trim();
-                String chineseMean = parts.length > 1 ? parts[1].trim() : "";
-                String labelText = parts.length > 2 ? parts[2].trim() : "";
-
-                if (!foreignText.isEmpty()) {
-                    parsedItems.add(new String[]{foreignText, chineseMean, labelText});
-                }
-            }
-        }
+        String analysisText = AITranslator.extractAnalysis(result);
+        List<String[]> parsedItems = AITranslator.parseTranslateOptions(result);
 
         if (parsedItems.isEmpty()) {
             Toast.makeText(ctx, "⚠️ AI 返回格式异常或被拦截，请修改说法重试", Toast.LENGTH_LONG).show();
             return;
         }
 
+        if (parsedItems.size() < 4) {
+            log("警告：重试后仍只有 " + parsedItems.size() + " 个选项，先展示现有的");
+        }
+
         android.widget.LinearLayout rootLayout = new android.widget.LinearLayout(ctx);
         rootLayout.setOrientation(android.widget.LinearLayout.VERTICAL);
 
-        if (!analysisText.isEmpty()) {
+        if (analysisText != null && !analysisText.isEmpty()) {
             android.widget.ScrollView topScroll = new android.widget.ScrollView(ctx);
             android.widget.LinearLayout.LayoutParams topParams =
                     new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
@@ -1283,7 +1260,7 @@ public class ChatHook {
         bottomScroll.addView(container);
         rootLayout.addView(bottomScroll);
 
-        String displayName = !partnerName.isEmpty() ? partnerName : currentPartnerName;
+        String displayName = (partnerName != null && !partnerName.isEmpty()) ? partnerName : currentPartnerName;
         final android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
                 .setTitle("选版本 - " + displayName)
                 .setView(rootLayout)
@@ -1317,10 +1294,10 @@ public class ChatHook {
             tvForeign.setTypeface(null, android.graphics.Typeface.BOLD);
             card.addView(tvForeign);
 
-            if (!chinese.isEmpty() || !label.isEmpty()) {
+            if ((chinese != null && !chinese.isEmpty()) || (label != null && !label.isEmpty())) {
                 TextView tvChinese = new TextView(ctx);
-                String subText = chinese;
-                if (!label.isEmpty()) subText += " [" + label + "]";
+                String subText = chinese != null ? chinese : "";
+                if (label != null && !label.isEmpty()) subText += " [" + label + "]";
                 tvChinese.setText(subText);
                 tvChinese.setTextColor(Color.parseColor("#6C757D"));
                 tvChinese.setTextSize(13f);
@@ -1329,7 +1306,8 @@ public class ChatHook {
             }
 
             card.setOnClickListener(v -> {
-                AITranslator.mySentDrafts.put(foreign.trim(), originalChineseInput.trim());
+                // ★ 落盘记住：外语 -> 我的中文原文（翻转按钮的数据来源）
+                AITranslator.rememberDraft(foreign, originalChineseInput);
                 edit.setText(foreign);
                 edit.setSelection(foreign.length());
 
