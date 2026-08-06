@@ -18,8 +18,11 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
@@ -50,6 +53,7 @@ public class AITranslator {
 
     private static File cacheFile;
     private static File promptFile;
+    private static File draftsFile;
 
     public static String receivePrompt = "";
     public static String promptEN = "";
@@ -69,6 +73,10 @@ public class AITranslator {
     private static final Pattern PURE_BRACKET_MODE_PATTERN = Pattern.compile("\\[PURE_BRACKET_MODE\\]");
     private static final Pattern QUOTED_IMAGE_MISSING_PATTERN = Pattern.compile("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]");
 
+    private static final Pattern PAREN_TAIL = Pattern.compile("[（(]([^()（）]*)[)）]\\s*$");
+    private static final Pattern NUMBER_PREFIX = Pattern.compile(
+            "^(?:版本\\s*\\d*|[Oo]ption\\s*\\d*|选项\\s*\\d*|\\d{1,2}\\s*[.、)）:：]|[一二三四五六①-⑳]+\\s*[.、)）:：]?)\\s*");
+
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
 
     public static void init(String key, String url, String m) {
@@ -84,10 +92,12 @@ public class AITranslator {
 
         cacheFile = new File("/data/data/com.hellotalk/files/htai_cache.txt");
         promptFile = new File("/data/local/tmp/htai_prompts.txt");
+        draftsFile = new File("/data/data/com.hellotalk/files/htai_drafts.json");
 
         loadCache();
         loadFriends();
         loadPrompts();
+        loadDrafts();
     }
 
     public static void initForFetch(String key, String url) {
@@ -107,6 +117,92 @@ public class AITranslator {
             } catch (Exception ignored) {}
         }
     }
+
+    // =========================================================
+    // ★ 我的中文原文草稿：持久化（翻转按钮的数据来源）
+    // =========================================================
+
+    private static void loadDrafts() {
+        try {
+            if (draftsFile != null && draftsFile.exists()) {
+                BufferedReader r = new BufferedReader(new FileReader(draftsFile));
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = r.readLine()) != null) sb.append(line);
+                r.close();
+                String s = sb.toString().trim();
+                if (s.isEmpty()) return;
+                JSONObject obj = new JSONObject(s);
+                Iterator<String> it = obj.keys();
+                while (it.hasNext()) {
+                    String k = it.next();
+                    String v = obj.optString(k, "");
+                    if (k == null || k.trim().isEmpty() || v == null || v.trim().isEmpty()) continue;
+                    mySentDrafts.put(k, v);
+                    foreignToChinese.put(k, v);
+                    chineseToForeign.put(v, k);
+                }
+                Log.i(TAG, "已恢复本地草稿映射: " + mySentDrafts.size() + " 条");
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private static void saveDrafts() {
+        try {
+            if (draftsFile == null) return;
+            if (mySentDrafts.size() > 1200) {
+                Iterator<String> it = mySentDrafts.keySet().iterator();
+                int removeCount = mySentDrafts.size() - 900;
+                while (it.hasNext() && removeCount > 0) {
+                    String k = it.next();
+                    it.remove();
+                    foreignToChinese.remove(k);
+                    removeCount--;
+                }
+            }
+            draftsFile.getParentFile().mkdirs();
+            JSONObject obj = new JSONObject();
+            for (Map.Entry<String, String> e : mySentDrafts.entrySet()) {
+                obj.put(e.getKey(), e.getValue());
+            }
+            BufferedWriter w = new BufferedWriter(new FileWriter(draftsFile));
+            w.write(obj.toString());
+            w.close();
+        } catch (Exception ignored) {}
+    }
+
+    /** 选中某个翻译版本时调用：记住 外语 -> 我的中文原文，并落盘 */
+    public static void rememberDraft(String foreign, String chinese) {
+        try {
+            String f = stripFlipMarks(foreign);
+            String c = stripFlipMarks(chinese);
+            if (f == null || c == null) return;
+            f = f.trim();
+            c = c.trim();
+            if (f.isEmpty() || c.isEmpty() || f.equals(c)) return;
+            mySentDrafts.put(f, c);
+            foreignToChinese.put(f, c);
+            chineseToForeign.put(c, f);
+            saveDrafts();
+        } catch (Exception ignored) {}
+    }
+
+    /** 翻转时用：根据我的中文原文反查外语 */
+    public static String getForeignByDraftChinese(String zh) {
+        if (zh == null || zh.trim().isEmpty()) return null;
+        String clean = stripFlipMarks(zh);
+        for (Map.Entry<String, String> e : mySentDrafts.entrySet()) {
+            String k = stripFlipMarks(e.getKey());
+            String v = stripFlipMarks(e.getValue());
+            if (v == null || v.isEmpty()) continue;
+            if (clean.equals(v) || clean.contains(v) || v.contains(clean)) return k;
+        }
+        return null;
+    }
+
+    // =========================================================
+    // 图片 Base64
+    // =========================================================
 
     private static String buildImageCacheKey(String path) {
         try {
@@ -327,6 +423,10 @@ public class AITranslator {
         return msgObj;
     }
 
+    // =========================================================
+    // 好友
+    // =========================================================
+
     public static void loadFriends() {
         try {
             if (friendsFile.exists()) {
@@ -398,13 +498,15 @@ public class AITranslator {
         return list;
     }
 
+    // =========================================================
+    // 语言判断
+    // =========================================================
+
     public static boolean containsJapanese(String s) {
         if (s == null || s.isEmpty()) return false;
         return JAPANESE_PATTERN.matcher(s).find();
     }
 
-    // ★★★ 核心修复：只要包含中文字符就算中文，不管有没有夹杂外语字母 ★★★
-    // 例如"我想去Paris玩"，虽然有个P，但仍然是中文，应该显示"译"按钮
     public static boolean isChineseOnly(String text) {
         if (text == null || text.trim().isEmpty()) return false;
         if (containsJapanese(text)) return false;
@@ -412,9 +514,9 @@ public class AITranslator {
         for (char c : text.toCharArray()) {
             Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
             if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-| block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
+                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+                    || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
                 return true;
             }
         }
@@ -435,9 +537,9 @@ public class AITranslator {
             if (!hasChinese) {
                 Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
                 if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-| block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
+                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+                        || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
                     hasChinese = true;
                 }
             }
@@ -449,10 +551,166 @@ public class AITranslator {
         return false;
     }
 
+    private static boolean containsForeignLetters(String s) {
+        if (s == null) return false;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            Character.UnicodeBlock b = Character.UnicodeBlock.of(c);
+            if (b == null) continue;
+            if (b == Character.UnicodeBlock.BASIC_LATIN && Character.isLetter(c)) return true;
+            if (b == Character.UnicodeBlock.LATIN_1_SUPPLEMENT && Character.isLetter(c)) return true;
+            if (b == Character.UnicodeBlock.LATIN_EXTENDED_A || b == Character.UnicodeBlock.LATIN_EXTENDED_B
+                    || b == Character.UnicodeBlock.LATIN_EXTENDED_C || b == Character.UnicodeBlock.LATIN_EXTENDED_D) return true;
+            if (b == Character.UnicodeBlock.CYRILLIC || b == Character.UnicodeBlock.CYRILLIC_SUPPLEMENTARY) return true;
+            if (b == Character.UnicodeBlock.GREEK || b == Character.UnicodeBlock.GREEK_EXTENDED) return true;
+            if (b == Character.UnicodeBlock.HANGUL_SYLLABLES || b == Character.UnicodeBlock.HANGUL_JAMO
+                    || b == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO) return true;
+            if (b == Character.UnicodeBlock.ARABIC) return true;
+            if (b == Character.UnicodeBlock.HIRAGANA || b == Character.UnicodeBlock.KATAKANA) return true;
+            if (b == Character.UnicodeBlock.THAI) return true;
+        }
+        return false;
+    }
+
     private static String stripFlipMarks(String s) {
         if (s == null) return null;
         return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
     }
+
+    // =========================================================
+    // ★ 翻译结果清洗：干掉破折号、分号这些 AI 味标点
+    // =========================================================
+
+    public static String sanitizeForeignText(String s) {
+        if (s == null) return "";
+        String t = s.trim();
+        if (t.isEmpty()) return t;
+
+        t = t.replace(";", ",").replace("；", ",");
+        t = t.replace("—", "...").replace("–", "...").replace("―", "...").replace("─", "...");
+
+        t = t.replaceAll(",[\\s,]*", ", ");
+        t = t.replace(" ,", ",");
+        t = t.replaceAll("\\.{4,}", "...");
+        t = t.replaceAll("\\s{2,}", " ");
+        return t.trim();
+    }
+
+    // =========================================================
+    // ★ 选项解析：管道/表格/序号/括号 全兼容，最多取4条
+    // =========================================================
+
+    public static List<String[]> parseTranslateOptions(String result) {
+        List<String[]> items = new ArrayList<>();
+        if (result == null || result.trim().isEmpty()) return items;
+
+        String optionsText;
+        String[] splitData = result.split("={3,}");
+        if (splitData.length >= 2) {
+            optionsText = splitData[splitData.length - 1];
+        } else {
+            StringBuilder sb = new StringBuilder();
+            boolean inOptions = false;
+            for (String line : result.split("\n")) {
+                String t = line.trim();
+                if (!inOptions && (t.contains("下半部分") || t.matches("^[=+\\-]{3,}.*$"))) {
+                    inOptions = true;
+                    continue;
+                }
+                if (inOptions) sb.append(line).append("\n");
+            }
+            optionsText = sb.length() > 0 ? sb.toString() : result;
+        }
+
+        Set<String> seen = new HashSet<>();
+        for (String rawLine : optionsText.split("\n")) {
+            String line = rawLine.trim().replace("*", "").replace("｜", "|");
+            if (line.isEmpty()) continue;
+            if (line.matches("^[=+\\-|:：\\s]{3,}$")) continue;
+
+            if (line.startsWith("|")) line = line.substring(1).trim();
+            if (line.endsWith("|")) line = line.substring(0, line.length() - 1).trim();
+            line = line.replaceFirst("^[•·▪◦]\\s*", "");
+            if (line.isEmpty()) continue;
+
+            String foreign = null;
+            String chinese = "";
+            String label = "";
+
+            if (line.contains("|")) {
+                String[] parts = line.split("\\|");
+                List<String> cells = new ArrayList<>();
+                for (String p : parts) {
+                    String c2 = p.trim();
+                    if (!c2.isEmpty()) cells.add(c2);
+                }
+                if (cells.isEmpty()) continue;
+                foreign = cells.get(0);
+                if (cells.size() > 1) chinese = cells.get(1);
+                if (cells.size() > 2) label = cells.get(2);
+            } else {
+                String core = NUMBER_PREFIX.matcher(line).replaceFirst("").trim();
+                Matcher m = PAREN_TAIL.matcher(core);
+                String paren = "";
+                if (m.find()) {
+                    paren = m.group(1).trim();
+                    core = core.substring(0, m.start()).trim();
+                }
+                foreign = core;
+                if (!paren.isEmpty()) {
+                    if (paren.matches(".*[\\u4e00-\\u9fa5].*")) {
+                        chinese = paren.replaceFirst("^(中文)?(大意|意思|含义|翻译)?\\s*[:：]?\\s*", "");
+                    } else {
+                        label = paren.replaceFirst("^(语气|风格|标签)?\\s*[:：]?\\s*", "");
+                    }
+                }
+            }
+
+            if (foreign == null) continue;
+            foreign = NUMBER_PREFIX.matcher(foreign).replaceFirst("").trim();
+            foreign = foreign.replaceAll("^[\"'“”‘’「 ]+|[\"'“”‘’」 ]+$", "").trim();
+            chinese = chinese.replaceFirst("^(中文)?(大意|意思|含义|翻译)?\\s*[:：]?\\s*", "").trim();
+            label = label.replaceFirst("^(语气|风格|标签)?\\s*[:：]?\\s*", "").trim();
+
+            foreign = sanitizeForeignText(foreign);
+            if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
+            if (!seen.add(foreign.toLowerCase())) continue;
+
+            items.add(new String[]{foreign, chinese, label});
+            if (items.size() >= 4) break;
+        }
+        return items;
+    }
+
+    /** 提取上半部分的分析文字（用于弹窗顶部展示） */
+    public static String extractAnalysis(String result) {
+        if (result == null) return "";
+        String[] splitData = result.split("={3,}");
+        if (splitData.length >= 2) {
+            return splitData[0].trim().replace("*", "");
+        }
+        String[] lines = result.split("\n");
+        int firstOptionLine = -1;
+        for (int i = 0; i < lines.length; i++) {
+            String t = lines[i].trim().replace("*", "");
+            if (t.isEmpty()) continue;
+            if (t.contains("|") || NUMBER_PREFIX.matcher(t).find()) {
+                firstOptionLine = i;
+                break;
+            }
+        }
+        if (firstOptionLine <= 0) return "";
+        StringBuilder an = new StringBuilder();
+        for (int i = 0; i < firstOptionLine; i++) {
+            String t = lines[i].trim();
+            if (!t.isEmpty()) an.append(t).append("\n\n");
+        }
+        return an.toString().trim().replace("*", "");
+    }
+
+    // =========================================================
+    // 翻译核心
+    // =========================================================
 
     public static String toChinese(String text) throws IOException {
         return toChinese(text, "0");
@@ -553,7 +811,7 @@ public class AITranslator {
                     "\n4. 如果提示中出现【当前回复目标是一张图片，但本地文件路径未获取到】，说明你不能把背景图误认为焦点图，必须保守回答。" +
                     "\n5. 剧本后，<translate> 标签内包裹的是我刚刚输入的【最新文字】。请严格判断格式，执行以下两种模式之一：" +
                     "\n6. 【绝对服从】：如果用户消息中出现【强制模式】MODE_A_ONLY，你必须无条件执行【模式A】，严禁出现任何翻译选项！" +
-                    "\n7. 【绝对死刑标点黑名单】：在任何翻译结果中，绝对禁止使用破折号(—)、分号(;)、冒号(:)。只能使用逗号(,)、句号(.)、问号(?)、感叹号(!)和省略号(...)。如果你在翻译中使用了破折号、分号或冒号，整个回复将被系统直接丢弃并报错！" +
+                    "\n7. 【绝对死刑标点黑名单】：在任何翻译结果中，绝对禁止使用破折号(—)、半角分号(;)、全角分号(；)。只能使用逗号(,)、句号(.)、问号(?)、感叹号(!)和省略号(...)。违反即整条作废！" +
 
                     "\n\n【模式A：纯对话求助模式（不翻译）】" +
                     "\n► 触发条件：文字全部被括号包裹，或明确包含 MODE_A_ONLY。" +
@@ -563,15 +821,16 @@ public class AITranslator {
 
                     "\n\n【模式B：标准翻译 + 附加指令/提问模式】" +
                     "\n► 触发条件：存在正常中文正文，且不是模式A。" +
-                    "\n► 任务：严格结合上下文，把括号外正文翻译成地道语言（避开黑名单词汇，绝对不使用破折号、分号、冒号）。" +
+                    "\n► 任务：严格结合上下文，把括号外正文翻译成地道语言（避开黑名单词汇，绝对不使用破折号、分号）。" +
                     "\n► 【输出排版绝对红线】（必须严格分成上下两段，中间用 `==========` 分割，这是维持系统不崩溃的底线）：" +
                     "\n\n【上半部分：分析与解答区】" +
                     "\n（如果你想做任何语境分析、多盘思考，或者回答括号内的提问，请尽情在这里废话。你想写多少解析都可以，但必须全部放在上半部分！）" +
                     "\n\n==========" +
                     "\n\n【下半部分：严格的选项区】" +
-                    "\n（在此分隔线下方，绝对、永远、严禁写任何废话说明！必须且只能输出【绝对恰好 4 行】翻译版本，不可多一行也不可少一行！如果你只输出3行或2行，系统将判定为严重错误并拒绝接收！）" +
+                    "\n（在此分隔线下方，绝对、永远、严禁写任何废话说明！必须且只能输出【绝对恰好 4 行】翻译版本，不可多一行也不可少一行！如果你只输出3行或2行，系统将直接判定为严重错误并拒绝接收！）" +
                     "\n每行的格式必须严格为：外语|中文大意|语气标签" +
-                    "\n注意：绝对不准加数字序号（如 1. 2.），绝不准用Markdown表格，必须且只能用 `|` 分割！";
+                    "\n注意：绝对不准加数字序号（如 1. 2.），绝不准用Markdown表格，必须且只能用 `|` 分割！" +
+                    "\n最后再重复一遍：下半部分必须恰好4行！少一行系统就会崩溃报错！";
 
             messages.put(createMessageObj("system", universalProtocol));
 
@@ -617,6 +876,41 @@ public class AITranslator {
         } catch (JSONException e) {
             throw new IOException("构建Messages失败");
         }
+    }
+
+    /**
+     * ★ 弹窗专用翻译入口：自动重试，尽最大努力凑齐恰好4个选项。
+     * 括号求助模式（模式A）不做选项重试。
+     */
+    public static String translateForPicker(String text, String langCode, String chatId) throws IOException {
+        if (text != null && text.contains("[PURE_BRACKET_MODE]")) {
+            return translateWithHistory(text, langCode, chatId);
+        }
+
+        String bestRaw = null;
+        int bestCount = -1;
+        String currentText = text;
+
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            String raw = translateWithHistory(currentText, langCode, chatId);
+            int count = parseTranslateOptions(raw).size();
+
+            if (count > bestCount) {
+                bestCount = count;
+                bestRaw = raw;
+            }
+
+            if (count >= 4) {
+                return raw;
+            }
+
+            Log.w(TAG, "选项不足4个(本次" + count + "个)，第" + attempt + "次尝试，准备强制补全");
+            currentText = text +
+                    "\n【系统强制补全指令】：你上一次只输出了" + count + "个有效选项，不符合要求，系统已报错。" +
+                    "本次必须【恰好输出4行】翻译版本，每行严格为：外语|中文大意|语气标签。禁止合并行，禁止遗漏，禁止加序号，禁止使用破折号和分号。";
+        }
+
+        return bestRaw != null ? bestRaw : "";
     }
 
     private static String fallbackToPureTextRequest(JSONArray originalMessages) throws IOException {
@@ -767,8 +1061,12 @@ public class AITranslator {
         return result;
     }
 
+    // =========================================================
+    // 缓存
+    // =========================================================
+
     private static void loadCache() {
-        if (!cacheFile.exists()) return;
+        if (cacheFile == null || !cacheFile.exists()) return;
         try (BufferedReader r = new BufferedReader(new FileReader(cacheFile))) {
             String line;
             while ((line = r.readLine()) != null) {
@@ -786,6 +1084,7 @@ public class AITranslator {
 
     public static void saveCache() {
         try {
+            if (cacheFile == null) return;
             cacheFile.getParentFile().mkdirs();
             try (BufferedWriter w = new BufferedWriter(new FileWriter(cacheFile))) {
                 for (Map.Entry<String, String[]> e : cache.entrySet()) {
@@ -838,6 +1137,7 @@ public class AITranslator {
     public static String getForeignFuzzy(String copiedText) {
         if (copiedText == null || copiedText.trim().isEmpty()) return null;
         String clean = stripFlipMarks(copiedText);
+        if (mySentDrafts.containsKey(clean)) return clean;
         if (foreignToChinese.containsKey(clean)) return clean;
         if (chineseToForeign.containsKey(clean)) return chineseToForeign.get(clean);
         for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) {
@@ -854,10 +1154,15 @@ public class AITranslator {
         if (mySentDrafts.containsKey(clean)) return mySentDrafts.get(clean);
         for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
             String key = stripFlipMarks(entry.getKey());
+            if (key == null || key.isEmpty()) continue;
             if (clean.contains(key) || key.contains(clean)) return entry.getValue();
         }
         return null;
     }
+
+    // =========================================================
+    // Prompt
+    // =========================================================
 
     private static void loadPrompts() {
         try {
@@ -875,7 +1180,9 @@ public class AITranslator {
                     else if (line.startsWith("###ES###")) { if (cur.equals("KO")) promptKO = sb.toString().trim(); cur = "ES"; sb.setLength(0); }
                     else { sb.append(line).append("\n"); }
                 }
-                if (cur.equals("UK")) promptUK = sb.toString().trim();
+                if (cur.equals("EN")) promptEN = sb.toString().trim();
+                else if (cur.equals("RU")) promptRU = sb.toString().trim();
+                else if (cur.equals("UK")) promptUK = sb.toString().trim();
                 else if (cur.equals("KO")) promptKO = sb.toString().trim();
                 else if (cur.equals("ES")) promptES = sb.toString().trim();
                 r.close();
@@ -897,6 +1204,10 @@ public class AITranslator {
     public static void savePrompts(String zh, String en, String ru, String uk, String ko, String es) {
         receivePrompt = zh; promptEN = en; promptRU = ru; promptUK = uk; promptKO = ko; promptES = es;
     }
+
+    // =========================================================
+    // 历史记录
+    // =========================================================
 
     private static File historyFile(String chatId) {
         return new File("/data/data/com.hellotalk/files/htai_hist_" + chatId + ".json");
