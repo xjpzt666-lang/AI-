@@ -61,12 +61,16 @@ public class MainActivity extends Activity {
     private String cachedModel = "";
     private SharedPreferences prefs;
 
+    // ★ 记忆系统 2.0
+    private TextView memStatus;
+    private volatile boolean claimDialogShowing = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         prefs = getSharedPreferences("htai_settings", MODE_PRIVATE);
         mainHandler = new Handler(Looper.getMainLooper());
-        
+
         loadConfigOnce();
 
         drawerLayout = new DrawerLayout(this);
@@ -114,6 +118,16 @@ public class MainActivity extends Activity {
         topBar.addView(modelLabel);
         topBar.addView(rightMenuBtn);
         mainContent.addView(topBar);
+
+        // ★ 记忆状态行（记忆系统 2.0 唯一新增的常驻界面元素）
+        memStatus = new TextView(this);
+        memStatus.setTag("memStatus");
+        memStatus.setText("🧠 记忆：检测中...");
+        memStatus.setPadding(16, 8, 16, 8);
+        memStatus.setTextSize(13f);
+        memStatus.setTextColor(Color.parseColor("#0B5ED7"));
+        memStatus.setBackgroundColor(Color.parseColor("#F1F8FF"));
+        mainContent.addView(memStatus);
 
         // 当前对话标题
         TextView chatTitle = new TextView(this);
@@ -200,7 +214,7 @@ public class MainActivity extends Activity {
         if (!cachedModel.isEmpty() && modelList.contains(cachedModel)) {
             modelSpinner.setSelection(modelList.indexOf(cachedModel));
         }
-        
+
         modelSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
@@ -210,7 +224,7 @@ public class MainActivity extends Activity {
                     prefs.edit().putString("model", selected).apply();
                     TextView ml = (TextView) drawerLayout.findViewWithTag("modelLabel");
                     if (ml != null) ml.setText(selected);
-                    
+
                     updateModelInConfig(selected);
                     Toast.makeText(MainActivity.this, "底层翻译模型已实时切换为: " + selected, Toast.LENGTH_SHORT).show();
                 }
@@ -264,6 +278,103 @@ public class MainActivity extends Activity {
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
     }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // ★ 每次回到遥控器：检查是否需要认领记忆，并刷新状态行
+        checkMemoryClaim();
+    }
+
+    // =========================================================
+    // ★ 记忆系统 2.0：认领 / 状态显示
+    // =========================================================
+
+    private void checkMemoryClaim() {
+        new Thread(() -> {
+            String marker = runRoot("cat /data/local/tmp/htai_mem_mode.txt 2>/dev/null");
+            marker = marker == null ? "" : marker.trim();
+            String sandboxLs = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            boolean sandboxHas = sandboxLs != null && !sandboxLs.trim().isEmpty();
+            String storeLs = runRoot("ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
+            boolean storeHas = storeLs != null && !storeLs.trim().isEmpty();
+
+            final boolean pending = "pending".equals(marker) || (!sandboxHas && storeHas);
+            final String fMarker = marker;
+
+            runOnUiThread(() -> {
+                if (pending) {
+                    updateMemStatus("pending");
+                    showClaimDialog();
+                } else {
+                    updateMemStatus(fMarker);
+                }
+            });
+        }).start();
+    }
+
+    private void updateMemStatus(String marker) {
+        TextView ms = (TextView) drawerLayout.findViewWithTag("memStatus");
+        if (ms == null) return;
+        if ("temp".equals(marker)) {
+            ms.setText("🧠 记忆：一次性模式（功能照常，不备份，清数据即焚）");
+            ms.setTextColor(Color.parseColor("#B45309"));
+            ms.setBackgroundColor(Color.parseColor("#FFF7E6"));
+        } else if ("pending".equals(marker)) {
+            ms.setText("🧠 记忆：待认领（请在弹窗中选择）");
+            ms.setTextColor(Color.parseColor("#B02A37"));
+            ms.setBackgroundColor(Color.parseColor("#FDECEE"));
+        } else {
+            ms.setText("🧠 记忆：主账号（自动备份中）");
+            ms.setTextColor(Color.parseColor("#0B5ED7"));
+            ms.setBackgroundColor(Color.parseColor("#F1F8FF"));
+        }
+    }
+
+    private void showClaimDialog() {
+        if (claimDialogShowing || isFinishing()) return;
+        claimDialogShowing = true;
+        new AlertDialog.Builder(this)
+                .setTitle("这次登录的是谁？")
+                .setMessage("检测到 HelloTalk 数据被清空。\n\n" +
+                        "【主账号】把保险箱里的全部记忆装回去\n" +
+                        "【一次性】本次瞎聊不备份，清数据后自动烧掉")
+                .setPositiveButton("主账号：恢复记忆", (d, w) -> claimMain())
+                .setNegativeButton("一次性：不保存", (d, w) -> claimTemp())
+                .setOnDismissListener(d -> claimDialogShowing = false)
+                .setCancelable(true)
+                .show();
+    }
+
+    private void claimMain() {
+        Toast.makeText(this, "正在恢复主账号记忆...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            runRoot("mkdir -p /data/data/com.hellotalk/files");
+            runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
+            runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            // 尽力把文件归属改回 HelloTalk，失败也不影响读写（666）
+            runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+            runRoot("am force-stop com.hellotalk");
+            runOnUiThread(() -> {
+                updateMemStatus("main");
+                refreshDrawerList();
+                Toast.makeText(MainActivity.this, "✅ 主账号记忆已恢复，HelloTalk 已重启，直接去聊吧", Toast.LENGTH_LONG).show();
+            });
+        }).start();
+    }
+
+    private void claimTemp() {
+        new Thread(() -> {
+            runRoot("echo temp > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+            runOnUiThread(() -> {
+                updateMemStatus("temp");
+                Toast.makeText(MainActivity.this, "已进入一次性模式：功能一样不少，只是不备份，清数据即焚", Toast.LENGTH_LONG).show();
+            });
+        }).start();
+    }
+
+    // =========================================================
 
     private void showPopupMenu(View v) {
         PopupMenu popup = new PopupMenu(this, v);
@@ -453,6 +564,10 @@ public class MainActivity extends Activity {
                 String histPath = "/data/data/com.hellotalk/files/htai_hist_" + s.id + ".json";
                 runRoot("rm " + histPath);
 
+                // ★ 记忆系统 2.0：档案一起抹除（沙箱 + 保险箱双杀）
+                runRoot("rm /data/data/com.hellotalk/files/htai_profile_" + s.id + ".txt 2>/dev/null");
+                runRoot("rm /data/local/tmp/htai_store/htai_hist_" + s.id + ".json /data/local/tmp/htai_store/htai_profile_" + s.id + ".txt 2>/dev/null");
+
                 String friendsPath = "/data/data/com.hellotalk/files/htai_friends.json";
                 String jsonStr = runRoot("cat " + friendsPath);
                 if (jsonStr != null && !jsonStr.trim().isEmpty()) {
@@ -467,6 +582,8 @@ public class MainActivity extends Activity {
 
                         runRoot("cp " + tempFile.getAbsolutePath() + " " + friendsPath);
                         runRoot("chmod 666 " + friendsPath);
+                        // ★ 保险箱里的好友名单同步更新
+                        runRoot("cp " + friendsPath + " /data/local/tmp/htai_store/htai_friends.json 2>/dev/null");
                     }
                 }
 
@@ -521,14 +638,14 @@ public class MainActivity extends Activity {
                 tv.setPadding(20, 26, 20, 26);
                 tv.setTextColor(Color.parseColor("#333333"));
                 if (s.id.equals(currentChatId)) tv.setBackgroundColor(Color.parseColor("#E3F2FD"));
-                
+
                 tv.setOnClickListener(v -> {
                     currentChatId = s.id;
                     currentChatName = s.name;
                     ((TextView) drawerLayout.findViewWithTag("chatTitle")).setText("当前遥控: " + currentChatName);
                     loadHTMessagesRoot(currentChatId);
                     drawerLayout.closeDrawers();
-                    refreshDrawerList(); 
+                    refreshDrawerList();
                 });
 
                 tv.setOnLongClickListener(v -> {
@@ -540,7 +657,7 @@ public class MainActivity extends Activity {
                             .show();
                     return true;
                 });
-                
+
                 drawerContent.addView(tv);
             }
         }
@@ -556,7 +673,7 @@ public class MainActivity extends Activity {
                     JSONObject obj = history.getJSONObject(i);
                     String role = obj.optString("role", "");
                     String content = obj.optString("content", "");
-                    
+
                     if ("user".equals(role)) {
                         displayMessage("ai", "对方: " + content);
                     } else if ("assistant".equals(role)) {
@@ -587,15 +704,13 @@ public class MainActivity extends Activity {
 
         boolean hasImage = !pendingImageBase64.isEmpty();
 
-        // ★ 核心修复：把真实 Base64 塞进底层的特制标签里，让 AITranslator 去解析！
         String contentToInject = hasImage ? "[IMAGE_BASE64:" + pendingImageBase64 + "]" + text : text;
 
         if (hasImage) clearImagePreview();
 
-        // 界面显示的时候把超长 Base64 去掉，否则 UI 会卡死
         String uiDisplay = hasImage ? "【附图调教】 " + text : "【调教指令】 " + text;
         displayMessage("system", uiDisplay);
-        
+
         inputBox.setText("");
 
         new Thread(() -> {
@@ -610,8 +725,8 @@ public class MainActivity extends Activity {
                 }
 
                 JSONObject entry = new JSONObject();
-                entry.put("role", "system"); 
-                entry.put("content", contentToInject); 
+                entry.put("role", "system");
+                entry.put("content", contentToInject);
                 history.put(entry);
 
                 File tempFile = new File(getCacheDir(), "htai_temp.json");
@@ -621,7 +736,7 @@ public class MainActivity extends Activity {
 
                 runRoot("cp " + tempFile.getAbsolutePath() + " " + path);
                 runRoot("chmod 666 " + path);
-                
+
                 mainHandler.post(() -> {
                     displayMessage("system", "✅ 指令及附件已静默注入底层！\n切回 HelloTalk 再次点击“译”按钮即可生效。");
                     messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
@@ -633,7 +748,6 @@ public class MainActivity extends Activity {
     }
 
     private void displayMessage(String role, String content) {
-        // ★ 剔除大段乱码 Base64，防止撑爆 UI
         if (content.contains("[IMAGE_BASE64:")) {
             int start = content.indexOf("[IMAGE_BASE64:");
             int end = content.indexOf("]", start);
@@ -652,7 +766,7 @@ public class MainActivity extends Activity {
         bubble.setPadding(24, 18, 24, 18);
         bubble.setLineSpacing(6f, 1f);
         bubble.setTextIsSelectable(true);
-        
+
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.width = (int)(getResources().getDisplayMetrics().widthPixels * 0.75);
 
@@ -666,7 +780,7 @@ public class MainActivity extends Activity {
             bubble.setBackgroundColor(Color.parseColor("#DCF8C6"));
             bubble.setTextColor(Color.parseColor("#155724"));
             bubble.setLayoutParams(lp);
-            
+
             LinearLayout spacer = new LinearLayout(this);
             spacer.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
             row.addView(spacer);
