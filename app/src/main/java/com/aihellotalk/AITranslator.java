@@ -32,7 +32,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import de.robv.android.xposed.AndroidAppHelper;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -188,6 +187,22 @@ public class AITranslator {
         }
     }
 
+    /**
+     * ★ 修复编译错误：不再依赖 AndroidAppHelper（CI 的 Xposed 编译桩里没有这个类）。
+     * 改用反射 ActivityThread.currentApplication() 拿当前应用上下文，
+     * 运行在 HelloTalk 进程内时效果完全一样。
+     */
+    private static android.app.Application currentAppByReflect() {
+        try {
+            Class<?> at = Class.forName("android.app.ActivityThread");
+            Object app = at.getMethod("currentApplication").invoke(null);
+            if (app instanceof android.app.Application) {
+                return (android.app.Application) app;
+            }
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
     private static boolean sandboxHasMemory() {
         try {
             File dir = new File("/data/data/com.hellotalk/files");
@@ -275,7 +290,7 @@ public class AITranslator {
         try {
             new Handler(Looper.getMainLooper()).post(() -> {
                 try {
-                    android.app.Application app = AndroidAppHelper.currentApplication();
+                    android.app.Application app = currentAppByReflect();
                     if (app != null) {
                         Toast.makeText(app,
                                 "HT AI：检测到HelloTalk数据被清空，记忆已暂停。\n请打开遥控器选择【主账号】或【一次性】",
