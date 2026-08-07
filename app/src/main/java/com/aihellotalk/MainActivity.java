@@ -298,8 +298,7 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             String markerRaw = runRoot("cat /data/local/tmp/htai_mem_mode.txt 2>/dev/null");
 
-            // ★ 修复：遥控器没 root 时，所有 su 命令返回 null。
-            //   以前会掉进兜底分支假装"主账号备份中"，现在明确报出来。
+            // ★ 遥控器没 root 时，所有 su 命令返回 null，明确报出来而不是装正常
             if (markerRaw == null) {
                 runOnUiThread(() -> updateMemStatus("noroot"));
                 return;
@@ -311,13 +310,20 @@ public class MainActivity extends Activity {
             String storeLs = runRoot("ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
             boolean storeHas = storeLs != null && !storeLs.trim().isEmpty();
 
-            final boolean pending = "pending".equals(marker) || (!sandboxHas && storeHas);
+            // ★ 补丁③：只有保险箱真的有货，认领才有意义；保险箱空 = 没东西可恢复
+            final boolean pending = storeHas && ("pending".equals(marker) || !sandboxHas);
             final String fMarker = marker;
 
             runOnUiThread(() -> {
                 if (pending) {
                     updateMemStatus("pending");
                     showClaimDialog();
+                } else if ("pending".equals(fMarker)) {
+                    // 陈旧的 pending：保险箱已空，没东西可恢复 → 复位为全新主账号，不再吓唬人
+                    new Thread(() ->
+                            runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt")
+                    ).start();
+                    updateMemStatus("main");
                 } else {
                     updateMemStatus(fMarker);
                 }
@@ -391,7 +397,7 @@ public class MainActivity extends Activity {
     }
 
     // =========================================================
-    // ★ 新增：长按记忆状态栏 → 手动记忆管理
+    // ★ 长按记忆状态栏 → 手动记忆管理
     // =========================================================
 
     private void showMemoryMenu() {
