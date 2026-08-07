@@ -119,7 +119,7 @@ public class MainActivity extends Activity {
         topBar.addView(rightMenuBtn);
         mainContent.addView(topBar);
 
-        // ★ 记忆状态行（记忆系统 2.0 唯一新增的常驻界面元素）
+        // ★ 记忆状态行（长按 = 记忆管理菜单）
         memStatus = new TextView(this);
         memStatus.setTag("memStatus");
         memStatus.setText("🧠 记忆：检测中...");
@@ -127,6 +127,10 @@ public class MainActivity extends Activity {
         memStatus.setTextSize(13f);
         memStatus.setTextColor(Color.parseColor("#0B5ED7"));
         memStatus.setBackgroundColor(Color.parseColor("#F1F8FF"));
+        memStatus.setOnLongClickListener(v -> {
+            showMemoryMenu();
+            return true;
+        });
         mainContent.addView(memStatus);
 
         // 当前对话标题
@@ -287,13 +291,21 @@ public class MainActivity extends Activity {
     }
 
     // =========================================================
-    // ★ 记忆系统 2.0：认领 / 状态显示
+    // ★ 记忆系统 2.0：认领 / 状态显示 / 手动管理
     // =========================================================
 
     private void checkMemoryClaim() {
         new Thread(() -> {
-            String marker = runRoot("cat /data/local/tmp/htai_mem_mode.txt 2>/dev/null");
-            marker = marker == null ? "" : marker.trim();
+            String markerRaw = runRoot("cat /data/local/tmp/htai_mem_mode.txt 2>/dev/null");
+
+            // ★ 修复：遥控器没 root 时，所有 su 命令返回 null。
+            //   以前会掉进兜底分支假装"主账号备份中"，现在明确报出来。
+            if (markerRaw == null) {
+                runOnUiThread(() -> updateMemStatus("noroot"));
+                return;
+            }
+
+            String marker = markerRaw.trim();
             String sandboxLs = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
             boolean sandboxHas = sandboxLs != null && !sandboxLs.trim().isEmpty();
             String storeLs = runRoot("ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
@@ -316,8 +328,12 @@ public class MainActivity extends Activity {
     private void updateMemStatus(String marker) {
         TextView ms = (TextView) drawerLayout.findViewWithTag("memStatus");
         if (ms == null) return;
-        if ("temp".equals(marker)) {
-            ms.setText("🧠 记忆：一次性模式（功能照常，不备份，清数据即焚）");
+        if ("noroot".equals(marker)) {
+            ms.setText("⚠️ 记忆：遥控器未获得root权限，无法检测/切换记忆（去Magisk授权后重开）");
+            ms.setTextColor(Color.parseColor("#B02A37"));
+            ms.setBackgroundColor(Color.parseColor("#FDECEE"));
+        } else if ("temp".equals(marker)) {
+            ms.setText("🧠 记忆：一次性模式（功能照常，不备份，清数据即焚）｜长按管理");
             ms.setTextColor(Color.parseColor("#B45309"));
             ms.setBackgroundColor(Color.parseColor("#FFF7E6"));
         } else if ("pending".equals(marker)) {
@@ -325,7 +341,7 @@ public class MainActivity extends Activity {
             ms.setTextColor(Color.parseColor("#B02A37"));
             ms.setBackgroundColor(Color.parseColor("#FDECEE"));
         } else {
-            ms.setText("🧠 记忆：主账号（自动备份中）");
+            ms.setText("🧠 记忆：主账号（自动备份中）｜长按管理");
             ms.setTextColor(Color.parseColor("#0B5ED7"));
             ms.setBackgroundColor(Color.parseColor("#F1F8FF"));
         }
@@ -371,6 +387,141 @@ public class MainActivity extends Activity {
                 updateMemStatus("temp");
                 Toast.makeText(MainActivity.this, "已进入一次性模式：功能一样不少，只是不备份，清数据即焚", Toast.LENGTH_LONG).show();
             });
+        }).start();
+    }
+
+    // =========================================================
+    // ★ 新增：长按记忆状态栏 → 手动记忆管理
+    // =========================================================
+
+    private void showMemoryMenu() {
+        new AlertDialog.Builder(this)
+                .setTitle("记忆管理")
+                .setItems(new String[]{
+                        "📦 立即备份（沙箱 → 保险箱）",
+                        "🕶 切换一次性模式（小号瞎聊用）",
+                        "👑 切换主账号模式（恢复记忆）",
+                        "🔍 查看记忆文件（诊断）"
+                }, (d, w) -> {
+                    if (w == 0) backupNow();
+                    else if (w == 1) confirmSwitchToTemp();
+                    else if (w == 2) switchToMain();
+                    else if (w == 3) showMemoryFiles();
+                })
+                .show();
+    }
+
+    private void backupNow() {
+        Toast.makeText(this, "备份中...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            runRoot("mkdir -p /data/local/tmp/htai_store"
+                    + " && cp /data/data/com.hellotalk/files/htai_* /data/local/tmp/htai_store/ 2>/dev/null; "
+                    + "chmod 600 /data/local/tmp/htai_store/htai_* 2>/dev/null");
+            String storeLs = runRoot("ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
+            boolean ok = storeLs != null && !storeLs.trim().isEmpty();
+            runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                    ok ? "✅ 保险箱已有备份" : "❌ 备份后保险箱仍是空的（沙箱没记忆，或遥控器没有root权限）",
+                    Toast.LENGTH_LONG).show());
+        }).start();
+    }
+
+    private void confirmSwitchToTemp() {
+        new AlertDialog.Builder(this)
+                .setTitle("切换一次性模式")
+                .setMessage("将依次执行：\n" +
+                        "1. 把主账号记忆备份进保险箱\n" +
+                        "2. 清空 HelloTalk 沙箱记忆（小号从零开始）\n" +
+                        "3. 标记为一次性模式，之后不备份\n\n" +
+                        "备份不成功会立刻中止，绝不丢主账号记忆。\n" +
+                        "小号聊完想回主账号：长按记忆栏 →【切换主账号模式】。\n\n确定切换？")
+                .setPositiveButton("切换", (d, w) -> switchToTemp())
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void switchToTemp() {
+        Toast.makeText(this, "正在切换一次性模式...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String sandboxLs0 = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            boolean sandboxHas0 = sandboxLs0 != null && !sandboxLs0.trim().isEmpty();
+
+            if (sandboxHas0) {
+                // 先备份
+                runRoot("mkdir -p /data/local/tmp/htai_store"
+                        + " && cp /data/data/com.hellotalk/files/htai_* /data/local/tmp/htai_store/ 2>/dev/null; "
+                        + "chmod 600 /data/local/tmp/htai_store/htai_* 2>/dev/null");
+                String storeLs = runRoot("ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
+                boolean storeOk = storeLs != null && !storeLs.trim().isEmpty();
+                if (!storeOk) {
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                            "❌ 备份失败，已中止切换（防止主账号记忆丢失）。请检查遥控器root权限",
+                            Toast.LENGTH_LONG).show());
+                    return;
+                }
+                // 备份确认到手后才清沙箱
+                runRoot("rm -f /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            }
+
+            runRoot("echo temp > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+            runRoot("am force-stop com.hellotalk");
+            runOnUiThread(() -> {
+                updateMemStatus("temp");
+                refreshDrawerList();
+                Toast.makeText(MainActivity.this,
+                        "🕶 已进入一次性模式：小号从零开始，主账号记忆已封存进保险箱",
+                        Toast.LENGTH_LONG).show();
+            });
+        }).start();
+    }
+
+    private void switchToMain() {
+        Toast.makeText(this, "正在切换主账号模式...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String sandboxLs = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            boolean sandboxHas = sandboxLs != null && !sandboxLs.trim().isEmpty();
+
+            if (!sandboxHas) {
+                // 沙箱空 → 从保险箱恢复
+                runRoot("mkdir -p /data/data/com.hellotalk/files");
+                runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
+                runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+                runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            }
+
+            runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+            runRoot("am force-stop com.hellotalk");
+
+            final boolean restored = !sandboxHas;
+            runOnUiThread(() -> {
+                updateMemStatus("main");
+                refreshDrawerList();
+                Toast.makeText(MainActivity.this,
+                        restored ? "👑 已切回主账号模式，保险箱记忆已恢复，HelloTalk已重启"
+                                 : "👑 已切回主账号模式（沙箱记忆本来就在），HelloTalk已重启",
+                        Toast.LENGTH_LONG).show();
+            });
+        }).start();
+    }
+
+    private void showMemoryFiles() {
+        new Thread(() -> {
+            String marker = runRoot("cat /data/local/tmp/htai_mem_mode.txt 2>/dev/null");
+            String sandbox = runRoot("ls -la /data/data/com.hellotalk/files/ 2>/dev/null | grep htai");
+            String store = runRoot("ls -la /data/local/tmp/htai_store/ 2>/dev/null | grep htai");
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("【模式标记】\n")
+              .append(marker == null ? "(读取失败：遥控器没有root权限)" : (marker.trim().isEmpty() ? "(空)" : marker.trim()))
+              .append("\n\n【沙箱 /data/data/com.hellotalk/files】\n")
+              .append(sandbox == null ? "(读取失败)" : (sandbox.trim().isEmpty() ? "(没有htai文件)" : sandbox.trim()))
+              .append("\n\n【保险箱 /data/local/tmp/htai_store】\n")
+              .append(store == null ? "(读取失败)" : (store.trim().isEmpty() ? "(没有htai文件)" : store.trim()));
+
+            runOnUiThread(() -> new AlertDialog.Builder(MainActivity.this)
+                    .setTitle("记忆文件诊断")
+                    .setMessage(sb.toString())
+                    .setPositiveButton("知道了", null)
+                    .show());
         }).start();
     }
 
