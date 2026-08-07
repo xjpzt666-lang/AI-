@@ -76,6 +76,8 @@ public class AITranslator {
     private static final Pattern QUOTED_LOCAL_IMAGE_PATTERN = Pattern.compile("\\[QUOTED_LOCAL_IMAGE:(.*?)\\]");
     private static final Pattern PURE_BRACKET_MODE_PATTERN = Pattern.compile("\\[PURE_BRACKET_MODE\\]");
     private static final Pattern QUOTED_IMAGE_MISSING_PATTERN = Pattern.compile("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]");
+    // ★ v5.1：翻转标记正则预编译（旧写法每次调用都重新编译一次，聊天滚动时白白烧CPU）
+    private static final Pattern FLIP_MARKS_PATTERN = Pattern.compile("([ ]?[🌐🔄]+)$");
 
     private static final Pattern PAREN_TAIL = Pattern.compile("[（(]([^()（）]*)[)）]\\s*$");
     private static final Pattern NUMBER_PREFIX = Pattern.compile(
@@ -1028,9 +1030,14 @@ public class AITranslator {
         return false;
     }
 
+    /**
+     * ★ v5.1：改用预编译的 FLIP_MARKS_PATTERN。
+     * 功能和原来一模一样（把结尾的 🌐/🔄 标记去掉），只是不再每次重新编译正则，
+     * 聊天滚动、查缓存时快得多。气泡上的图标显示和点击翻转完全不受影响。
+     */
     private static String stripFlipMarks(String s) {
         if (s == null) return null;
-        return s.replaceAll("([ ]?[🌐🔄]+)$", "").trim();
+        return FLIP_MARKS_PATTERN.matcher(s).replaceAll("").trim();
     }
 
     // =========================================================
