@@ -278,7 +278,7 @@ public class MainActivity extends Activity {
         drawerTitle.setPadding(10, 0, 0, 30);
         drawerContent.addView(drawerTitle);
 
-        // ★ 现在是异步加载，不会卡住开屏
+        // ★ 异步加载，不卡开屏
         refreshDrawerList();
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
@@ -297,7 +297,7 @@ public class MainActivity extends Activity {
 
     private void checkMemoryClaim() {
         new Thread(() -> {
-            // ★ 性能修复：原来 3 条 su 命令（3 次 root 调用）合并成 1 条
+            // ★ 性能修复：3 条 su 命令合并成 1 条
             String out = runRoot(
                     "cat /data/local/tmp/htai_mem_mode.txt 2>/dev/null; echo '<<<HTAI_SEP>>>';"
                     + " ls /data/data/com.hellotalk/files/htai_* 2>/dev/null; echo '<<<HTAI_SEP>>>';"
@@ -316,7 +316,9 @@ public class MainActivity extends Activity {
             boolean storeHas = !storeLs.isEmpty();
 
             // 只有保险箱真的有货，认领才有意义；保险箱空 = 没东西可恢复
-            final boolean pending = storeHas && ("pending".equals(marker) || !sandboxHas);
+            // ★ 补丁④：标记是 temp 时，即使沙箱是空的也不弹认领窗（尊重一次性模式的选择）
+            final boolean pending = storeHas && !"temp".equals(marker)
+                    && ("pending".equals(marker) || !sandboxHas);
             final String fMarker = marker;
 
             runOnUiThread(() -> {
@@ -443,7 +445,7 @@ public class MainActivity extends Activity {
                         "2. 清空 HelloTalk 沙箱记忆（小号从零开始）\n" +
                         "3. 标记为一次性模式，之后不备份\n\n" +
                         "备份不成功会立刻中止，绝不丢主账号记忆。\n" +
-                        "小号聊完想回主账号：长按记忆栏 →【切换主账号模式】。\n\n确定切换？")
+                        "小号聊完想回主账号：先清空HelloTalk数据，再长按记忆栏 →【切换主账号模式】。\n\n确定切换？")
                 .setPositiveButton("切换", (d, w) -> switchToTemp())
                 .setNegativeButton("取消", null)
                 .show();
@@ -760,8 +762,7 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * ★ 性能修复：原来直接在主线程跑 su 命令（会卡界面），
-     *   现在读取放后台线程，读完再回主线程画列表。从哪里调用都安全。
+     * ★ 异步加载好友列表，不卡界面
      */
     private void refreshDrawerList() {
         new Thread(() -> {
@@ -830,7 +831,7 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * ★ 性能修复：聊天记录读取也挪到后台线程，点击好友不再卡。
+     * ★ 聊天记录读取也在后台线程，点击好友不再卡
      */
     private void loadHTMessagesRoot(String chatId) {
         messageContainer.removeAllViews();
