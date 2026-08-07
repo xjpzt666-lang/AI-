@@ -76,7 +76,7 @@ public class AITranslator {
     private static final Pattern QUOTED_LOCAL_IMAGE_PATTERN = Pattern.compile("\\[QUOTED_LOCAL_IMAGE:(.*?)\\]");
     private static final Pattern PURE_BRACKET_MODE_PATTERN = Pattern.compile("\\[PURE_BRACKET_MODE\\]");
     private static final Pattern QUOTED_IMAGE_MISSING_PATTERN = Pattern.compile("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]");
-    // ★ v5.1：翻转标记正则预编译（旧写法每次调用都重新编译一次，聊天滚动时白白烧CPU）
+    // ★ v5.1：翻转标记正则预编译
     private static final Pattern FLIP_MARKS_PATTERN = Pattern.compile("([ ]?[🌐🔄]+)$");
 
     private static final Pattern PAREN_TAIL = Pattern.compile("[（(]([^()（）]*)[)）]\\s*$");
@@ -260,6 +260,15 @@ public class AITranslator {
                 memMode = "main";
                 writeMarker("main");
                 Log.w(TAG, "记忆模式：pending但保险箱为空，复位为main全新开始");
+                return;
+            }
+
+            // ★ 补丁④：已认领一次性模式：即使沙箱暂时是空的也尊重选择，
+            //   否则刚认领完又会被误判成"数据被清空"，无限弹认领窗
+            if ("temp".equals(marker)) {
+                memPending = false;
+                memMode = "temp";
+                Log.i(TAG, "记忆模式：temp（已认领）");
                 return;
             }
 
@@ -1031,9 +1040,7 @@ public class AITranslator {
     }
 
     /**
-     * ★ v5.1：改用预编译的 FLIP_MARKS_PATTERN。
-     * 功能和原来一模一样（把结尾的 🌐/🔄 标记去掉），只是不再每次重新编译正则，
-     * 聊天滚动、查缓存时快得多。气泡上的图标显示和点击翻转完全不受影响。
+     * ★ v5.1：预编译正则，功能与旧版完全一致，只是更快
      */
     private static String stripFlipMarks(String s) {
         if (s == null) return null;
