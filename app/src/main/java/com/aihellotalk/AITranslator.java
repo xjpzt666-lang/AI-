@@ -188,9 +188,7 @@ public class AITranslator {
     }
 
     /**
-     * ★ 修复编译错误：不再依赖 AndroidAppHelper（CI 的 Xposed 编译桩里没有这个类）。
-     * 改用反射 ActivityThread.currentApplication() 拿当前应用上下文，
-     * 运行在 HelloTalk 进程内时效果完全一样。
+     * ★ 反射拿当前应用上下文（不依赖 AndroidAppHelper，兼容 CI 编译桩）
      */
     private static android.app.Application currentAppByReflect() {
         try {
@@ -249,9 +247,17 @@ public class AITranslator {
 
             // 上次已判定待认领、还没去遥控器选择
             if ("pending".equals(marker)) {
-                memPending = true;
-                toastPending();
-                Log.w(TAG, "记忆模式：待认领（等待遥控器选择）");
+                if (storeHasBackup()) {
+                    memPending = true;
+                    toastPending();
+                    Log.w(TAG, "记忆模式：待认领（等待遥控器选择）");
+                    return;
+                }
+                // ★ 补丁①：pending 但保险箱已空 = 没东西可恢复，等待无意义，直接复位全新开始
+                memPending = false;
+                memMode = "main";
+                writeMarker("main");
+                Log.w(TAG, "记忆模式：pending但保险箱为空，复位为main全新开始");
                 return;
             }
 
@@ -331,6 +337,9 @@ public class AITranslator {
             long now = System.currentTimeMillis();
             if (now - lastBackupTs < BACKUP_INTERVAL_MS) return;
             lastBackupTs = now;
+            // ★ 补丁②：安全闸——沙箱为空绝不备份，否则"先删保险箱再复制"会把保险箱抹空
+            String sandboxLs = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            if (sandboxLs == null || sandboxLs.trim().isEmpty()) return;
             runRoot("mkdir -p " + STORE_DIR
                     + " && rm -f " + STORE_DIR + "/htai_* 2>/dev/null; "
                     + "cp /data/data/com.hellotalk/files/htai_* " + STORE_DIR + "/ 2>/dev/null; "
