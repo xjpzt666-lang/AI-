@@ -278,6 +278,7 @@ public class MainActivity extends Activity {
         drawerTitle.setPadding(10, 0, 0, 30);
         drawerContent.addView(drawerTitle);
 
+        // ★ 现在是异步加载，不会卡住开屏
         refreshDrawerList();
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
@@ -296,21 +297,25 @@ public class MainActivity extends Activity {
 
     private void checkMemoryClaim() {
         new Thread(() -> {
-            String markerRaw = runRoot("cat /data/local/tmp/htai_mem_mode.txt 2>/dev/null");
+            // ★ 性能修复：原来 3 条 su 命令（3 次 root 调用）合并成 1 条
+            String out = runRoot(
+                    "cat /data/local/tmp/htai_mem_mode.txt 2>/dev/null; echo '<<<HTAI_SEP>>>';"
+                    + " ls /data/data/com.hellotalk/files/htai_* 2>/dev/null; echo '<<<HTAI_SEP>>>';"
+                    + " ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
 
-            // ★ 遥控器没 root 时，所有 su 命令返回 null，明确报出来而不是装正常
-            if (markerRaw == null) {
+            if (out == null) {
                 runOnUiThread(() -> updateMemStatus("noroot"));
                 return;
             }
 
-            String marker = markerRaw.trim();
-            String sandboxLs = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
-            boolean sandboxHas = sandboxLs != null && !sandboxLs.trim().isEmpty();
-            String storeLs = runRoot("ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
-            boolean storeHas = storeLs != null && !storeLs.trim().isEmpty();
+            String[] parts = out.split("<<<HTAI_SEP>>>", -1);
+            String marker = parts.length > 0 ? parts[0].trim() : "";
+            String sandboxLs = parts.length > 1 ? parts[1].trim() : "";
+            String storeLs = parts.length > 2 ? parts[2].trim() : "";
+            boolean sandboxHas = !sandboxLs.isEmpty();
+            boolean storeHas = !storeLs.isEmpty();
 
-            // ★ 补丁③：只有保险箱真的有货，认领才有意义；保险箱空 = 没东西可恢复
+            // 只有保险箱真的有货，认领才有意义；保险箱空 = 没东西可恢复
             final boolean pending = storeHas && ("pending".equals(marker) || !sandboxHas);
             final String fMarker = marker;
 
@@ -319,7 +324,7 @@ public class MainActivity extends Activity {
                     updateMemStatus("pending");
                     showClaimDialog();
                 } else if ("pending".equals(fMarker)) {
-                    // 陈旧的 pending：保险箱已空，没东西可恢复 → 复位为全新主账号，不再吓唬人
+                    // 陈旧的 pending：保险箱已空，没东西可恢复 → 复位为全新主账号
                     new Thread(() ->
                             runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt")
                     ).start();
@@ -374,7 +379,6 @@ public class MainActivity extends Activity {
             runRoot("mkdir -p /data/data/com.hellotalk/files");
             runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
             runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
-            // 尽力把文件归属改回 HelloTalk，失败也不影响读写（666）
             runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
             runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
             runRoot("am force-stop com.hellotalk");
@@ -452,7 +456,6 @@ public class MainActivity extends Activity {
             boolean sandboxHas0 = sandboxLs0 != null && !sandboxLs0.trim().isEmpty();
 
             if (sandboxHas0) {
-                // 先备份
                 runRoot("mkdir -p /data/local/tmp/htai_store"
                         + " && cp /data/data/com.hellotalk/files/htai_* /data/local/tmp/htai_store/ 2>/dev/null; "
                         + "chmod 600 /data/local/tmp/htai_store/htai_* 2>/dev/null");
@@ -464,7 +467,6 @@ public class MainActivity extends Activity {
                             Toast.LENGTH_LONG).show());
                     return;
                 }
-                // 备份确认到手后才清沙箱
                 runRoot("rm -f /data/data/com.hellotalk/files/htai_* 2>/dev/null");
             }
 
@@ -487,7 +489,6 @@ public class MainActivity extends Activity {
             boolean sandboxHas = sandboxLs != null && !sandboxLs.trim().isEmpty();
 
             if (!sandboxHas) {
-                // 沙箱空 → 从保险箱恢复
                 runRoot("mkdir -p /data/data/com.hellotalk/files");
                 runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
                 runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
@@ -721,7 +722,6 @@ public class MainActivity extends Activity {
                 String histPath = "/data/data/com.hellotalk/files/htai_hist_" + s.id + ".json";
                 runRoot("rm " + histPath);
 
-                // ★ 记忆系统 2.0：档案一起抹除（沙箱 + 保险箱双杀）
                 runRoot("rm /data/data/com.hellotalk/files/htai_profile_" + s.id + ".txt 2>/dev/null");
                 runRoot("rm /data/local/tmp/htai_store/htai_hist_" + s.id + ".json /data/local/tmp/htai_store/htai_profile_" + s.id + ".txt 2>/dev/null");
 
@@ -739,7 +739,6 @@ public class MainActivity extends Activity {
 
                         runRoot("cp " + tempFile.getAbsolutePath() + " " + friendsPath);
                         runRoot("chmod 666 " + friendsPath);
-                        // ★ 保险箱里的好友名单同步更新
                         runRoot("cp " + friendsPath + " /data/local/tmp/htai_store/htai_friends.json 2>/dev/null");
                     }
                 }
@@ -760,25 +759,35 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    /**
+     * ★ 性能修复：原来直接在主线程跑 su 命令（会卡界面），
+     *   现在读取放后台线程，读完再回主线程画列表。从哪里调用都安全。
+     */
     private void refreshDrawerList() {
-        while (drawerContent.getChildCount() > 1) drawerContent.removeViewAt(1);
-
-        List<ChatSession> htFriends = new ArrayList<>();
-        try {
-            String jsonStr = runRoot("cat /data/data/com.hellotalk/files/htai_friends.json");
-            if (jsonStr != null && !jsonStr.trim().isEmpty()) {
-                JSONObject friends = new JSONObject(jsonStr);
-                JSONArray names = friends.names();
-                if (names != null) {
-                    for (int i = 0; i < names.length(); i++) {
-                        String id = names.getString(i);
-                        JSONObject info = friends.getJSONObject(id);
-                        String name = info.optString("name", id);
-                        htFriends.add(new ChatSession(id, name));
+        new Thread(() -> {
+            final List<ChatSession> htFriends = new ArrayList<>();
+            try {
+                String jsonStr = runRoot("cat /data/data/com.hellotalk/files/htai_friends.json");
+                if (jsonStr != null && !jsonStr.trim().isEmpty()) {
+                    JSONObject friends = new JSONObject(jsonStr);
+                    JSONArray names = friends.names();
+                    if (names != null) {
+                        for (int i = 0; i < names.length(); i++) {
+                            String id = names.getString(i);
+                            JSONObject info = friends.getJSONObject(id);
+                            String name = info.optString("name", id);
+                            htFriends.add(new ChatSession(id, name));
+                        }
                     }
                 }
-            }
-        } catch (Exception ignored) {}
+            } catch (Exception ignored) {}
+
+            runOnUiThread(() -> renderDrawerList(htFriends));
+        }).start();
+    }
+
+    private void renderDrawerList(List<ChatSession> htFriends) {
+        while (drawerContent.getChildCount() > 1) drawerContent.removeViewAt(1);
 
         if (htFriends.isEmpty()) {
             TextView hint = new TextView(this);
@@ -820,32 +829,39 @@ public class MainActivity extends Activity {
         }
     }
 
+    /**
+     * ★ 性能修复：聊天记录读取也挪到后台线程，点击好友不再卡。
+     */
     private void loadHTMessagesRoot(String chatId) {
         messageContainer.removeAllViews();
-        try {
-            String jsonStr = runRoot("cat /data/data/com.hellotalk/files/htai_hist_" + chatId + ".json");
-            if (jsonStr != null && !jsonStr.trim().isEmpty()) {
-                JSONArray history = new JSONArray(jsonStr);
-                for (int i = 0; i < history.length(); i++) {
-                    JSONObject obj = history.getJSONObject(i);
-                    String role = obj.optString("role", "");
-                    String content = obj.optString("content", "");
+        new Thread(() -> {
+            final String jsonStr = runRoot("cat /data/data/com.hellotalk/files/htai_hist_" + chatId + ".json");
+            runOnUiThread(() -> {
+                try {
+                    if (jsonStr != null && !jsonStr.trim().isEmpty()) {
+                        JSONArray history = new JSONArray(jsonStr);
+                        for (int i = 0; i < history.length(); i++) {
+                            JSONObject obj = history.getJSONObject(i);
+                            String role = obj.optString("role", "");
+                            String content = obj.optString("content", "");
 
-                    if ("user".equals(role)) {
-                        displayMessage("ai", "对方: " + content);
-                    } else if ("assistant".equals(role)) {
-                        displayMessage("user", content);
+                            if ("user".equals(role)) {
+                                displayMessage("ai", "对方: " + content);
+                            } else if ("assistant".equals(role)) {
+                                displayMessage("user", content);
+                            } else {
+                                displayMessage("system", content);
+                            }
+                        }
+                        messageScrollView.postDelayed(() -> messageScrollView.fullScroll(View.FOCUS_DOWN), 100);
                     } else {
-                        displayMessage("system", content);
+                        displayMessage("system", "暂无与该好友的翻译记录");
                     }
+                } catch (Exception e) {
+                    displayMessage("system", "⚠️ 读取该好友记录失败");
                 }
-                messageScrollView.postDelayed(() -> messageScrollView.fullScroll(View.FOCUS_DOWN), 100);
-            } else {
-                displayMessage("system", "暂无与该好友的翻译记录");
-            }
-        } catch (Exception e) {
-            displayMessage("system", "⚠️ 读取该好友记录失败");
-        }
+            });
+        }).start();
     }
 
     private void sendMessage() {
