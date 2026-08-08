@@ -50,12 +50,12 @@ public class ChatHook {
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
     private static final ConcurrentHashMap<String, String> chatRequestMap = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
-
-    // ★ v82.3：记住每个聊天上次只给了几个选项（不足4个时，下次按「译」自动附带补齐提醒）
     private static final ConcurrentHashMap<String, Integer> chatShortCountMap = new ConcurrentHashMap<>();
 
+    // ★ v5.2: 反向翻译去重（每条消息只反译一次）
+    private static final Set<String> reverseTranslatedMsgIds = ConcurrentHashMap.newKeySet();
+
     private static Method langCodeMethod = null;
-    private static Method langNameMethod = null;
 
     private static final int RECENT_IMAGE_LIMIT = 3;
     private static final ConcurrentHashMap<String, String> imageUrlToPathMap = new ConcurrentHashMap<>();
@@ -85,7 +85,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // ★ 性能优化：Method 对象只查一次，之后直接调用
+    // ★ 反射缓存
     // =========================================================
 
     private static volatile boolean msgMethodsReady = false;
@@ -131,7 +131,6 @@ public class ChatHook {
         }
     }
 
-    // ★ 历史记录写入改为后台低优先级单线程，不再卡渲染
     private static final java.util.concurrent.ExecutorService historyExecutor =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
                 Thread t = new Thread(r, "HT_AI_HistWriter");
@@ -139,8 +138,16 @@ public class ChatHook {
                 return t;
             });
 
+    // ★ v5.2: 反向翻译专用单线程池（低优先级，不抢主翻译）
+    private static final java.util.concurrent.ExecutorService reverseTranslateExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "HT_AI_ReverseTL");
+                t.setPriority(Thread.MIN_PRIORITY);
+                return t;
+            });
+
     public static void install(ClassLoader cl) {
-        log("=== Hook v82.3 (绝不自动重试 + 选项不足记忆 + 单聊加固版) ===");
+        log("=== Hook v5.2 (五合一修复版) ===");
 
         try {
             htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl);
@@ -148,8 +155,8 @@ public class ChatHook {
 
         try {
             Class<?> avClass = XposedHelpers.findClass("av.a", cl);
+            // v5.7.0: 只有 a(int) 方法，不再有 b(int)
             langCodeMethod = avClass.getMethod("a", int.class);
-            langNameMethod = avClass.getMethod("b", int.class);
         } catch (Throwable ignored) {}
 
         try { hookTextViewRender(cl); } catch (Throwable t) { log("渲染钩子失败: " + t.getMessage()); }
@@ -256,23 +263,6 @@ public class ChatHook {
                 recentRenderedImages.remove(recentRenderedImages.size() - 1);
             }
         }
-    }
-
-    private static List<String> getRecentImagePaths(int limit) {
-        List<String> result = new ArrayList<>();
-        if (limit <= 0) return result;
-        synchronized (recentRenderedImages) {
-            for (RenderedImageInfo info : recentRenderedImages) {
-                if (info != null && info.path != null) {
-                    File f = new File(info.path);
-                    if (f.exists() && f.length() > 0) {
-                        result.add(info.path);
-                        if (result.size() >= limit) break;
-                    }
-                }
-            }
-        }
-        return result;
     }
 
     private static String bruteFindLocalImagePathFromBean(Object imageBean) {
@@ -404,8 +394,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // ★ 渲染层加 🌐 图标
-    // 图标只存在于屏幕显示，不进入输入框、不进入发送数据，永远不会被发出去。
+    // ★ v5.2: 渲染层加 🌐 — 多路查映射
     // =========================================================
 
     private static void hookTextViewRender(ClassLoader cl) {
@@ -431,7 +420,9 @@ public class ChatHook {
 
                                 if (s.endsWith(" 🌐") || s.endsWith(" 🔄")) return;
 
+                                // ★ v5.2: 多路查找
                                 String myDraft = AITranslator.getDraftFuzzy(s);
+                                if (myDraft == null) myDraft = AITranslator.getChineseByForeign(s);
                                 if (myDraft != null && !myDraft.equals(s)) {
                                     SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
                                     ssb.append(" 🌐");
@@ -441,7 +432,7 @@ public class ChatHook {
                         }
                     }
             );
-            log("渲染钩子(框架漏斗版)安装成功");
+            log("渲染钩子(多路查映射版)安装成功");
         } catch (Throwable t) {
             log("渲染钩子安装失败: " + t.getMessage());
         }
@@ -489,7 +480,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // ★ 气泡点击翻转：🌐(外语) <-> 🔄(中文原文)
+    // ★ 气泡点击翻转
     // =========================================================
 
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
@@ -564,8 +555,6 @@ public class ChatHook {
                         currentChatId = String.valueOf(param.args[0]);
                         currentChatType = (int) param.args[1];
 
-                        // ★ 切换聊天：立刻清空上一位的临时状态，
-                        //   防止"快速切人后秒按译"时用错国籍/名字/引用图
                         latestNationality = "";
                         latestNativeLang = 1;
                         latestPartnerName = "";
@@ -635,7 +624,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // 回复图片 / 渲染层
+    // 图片钩子（不变）
     // =========================================================
 
     private static void hookImageRenderLayer(ClassLoader cl) {
@@ -788,7 +777,11 @@ public class ChatHook {
     }
 
     // =========================================================
-    // 自动接收翻译（反射缓存 + 历史异步写入 + 失败自动重试一次）
+    // ★ v5.2: 接收钩子（五大修复整合）
+    //  ① 翻转按钮可靠性 → 多路映射
+    //  ② 对方引用我的消息 → 不限制 !isMine，双向提取
+    //  ③ 纯表情/纯标点 → 跳过翻译但保留原文
+    //  ④ 别的AI翻译的外语 → 后台反译纳入剧本
     // =========================================================
 
     private static void hookRecv(ClassLoader cl) throws Exception {
@@ -818,6 +811,7 @@ public class ChatHook {
                             }
                             final String thisChatId = extractedId;
 
+                            // ★ 注册好友
                             String senderName = null;
                             Object snObj = invokeQuiet(mGetSenderName, msg);
                             if (snObj != null) senderName = String.valueOf(snObj);
@@ -855,12 +849,18 @@ public class ChatHook {
                             Object stObj = invokeQuiet(mGetSendTime, msg);
                             if (stObj instanceof Long) sendTime = (Long) stObj;
 
+                            // ★ v5.2: 提取引用内容（不再限制 !isMine，双向都提取）
                             String quotedText = null;
                             try {
                                 Object replyInfo = invokeQuiet(mGetReplyInfo, msg);
-                                if (replyInfo != null && !isMine) {
+                                if (replyInfo != null) {
+                                    // 判断引用的是谁的消息
+                                    Object rIsSenderObj = invokeQuiet(mIsSender, replyInfo);
+                                    boolean rIsMine = (rIsSenderObj instanceof Boolean) && (Boolean) rIsSenderObj;
+
                                     Object rMt = invokeQuiet(mGetMsgType, replyInfo);
                                     String rMsgType = (rMt != null) ? String.valueOf(rMt) : null;
+
                                     if ("text".equals(rMsgType)) {
                                         Class<?> jsonBeanClass = XposedHelpers.findClass(
                                                 "com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
@@ -868,13 +868,26 @@ public class ChatHook {
                                         if (contentBean != null) {
                                             Method cbGetText = ensureBeanGetText(contentBean);
                                             Object qt = invokeQuiet(cbGetText, contentBean);
-                                            if (qt != null) quotedText = String.valueOf(qt);
+                                            if (qt != null) {
+                                                String rawQuoted = String.valueOf(qt);
+                                                if (rIsMine) {
+                                                    // ★ 对方引用了我发的外语 → 还原成我的中文原意
+                                                    String myChinese = AITranslator.getChineseByForeign(rawQuoted);
+                                                    if (myChinese == null) myChinese = AITranslator.getDraftFuzzy(rawQuoted);
+                                                    quotedText = (myChinese != null) ? myChinese : rawQuoted;
+                                                } else {
+                                                    quotedText = rawQuoted;
+                                                }
+                                            }
                                         }
                                     } else if (rMsgType != null) {
                                         quotedText = "[" + rMsgType + "]";
                                     }
                                 }
                             } catch (Exception ignored) {}
+
+                            // ★ v5.2: 判断是否是纯表情/纯标点
+                            final boolean isPureSymbol = !AITranslator.hasAnyLetterOrDigit(text);
 
                             boolean isNewMessage = recordedMsgIds.add(thisChatId + "_" + mid);
                             if (isNewMessage) {
@@ -885,21 +898,42 @@ public class ChatHook {
                                 final boolean fMine = isMine;
                                 historyExecutor.execute(() -> {
                                     if (fMine) {
-                                        AITranslator.appendHistory(thisChatId, fMid, "assistant", fText, fTime, null);
+                                        AITranslator.appendHistory(thisChatId, fMid, "assistant", fText, fTime, fQuoted);
                                     } else {
                                         AITranslator.appendHistory(thisChatId, fMid, "user", fText, fTime, fQuoted);
                                     }
                                 });
                             }
 
+                            // ★ v5.2: 纯表情/纯标点 → 保留原文不变，不调API
+                            if (isPureSymbol && !isMine) return;
+
                             if (text.startsWith("[")) return;
                             if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
                             if (isMine) {
-                                // ★ 我自己发的外语：记住 外语->中文原文 映射（供翻转用），绝不修改消息内容
+                                // ★ v5.2: 我自己发的外语 → 多路查中文原文
                                 String myChineseDraft = AITranslator.getDraftFuzzy(text);
+                                if (myChineseDraft == null) myChineseDraft = AITranslator.getChineseByForeign(text);
                                 if (myChineseDraft != null) {
                                     AITranslator.cacheResult(mid, text, myChineseDraft);
+                                } else {
+                                    // ★ v5.2 Issue 4: 没有草稿映射 → 后台反译
+                                    final String fText2 = text;
+                                    final String fChatId = thisChatId;
+                                    final String fMid2 = mid;
+                                    if (reverseTranslatedMsgIds.add(fMid2)) {
+                                        reverseTranslateExecutor.execute(() -> {
+                                            try {
+                                                String zh = AITranslator.reverseTranslateMyForeign(fText2, fChatId);
+                                                if (zh != null && !zh.isEmpty()) {
+                                                    AITranslator.cacheResult(fMid2, fText2, zh);
+                                                    AITranslator.rememberDraft(fText2, zh);
+                                                    log("反向翻译成功: " + fText2.substring(0, Math.min(20, fText2.length())) + " → " + zh);
+                                                }
+                                            } catch (Exception ignored) {}
+                                        });
+                                    }
                                 }
                                 return;
                             }
@@ -923,9 +957,6 @@ public class ChatHook {
                                     try {
                                         t = AITranslator.toChinese(finalText, thisChatId);
                                     } catch (Exception firstErr) {
-                                        // ★ 接收翻译失败时，隔1.5秒自动重试一次
-                                        //   （这是"外语→中文"接收方向，与按「译」的中翻外无关；
-                                        //     Key没配置等配置问题不重试）
                                         String m = firstErr.getMessage() == null ? "" : firstErr.getMessage();
                                         boolean configProblem = m.contains("Key未配置") || m.contains("未初始化");
                                         if (!configProblem) {
@@ -950,7 +981,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // 输入栏按钮
+    // 输入栏按钮（不变，保持原逻辑）
     // =========================================================
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
@@ -1128,10 +1159,9 @@ public class ChatHook {
             String text = edit.getText().toString().trim();
             if (text.isEmpty() || !AITranslator.isChineseOnly(text)) return;
 
-            // ★ 预检：会话ID必须有效，杜绝写错好友档案的可能（黑框提示，不弹窗）
             String chatIdCheck = currentChatId;
             if (chatIdCheck == null || chatIdCheck.isEmpty()
-                    || "0".equals(chatIdCheck) || "null".equals(chatIdCheck)) {
+| "0".equals(chatIdCheck) || "null".equals(chatIdCheck)) {
                 Toast.makeText(edit.getContext(),
                         "⚠️ 会话尚未就绪，请退出聊天重新进入后再试",
                         Toast.LENGTH_SHORT).show();
@@ -1210,7 +1240,6 @@ public class ChatHook {
                                 "\n\n【系统强制指令】：用户要求重新生成。请给出完全不同的表达方式！";
                     }
 
-                    // ★ v82.3：上次选项不足4个时，这次（用户亲手按的）自动附带补齐提醒
                     Integer lastShortCount = chatShortCountMap.get(chatIdSnapshot);
                     if (lastShortCount != null && !finalTextToTranslate.contains("[PURE_BRACKET_MODE]")) {
                         if (lastShortCount > 0) {
@@ -1221,10 +1250,8 @@ public class ChatHook {
                         }
                     }
 
-                    // ★ 只调用一次 API，绝不自动重试
                     String result = AITranslator.translateForPicker(finalPromptText, targetLang, chatIdSnapshot);
 
-                    // ★ v82.3：记录本次选项数量。给满4个→解除提醒；不足→下次按「译」继续提醒
                     if (!finalTextToTranslate.contains("[PURE_BRACKET_MODE]")) {
                         int optCount = AITranslator.parseTranslateOptions(result).size();
                         if (optCount >= 4) {
@@ -1245,7 +1272,6 @@ public class ChatHook {
                 } catch (Exception e) {
                     isTranslatingAPI = false;
 
-                    // ★ 失败后清空"换一批"误判标记，下次再按「译」按全新首次请求处理
                     chatRequestMap.remove(chatIdSnapshot);
                     chatRetryCountMap.put(chatIdSnapshot, 0);
 
@@ -1254,7 +1280,6 @@ public class ChatHook {
                         btn.setEnabled(true);
                         btn.setText("译");
                         btn.setAlpha(0.88f);
-                        // ★ 报错只走黑框Toast，绝不弹窗
                         Toast.makeText(edit.getContext(), "⚠️ 翻译失败: " + err, Toast.LENGTH_LONG).show();
                     });
                 }
@@ -1271,9 +1296,7 @@ public class ChatHook {
         }
 
         String langCode = getDynamicLangCode(nativeLang);
-        String langName = getDynamicLangName(nativeLang);
 
-        if (langName != null && langName.contains("Chinese")) return DEFAULT_REPLY_LANG;
         if (langCode != null && !langCode.isEmpty() && !"en".equals(langCode)) return langCode;
 
         String friendLang = AITranslator.getFriendLang(chatId);
@@ -1295,52 +1318,78 @@ public class ChatHook {
         return null;
     }
 
-    private static String getDynamicLangName(int nativeLang) {
-        if (langNameMethod != null) {
-            try { return (String) langNameMethod.invoke(null, nativeLang); } catch (Exception ignored) {}
-        }
-        return null;
-    }
-
+    // ★ v5.2: 扩充国籍→语言映射（覆盖所有西语国家 + 更多）
     private static String mapNationalityToLang(String nationality) {
         if (nationality == null || nationality.isEmpty()) return null;
         switch (nationality) {
-            case "china":
-            case "taiwan":
-            case "hong kong":
-            case "macau":
+            // 中文
+            case "china": case "taiwan": case "hong kong": case "macau": case "singapore":
                 return "zh";
-            case "russia":
-            case "belarus":
-            case "kazakhstan":
-            case "kyrgyzstan":
+            // 俄语圈
+            case "russia": case "belarus": case "kazakhstan": case "kyrgyzstan":
                 return "ru";
+            // 日语
             case "japan":
                 return "ja";
-            case "korea":
-            case "south korea":
+            // 韩语
+            case "korea": case "south korea":
                 return "ko";
-            case "france":
+            // 法语
+            case "france": case "belgium": case "switzerland": case "canada":
                 return "fr";
-            case "germany":
+            // 德语
+            case "germany": case "austria":
                 return "de";
-            case "spain":
+            // 西班牙语 — 全部统一返回 es，地区差异在 Prompt 里注入
+            case "spain": case "mexico": case "argentina": case "colombia": case "peru":
+            case "chile": case "venezuela": case "ecuador": case "bolivia": case "paraguay":
+            case "uruguay": case "costa rica": case "panama": case "nicaragua": case "honduras":
+            case "el salvador": case "guatemala": case "cuba": case "dominican republic":
+            case "puerto rico":
                 return "es";
+            // 意大利语
             case "italy":
                 return "it";
-            case "portugal":
-            case "brazil":
+            // 葡萄牙语
+            case "portugal": case "brazil":
                 return "pt";
-            case "arabia":
-            case "egypt":
+            // 阿拉伯语
+            case "arabia": case "egypt": case "saudi arabia": case "united arab emirates":
+            case "morocco": case "algeria": case "tunisia": case "jordan": case "lebanon":
+            case "iraq": case "kuwait": case "qatar": case "oman": case "bahrain":
                 return "ar";
+            // 土耳其语
+            case "turkey":
+                return "tr";
+            // 荷兰语
+            case "netherlands":
+                return "nl";
+            // 波兰语
+            case "poland":
+                return "pl";
+            // 越南语
+            case "vietnam":
+                return "vi";
+            // 泰语
+            case "thailand":
+                return "th";
+            // 印尼语
+            case "indonesia":
+                return "id";
+            // 印地语
+            case "india":
+                return "hi";
+            // 乌克兰语
+            case "ukraine":
+                return "uk";
+            // 其他国家默认英语
             default:
                 return null;
         }
     }
 
     // =========================================================
-    // ★ 选版本弹窗（新版解析 + 标点清洗）
+    // ★ 选版本弹窗
     // =========================================================
 
     private static void showPicker(EditText edit, Button translateBtn, String result, String originalChineseInput, String partnerName) {
@@ -1350,7 +1399,6 @@ public class ChatHook {
         List<String[]> parsedItems = AITranslator.parseTranslateOptions(result);
 
         if (parsedItems.isEmpty()) {
-            // ★ 黑框Toast提示，不弹窗
             Toast.makeText(ctx, "⚠️ AI 返回格式异常或被拦截，请用（）括号加指令或修改说法后亲自重试", Toast.LENGTH_LONG).show();
             return;
         }
@@ -1437,7 +1485,6 @@ public class ChatHook {
             }
 
             card.setOnClickListener(v -> {
-                // ★ 落盘记住：外语 -> 我的中文原文（翻转按钮的数据来源）
                 AITranslator.rememberDraft(foreign, originalChineseInput);
                 edit.setText(foreign);
                 edit.setSelection(foreign.length());
