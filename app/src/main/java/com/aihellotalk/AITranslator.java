@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,7 +52,13 @@ public class AITranslator {
     public static final Map<String, String[]> cache = new ConcurrentHashMap<>();
     public static final Map<String, String> foreignToChinese = new ConcurrentHashMap<>();
     public static final Map<String, String> chineseToForeign = new ConcurrentHashMap<>();
-    public static final Map<String, String> mySentDrafts = new ConcurrentHashMap<>();
+    // ★ v5.2: LinkedHashMap 保持插入顺序，淘汰最旧的
+    public static final Map<String, String> mySentDrafts = new LinkedHashMap<String, String>() {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
+            return size() > 800;
+        }
+    };
 
     private static final Map<String, String> imageBase64Cache = new ConcurrentHashMap<>();
 
@@ -76,7 +83,6 @@ public class AITranslator {
     private static final Pattern QUOTED_LOCAL_IMAGE_PATTERN = Pattern.compile("\\[QUOTED_LOCAL_IMAGE:(.*?)\\]");
     private static final Pattern PURE_BRACKET_MODE_PATTERN = Pattern.compile("\\[PURE_BRACKET_MODE\\]");
     private static final Pattern QUOTED_IMAGE_MISSING_PATTERN = Pattern.compile("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]");
-    // ★ v5.1：翻转标记正则预编译
     private static final Pattern FLIP_MARKS_PATTERN = Pattern.compile("([ ]?[🌐🔄]+)$");
 
     private static final Pattern PAREN_TAIL = Pattern.compile("[（(]([^()（）]*)[)）]\\s*$");
@@ -86,12 +92,10 @@ public class AITranslator {
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
 
     // =========================================================
-    // ★ 记忆系统 2.0：档案 + 蒸馏 + 备份仓库 + 主号/一次性
+    // ★ 记忆系统 2.0
     // =========================================================
 
-    /** 保险箱目录（在 HelloTalk 数据目录之外，清数据不会波及） */
     private static final String STORE_DIR = "/data/local/tmp/htai_store";
-    /** 模式标记文件：main=主账号 / temp=一次性 / pending=待认领 */
     private static final String MARKER_FILE = "/data/local/tmp/htai_mem_mode.txt";
 
     private static volatile String memMode = "main";
@@ -101,19 +105,12 @@ public class AITranslator {
     private static volatile long lastBackupTs = 0;
     private static volatile long lastDistillFailTs = 0;
 
-    /** 历史保留目标条数（蒸馏后回到这个规模） */
     private static final int HISTORY_SOFT_CAP = 100;
-    /** 攒够这么多条旧消息才蒸馏一次 */
     private static final int DISTILL_BATCH_MIN = 30;
-    /** 蒸馏连续失败时的强制裁剪红线，防文件无限膨胀 */
     private static final int HISTORY_HARD_CAP = 180;
-    /** 蒸馏失败后的冷却时间 */
     private static final long DISTILL_COOLDOWN_MS = 5 * 60_000;
-    /** 档案硬上限（字符） */
     private static final int PROFILE_HARD_CAP = 800;
-    /** 备份间隔 */
     private static final long BACKUP_INTERVAL_MS = 3 * 60_000;
-    /** 待认领状态下重读标记文件的间隔 */
     private static final long MODE_RECHECK_MS = 60_000;
 
     private static volatile OkHttpClient distillClient = null;
@@ -126,6 +123,9 @@ public class AITranslator {
             "3. 不要记录琐碎闲聊细节，不要逐条复述聊天内容。\n" +
             "4. 输出纯文本档案，分小节、每行一条，总长度严格控制在500字以内。\n" +
             "5. 只输出档案正文本身，不要任何前缀、后缀、解释。";
+
+    // ★ v5.2: 反向翻译用的轻量 client（独立连接池，不跟主翻译抢）
+    private static volatile OkHttpClient reverseTranslateClient = null;
 
     public static void init(String key, String url, String m) {
         apiKey = key;
@@ -146,8 +146,6 @@ public class AITranslator {
         loadFriends();
         loadPrompts();
         loadDrafts();
-
-        // ★ 最后初始化记忆模式（主账号/一次性/待认领）
         initMemoryMode();
     }
 
@@ -170,7 +168,7 @@ public class AITranslator {
     }
 
     // =========================================================
-    // ★ 记忆模式：检测 / 认领复核 / 备份
+    // ★ 记忆模式
     // =========================================================
 
     private static String runRoot(String cmd) {
@@ -189,9 +187,6 @@ public class AITranslator {
         }
     }
 
-    /**
-     * ★ 反射拿当前应用上下文（不依赖 AndroidAppHelper，兼容 CI 编译桩）
-     */
     private static android.app.Application currentAppByReflect() {
         try {
             Class<?> at = Class.forName("android.app.ActivityThread");
@@ -246,8 +241,6 @@ public class AITranslator {
     private static void initMemoryMode() {
         try {
             String marker = readMarker();
-
-            // 上次已判定待认领、还没去遥控器选择
             if ("pending".equals(marker)) {
                 if (storeHasBackup()) {
                     memPending = true;
@@ -255,24 +248,18 @@ public class AITranslator {
                     Log.w(TAG, "记忆模式：待认领（等待遥控器选择）");
                     return;
                 }
-                // ★ 补丁①：pending 但保险箱已空 = 没东西可恢复，等待无意义，直接复位全新开始
                 memPending = false;
                 memMode = "main";
                 writeMarker("main");
                 Log.w(TAG, "记忆模式：pending但保险箱为空，复位为main全新开始");
                 return;
             }
-
-            // ★ 补丁④：已认领一次性模式：即使沙箱暂时是空的也尊重选择，
-            //   否则刚认领完又会被误判成"数据被清空"，无限弹认领窗
             if ("temp".equals(marker)) {
                 memPending = false;
                 memMode = "temp";
                 Log.i(TAG, "记忆模式：temp（已认领）");
                 return;
             }
-
-            // 正常状态：沙箱里有记忆文件
             if (sandboxHasMemory()) {
                 memPending = false;
                 memMode = "temp".equals(marker) ? "temp" : "main";
@@ -280,8 +267,6 @@ public class AITranslator {
                 Log.i(TAG, "记忆模式：" + memMode);
                 return;
             }
-
-            // 沙箱空了，但保险箱有存货 = 数据被清空过 → 待认领
             if (storeHasBackup()) {
                 memPending = true;
                 writeMarker("pending");
@@ -289,8 +274,6 @@ public class AITranslator {
                 Log.w(TAG, "检测到数据清空，进入待认领状态");
                 return;
             }
-
-            // 全新安装
             memPending = false;
             memMode = "main";
             if (marker == null || marker.isEmpty()) writeMarker("main");
@@ -318,7 +301,6 @@ public class AITranslator {
         } catch (Throwable ignored) {}
     }
 
-    /** 待认领状态下，定期看看用户是否已经在遥控器里做了选择 */
     private static void maybeRecheckMode() {
         if (!memPending) return;
         long now = System.currentTimeMillis();
@@ -341,14 +323,12 @@ public class AITranslator {
         } catch (Throwable ignored) {}
     }
 
-    /** 主账号模式下，定期把全部记忆复制到保险箱 */
     private static void maybeBackup() {
         try {
             if (memPending || !"main".equals(memMode)) return;
             long now = System.currentTimeMillis();
             if (now - lastBackupTs < BACKUP_INTERVAL_MS) return;
             lastBackupTs = now;
-            // ★ 补丁②：安全闸——沙箱为空绝不备份，否则"先删保险箱再复制"会把保险箱抹空
             String sandboxLs = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
             if (sandboxLs == null || sandboxLs.trim().isEmpty()) return;
             runRoot("mkdir -p " + STORE_DIR
@@ -366,7 +346,6 @@ public class AITranslator {
         return new File("/data/data/com.hellotalk/files/htai_profile_" + chatId + ".txt");
     }
 
-    /** 每次现读文件，保证外部修改立即生效 */
     public static String getProfile(String chatId) {
         if (chatId == null || chatId.isEmpty() || "0".equals(chatId) || "null".equals(chatId)) return "";
         try {
@@ -394,7 +373,6 @@ public class AITranslator {
         } catch (Exception ignored) {}
     }
 
-    /** 档案注入块：永远排在用户 Prompt 之后、格式协议之前，只当配角 */
     private static String profileBlock(String chatId) {
         String p = getProfile(chatId);
         if (p == null || p.trim().isEmpty()) return "";
@@ -402,7 +380,7 @@ public class AITranslator {
     }
 
     // =========================================================
-    // ★ 蒸馏：旧消息归档成档案
+    // ★ 蒸馏
     // =========================================================
 
     private static OkHttpClient getDistillClient() {
@@ -432,11 +410,6 @@ public class AITranslator {
         }
     }
 
-    /**
-     * 蒸馏一批旧消息进档案。
-     * 成功：把已归档条目从历史里移除 + 保存新档案。
-     * 失败：什么都不动，进入冷却期，等下次再试；超过红线由安全阀强裁。
-     */
     private static void distillBatch(String chatId, List<JSONObject> batch) {
         try {
             if (apiKey == null || apiKey.isEmpty()) return;
@@ -463,7 +436,6 @@ public class AITranslator {
                 }
             }
             if (!hasMaterial) {
-                // 这批全是占位消息，直接丢弃即可，不值得调用 API
                 removeBatchFromHistory(chatId, batch);
                 return;
             }
@@ -493,7 +465,6 @@ public class AITranslator {
             lastDistillFailTs = 0;
             Log.i(TAG, "蒸馏完成，档案更新：" + newProfile.length() + " 字");
 
-            // 档案刚更新，立即备份一次
             lastBackupTs = 0;
             maybeBackup();
         } catch (Throwable t) {
@@ -541,24 +512,17 @@ public class AITranslator {
         return m;
     }
 
-    // =========================================================
-    // ★ v82.4：剧本双语注记
-    // =========================================================
-
     private static String scriptLine(String who, String content, String noteLabel) {
         try {
             String clean = stripFlipMarks(content);
             String zh = (clean == null) ? null : foreignToChinese.get(clean);
+            if (zh == null) zh = mySentDrafts.get(clean);
             if (zh != null && !zh.isEmpty() && !zh.equals(clean)) {
                 return who + ": " + content + "（" + noteLabel + "：" + zh + "）\n";
             }
         } catch (Throwable ignored) {}
         return who + ": " + content + "\n";
     }
-
-    // =========================================================
-    // ★ 拒绝话术识别
-    // =========================================================
 
     public static boolean isRefusalResponse(String raw) {
         if (raw == null) return false;
@@ -588,7 +552,7 @@ public class AITranslator {
     }
 
     // =========================================================
-    // ★ 我的中文原文草稿：持久化（翻转按钮的数据来源）
+    // ★ v5.2: 草稿映射（精确优先 + 最长公共子串）
     // =========================================================
 
     private static void loadDrafts() {
@@ -619,16 +583,6 @@ public class AITranslator {
     private static void saveDrafts() {
         try {
             if (draftsFile == null) return;
-            if (mySentDrafts.size() > 1200) {
-                Iterator<String> it = mySentDrafts.keySet().iterator();
-                int removeCount = mySentDrafts.size() - 900;
-                while (it.hasNext() && removeCount > 0) {
-                    String k = it.next();
-                    it.remove();
-                    foreignToChinese.remove(k);
-                    removeCount--;
-                }
-            }
             draftsFile.getParentFile().mkdirs();
             JSONObject obj = new JSONObject();
             for (Map.Entry<String, String> e : mySentDrafts.entrySet()) {
@@ -640,6 +594,9 @@ public class AITranslator {
         } catch (Exception ignored) {}
     }
 
+    /**
+     * ★ v5.2: 点选项时立即双保险落盘
+     */
     public static void rememberDraft(String foreign, String chinese) {
         try {
             String f = stripFlipMarks(foreign);
@@ -648,11 +605,76 @@ public class AITranslator {
             f = f.trim();
             c = c.trim();
             if (f.isEmpty() || c.isEmpty() || f.equals(c)) return;
+
             mySentDrafts.put(f, c);
             foreignToChinese.put(f, c);
             chineseToForeign.put(c, f);
+
+            // ★ 双保险：同步写缓存文件 + 草稿文件
+            cacheResult("draft_" + f.hashCode(), f, c);
             saveDrafts();
         } catch (Exception ignored) {}
+    }
+
+    /**
+     * ★ v5.2: 精确优先 → 最长公共子串 ≥60%
+     */
+    public static String getDraftFuzzy(String sentForeignText) {
+        if (sentForeignText == null || sentForeignText.trim().isEmpty()) return null;
+        String clean = stripFlipMarks(sentForeignText);
+        if (clean == null || clean.isEmpty()) return null;
+
+        // 1) 精确匹配
+        String exact = mySentDrafts.get(clean);
+        if (exact != null) return exact;
+
+        // 2) 从 foreignToChinese 精确匹配（翻转映射）
+        exact = foreignToChinese.get(clean);
+        if (exact != null) return exact;
+
+        // 3) 最长公共子串匹配（覆盖率 ≥60%）
+        String bestKey = null;
+        int bestLen = 0;
+        for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
+            String key = stripFlipMarks(entry.getKey());
+            if (key == null || key.isEmpty()) continue;
+            int common = longestCommonSubstringLength(clean, key);
+            double coverage = (double) common / Math.max(clean.length(), key.length());
+            if (coverage >= 0.60 && common > bestLen) {
+                bestLen = common;
+                bestKey = key;
+            }
+        }
+        if (bestKey != null) return mySentDrafts.get(bestKey);
+
+        // 4) 兜底：包含匹配（clean 完全包含在某条 key 中，或反过来）
+        for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
+            String key = stripFlipMarks(entry.getKey());
+            if (key == null || key.isEmpty()) continue;
+            if (clean.contains(key) && (double) key.length() / clean.length() >= 0.60) {
+                return entry.getValue();
+            }
+            if (key.contains(clean) && (double) clean.length() / key.length() >= 0.60) {
+                return entry.getValue();
+            }
+        }
+
+        return null;
+    }
+
+    private static int longestCommonSubstringLength(String a, String b) {
+        if (a == null || b == null || a.isEmpty() || b.isEmpty()) return 0;
+        int[][] dp = new int[a.length() + 1][b.length() + 1];
+        int max = 0;
+        for (int i = 1; i <= a.length(); i++) {
+            for (int j = 1; j <= b.length(); j++) {
+                if (a.charAt(i - 1) == b.charAt(j - 1)) {
+                    dp[i][j] = dp[i - 1][j - 1] + 1;
+                    if (dp[i][j] > max) max = dp[i][j];
+                }
+            }
+        }
+        return max;
     }
 
     public static String getForeignByDraftChinese(String zh) {
@@ -663,6 +685,79 @@ public class AITranslator {
             String v = stripFlipMarks(e.getValue());
             if (v == null || v.isEmpty()) continue;
             if (clean.equals(v) || clean.contains(v) || v.contains(clean)) return k;
+        }
+        return null;
+    }
+
+    // =========================================================
+    // ★ v5.2: 纯表情/纯标点检测
+    // =========================================================
+
+    /**
+     * 判断文本是否包含任何文字系统的字母或数字。
+     * 不含 = 纯表情/纯符号/纯标点。
+     */
+    public static boolean hasAnyLetterOrDigit(String text) {
+        if (text == null || text.isEmpty()) return false;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (Character.isLetterOrDigit(c)) return true;
+        }
+        return false;
+    }
+
+    // =========================================================
+    // ★ v5.2: 反向翻译（我发的外语 → 中文大意）
+    // =========================================================
+
+    private static OkHttpClient getReverseTranslateClient() {
+        if (reverseTranslateClient == null) {
+            synchronized (AITranslator.class) {
+                if (reverseTranslateClient == null) {
+                    reverseTranslateClient = new OkHttpClient.Builder()
+                            .connectTimeout(12, TimeUnit.SECONDS)
+                            .readTimeout(45, TimeUnit.SECONDS)
+                            .writeTimeout(20, TimeUnit.SECONDS)
+                            .build();
+                }
+            }
+        }
+        return reverseTranslateClient;
+    }
+
+    /**
+     * ★ v5.2: 把我自己发的外语（来自别的AI或手动输入）反译成中文大意，
+     * 使它能进入剧本上下文并获得翻转按钮。
+     * 只调用一次，失败不重试。
+     */
+    public static String reverseTranslateMyForeign(String foreignText, String chatId) {
+        if (foreignText == null || foreignText.trim().isEmpty()) return null;
+        if (apiKey == null || apiKey.isEmpty()) return null;
+        if (!hasAnyLetterOrDigit(foreignText)) return null;
+
+        // 已经是中文就不反译
+        if (isChineseOnly(foreignText)) return null;
+
+        try {
+            JSONArray messages = new JSONArray();
+            String sysPrompt = "你是一个翻译助手。请把以下外语句子翻译成中文，只输出一句中文翻译，不要任何解释。";
+            messages.put(createRawMessage("system", sysPrompt));
+            messages.put(createRawMessage("user", foreignText));
+
+            JSONObject body = new JSONObject();
+            body.put("model", model);
+            body.put("max_tokens", 300);
+            body.put("messages", messages);
+
+            String result = executeRequestWith(getReverseTranslateClient(), body);
+            if (result != null && !result.trim().isEmpty() && !result.trim().equals(foreignText)) {
+                String clean = result.trim();
+                // 限制长度
+                if (clean.length() > 200) clean = clean.substring(0, 200);
+                return clean;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "反向翻译失败: " + e.getMessage());
         }
         return null;
     }
@@ -981,9 +1076,9 @@ public class AITranslator {
         for (char c : text.toCharArray()) {
             Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
             if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-                    || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+| block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
                 return true;
             }
         }
@@ -1004,9 +1099,9 @@ public class AITranslator {
             if (!hasChinese) {
                 Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
                 if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-                        || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+| block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
                     hasChinese = true;
                 }
             }
@@ -1027,11 +1122,11 @@ public class AITranslator {
             if (b == Character.UnicodeBlock.BASIC_LATIN && Character.isLetter(c)) return true;
             if (b == Character.UnicodeBlock.LATIN_1_SUPPLEMENT && Character.isLetter(c)) return true;
             if (b == Character.UnicodeBlock.LATIN_EXTENDED_A || b == Character.UnicodeBlock.LATIN_EXTENDED_B
-                    || b == Character.UnicodeBlock.LATIN_EXTENDED_C || b == Character.UnicodeBlock.LATIN_EXTENDED_D) return true;
+| b == Character.UnicodeBlock.LATIN_EXTENDED_C || b == Character.UnicodeBlock.LATIN_EXTENDED_D) return true;
             if (b == Character.UnicodeBlock.CYRILLIC || b == Character.UnicodeBlock.CYRILLIC_SUPPLEMENTARY) return true;
             if (b == Character.UnicodeBlock.GREEK || b == Character.UnicodeBlock.GREEK_EXTENDED) return true;
             if (b == Character.UnicodeBlock.HANGUL_SYLLABLES || b == Character.UnicodeBlock.HANGUL_JAMO
-                    || b == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO) return true;
+| b == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO) return true;
             if (b == Character.UnicodeBlock.ARABIC) return true;
             if (b == Character.UnicodeBlock.HIRAGANA || b == Character.UnicodeBlock.KATAKANA) return true;
             if (b == Character.UnicodeBlock.THAI) return true;
@@ -1039,17 +1134,10 @@ public class AITranslator {
         return false;
     }
 
-    /**
-     * ★ v5.1：预编译正则，功能与旧版完全一致，只是更快
-     */
     private static String stripFlipMarks(String s) {
         if (s == null) return null;
         return FLIP_MARKS_PATTERN.matcher(s).replaceAll("").trim();
     }
-
-    // =========================================================
-    // ★ 翻译结果清洗：干掉破折号、分号
-    // =========================================================
 
     public static String sanitizeForeignText(String s) {
         if (s == null) return "";
@@ -1065,10 +1153,6 @@ public class AITranslator {
         t = t.replaceAll("\\s{2,}", " ");
         return t.trim();
     }
-
-    // =========================================================
-    // ★ 选项解析：管道/表格/序号/括号 全兼容，最多取4条
-    // =========================================================
 
     public static List<String[]> parseTranslateOptions(String result) {
         List<String[]> items = new ArrayList<>();
@@ -1266,6 +1350,49 @@ public class AITranslator {
         }
     }
 
+    // ★ v5.2: 获取西班牙语地区标签
+    public static String getSpanishRegionDirective(String nationality, int nativeLang, String chatId) {
+        String nat = (nationality != null) ? nationality.toLowerCase() : "";
+        String friendLang = getFriendLang(chatId);
+        String langCode = (friendLang != null && !friendLang.isEmpty()) ? friendLang : "";
+
+        // 先看国籍
+        String region = mapSpanishRegion(nat);
+        // 再看好友存档语种
+        if (region == null && (langCode.startsWith("es") || "es".equals(langCode))) {
+            region = "es-419"; // 拉美中性
+        }
+        if (region == null) return "";
+
+        String description;
+        switch (region) {
+            case "es-MX": description = "墨西哥西班牙语：请使用墨西哥常用词汇和表达习惯（如 tú 而非 vos，墨西哥特有俚语），避免西班牙本土用法"; break;
+            case "es-AR": description = "阿根廷/拉普拉塔西班牙语：请使用 voseo（vos 代替 tú）、阿根廷常用词汇和语调"; break;
+            case "es-ES": description = "西班牙本土西班牙语：请使用 vosotros 和西班牙常用表达"; break;
+            case "es-CO": description = "拉美西班牙语（偏安第斯）：请使用哥伦比亚/秘鲁/厄瓜多尔等地常用表达，礼貌温和"; break;
+            case "es-419": description = "拉美西班牙语（中性）：请使用拉美通用表达，避免西班牙本土 vosotros，默认 tú"; break;
+            case "es-US": description = "美式西班牙语：请使用美国西语裔常用表达，贴近迈阿密/波多黎各/多米尼加风格"; break;
+            default: description = "请根据对方国家调整西班牙语表达"; break;
+        }
+
+        return "\n\n【目标语地区适配】" + region + "：" + description + "。若与上方格式协议冲突，以格式协议为准。";
+    }
+
+    private static String mapSpanishRegion(String nationality) {
+        if (nationality == null || nationality.isEmpty()) return null;
+        switch (nationality) {
+            case "mexico": return "es-MX";
+            case "argentina": case "uruguay": case "paraguay": return "es-AR";
+            case "spain": return "es-ES";
+            case "colombia": case "peru": case "ecuador": case "bolivia": case "venezuela": return "es-CO";
+            case "chile": return "es-419";
+            case "costa rica": case "panama": case "nicaragua": case "honduras": case "el salvador": case "guatemala": return "es-419";
+            case "cuba": case "dominican republic": case "puerto rico": return "es-419";
+            case "united states": return "es-US";
+            default: return null;
+        }
+    }
+
     public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
         maybeRecheckMode();
         try {
@@ -1280,7 +1407,15 @@ public class AITranslator {
                 default: sysPrompt = promptEN; break;
             }
 
-            String universalProtocol = sysPrompt + profileBlock(chatId) +
+            // ★ v5.2: 西班牙语地区适配
+            String spanishDirective = "";
+            if ("es".equals(langCode)) {
+                String friendLang = getFriendLang(chatId);
+                // nationality/nativeLang 从 ChatHook 传入时放在 text 标记里了，这里从 chatId 档案推导
+                spanishDirective = getSpanishRegionDirective(null, 0, chatId);
+            }
+
+            String universalProtocol = sysPrompt + profileBlock(chatId) + spanishDirective +
                     "\n\n【系统最高强制协议（多模态视觉与指令解析）】：" +
                     "\n1. 下方是【历史聊天剧本】（带中文注记）。如果消息里附带了图片，你已经可以看到它们。" +
                     "\n2. [背景上下文图片] = 最近聊天背景，仅用于帮助理解上下文。" +
@@ -1320,7 +1455,6 @@ public class AITranslator {
             StringBuilder scriptBuilder = new StringBuilder();
             scriptBuilder.append("【历史聊天剧本】\n");
 
-            // ★ 上下文保持 60 条，不做改动
             int maxChatMessages = 60;
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
 
@@ -1361,10 +1495,6 @@ public class AITranslator {
         }
     }
 
-    /**
-     * ★ 弹窗专用翻译入口（v82.3 规则不变）：
-     * 按「译」= 只调用一次 API，无论什么结果都绝不自动重试。
-     */
     public static String translateForPicker(String text, String langCode, String chatId) throws IOException {
         String raw = translateWithHistory(text, langCode, chatId);
 
@@ -1595,8 +1725,13 @@ public class AITranslator {
     public static String getChineseByForeign(String foreign) {
         if (foreign == null || foreign.trim().isEmpty()) return null;
         String clean = stripFlipMarks(foreign);
+        // 精确查 foreignToChinese
         String exact = foreignToChinese.get(clean);
         if (exact != null) return exact;
+        // 精确查 mySentDrafts
+        exact = mySentDrafts.get(clean);
+        if (exact != null) return exact;
+        // 模糊
         for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) {
             String k = stripFlipMarks(entry.getKey());
             String v = stripFlipMarks(entry.getValue());
@@ -1615,18 +1750,6 @@ public class AITranslator {
             String f = stripFlipMarks(entry.getKey());
             String c = stripFlipMarks(entry.getValue());
             if (clean.contains(c) || c.contains(clean) || clean.contains(f) || f.contains(clean)) return f;
-        }
-        return null;
-    }
-
-    public static String getDraftFuzzy(String sentForeignText) {
-        if (sentForeignText == null || sentForeignText.trim().isEmpty()) return null;
-        String clean = stripFlipMarks(sentForeignText);
-        if (mySentDrafts.containsKey(clean)) return mySentDrafts.get(clean);
-        for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
-            String key = stripFlipMarks(entry.getKey());
-            if (key == null || key.isEmpty()) continue;
-            if (clean.contains(key) || key.contains(clean)) return entry.getValue();
         }
         return null;
     }
@@ -1677,7 +1800,7 @@ public class AITranslator {
     }
 
     // =========================================================
-    // 历史记录（★ 记忆系统 2.0 重写版）
+    // 历史记录
     // =========================================================
 
     private static File historyFile(String chatId) {
@@ -1697,7 +1820,6 @@ public class AITranslator {
         }
     }
 
-    /** 必须在持有 fileLock 时调用 */
     private static void writeHistoryLocked(String chatId, JSONArray history) {
         try {
             File f = historyFile(chatId);
@@ -1712,10 +1834,19 @@ public class AITranslator {
         appendHistory(chatId, msgId, role, content, System.currentTimeMillis(), null);
     }
 
+    /**
+     * ★ v5.2: quotedText 非空时标注为上下文引用；
+     * 如果是我发的消息且无草稿映射 → 后台反译
+     */
     public static void appendHistory(String chatId, String msgId, String role, String content, long timestamp, String quotedText) {
         if (content == null || content.isEmpty()) return;
 
         maybeRecheckMode();
+
+        // ★ v5.2: 如果有引用内容，拼接进消息
+        if (quotedText != null && !quotedText.isEmpty()) {
+            content = "（对方正在引用/回复此前对话：\"" + quotedText + "\"）\n" + content;
+        }
 
         List<JSONObject> distillBatch = null;
 
@@ -1727,9 +1858,6 @@ public class AITranslator {
                         JSONObject obj = history.getJSONObject(i);
                         if (msgId.equals(obj.optString("msgId"))) return;
                     }
-                }
-                if (quotedText != null && !quotedText.isEmpty()) {
-                    content = "（针对我的原话：\"" + quotedText + "\" 进行了回复）\n" + content;
                 }
 
                 JSONObject entry = new JSONObject();
@@ -1748,13 +1876,11 @@ public class AITranslator {
                 history = sortedHistory;
 
                 if (history.length() > HISTORY_HARD_CAP) {
-                    // ★ 安全阀：蒸馏长时间失败，强制裁剪防膨胀（极端情况才走到）
                     JSONArray trimmed = new JSONArray();
                     for (int i = history.length() - HISTORY_SOFT_CAP; i < history.length(); i++) trimmed.put(history.get(i));
                     writeHistoryLocked(chatId, trimmed);
                     Log.w(TAG, "蒸馏长期失败，触发安全阀强制裁剪: " + chatId);
                 } else if (history.length() >= HISTORY_SOFT_CAP + DISTILL_BATCH_MIN) {
-                    // ★ 攒够一批旧消息：先整份落盘，随后在锁外蒸馏归档
                     int batchCount = history.length() - HISTORY_SOFT_CAP;
                     distillBatch = new ArrayList<>();
                     for (int i = 0; i < batchCount; i++) distillBatch.add(history.getJSONObject(i));
