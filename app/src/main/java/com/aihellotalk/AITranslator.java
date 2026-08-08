@@ -1224,10 +1224,11 @@ public class AITranslator {
                 String content = choice.getJSONObject("message").optString("content", "").trim();
                 if (content.isEmpty()) throw new IOException("\u5927\u6a21\u578b\u8fd4\u56de\u4e86\u7a7a\u6570\u636e\u3002");
                 return content;
-            } catch (Exception e) {
-                if (e instanceof IOException) throw e;
-                throw new IOException("JSON\u89e3\u6790\u5931\u8d25\uff1a" + responseBody);
-            }
+            } catch (IOException e) {
+    throw e;
+} catch (Exception e) {
+    throw new IOException("JSON\u89e3\u6790\u5931\u8d25\uff1a" + responseBody);
+}
         }
     }
 
