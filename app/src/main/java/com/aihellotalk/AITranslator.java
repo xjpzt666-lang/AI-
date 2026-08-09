@@ -1001,7 +1001,7 @@ public class AITranslator {
         if (splitData.length >= 2) return splitData[0].trim().replace("*", "");
         String[] lines = result.split("\n");
         int firstOptionLine = -1;
-        for (int i = 0; i < lines.length(); i++) {
+        for (int i = 0; i < lines.length; i++) {
             String t = lines[i].trim().replace("*", "");
             if (t.isEmpty()) continue;
             if (t.contains("|") || NUMBER_PREFIX.matcher(t).find()) { firstOptionLine = i; break; }
