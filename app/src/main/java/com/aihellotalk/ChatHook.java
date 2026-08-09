@@ -115,7 +115,7 @@ public class ChatHook {
             });
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v5.3 ===");
+        log("=== Hook v5.4 修复版 ===");
         try { htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl); } catch (Throwable ignored) {}
         try { Class<?> avClass = XposedHelpers.findClass("av.a", cl); langCodeMethod = avClass.getMethod("a", int.class); } catch (Throwable ignored) {}
         try { hookTextViewRender(cl); } catch (Throwable t) { log("render hook fail"); }
@@ -258,30 +258,62 @@ public class ChatHook {
     }
 
     // =========================================================
-    // Render hook
+    // ★★★ 修复问题①：渲染钩子 — 双 setText 重载全覆盖 ★★★
     // =========================================================
 
     private static void hookTextViewRender(ClassLoader cl) {
         if (htTextViewClass == null) return;
-        try {
-            XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText", CharSequence.class, TextView.BufferType.class,
-                new XC_MethodHook() {
-                    @Override protected void beforeHookedMethod(MethodHookParam param) {
-                        try {
-                            if (param.thisObject instanceof EditText) return;
-                            if (!htTextViewClass.isInstance(param.thisObject)) return;
-                            CharSequence cs = (CharSequence) param.args[0]; if (cs == null) return;
-                            String s = cs.toString(); if (s.isEmpty() || s.length() > 5000) return;
-                            if (s.endsWith(" \uD83C\uDF10") || s.endsWith(" \uD83D\uDD04")) return;
-                            String d = AITranslator.getDraftFuzzy(s);
-                            if (d == null) d = AITranslator.getChineseByForeign(s);
-                            if (d != null && !d.equals(s)) {
-                                SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
-                                ssb.append(" \uD83C\uDF10"); param.args[0] = ssb;
-                            }
-                        } catch (Throwable ignored) {}
+        XC_MethodHook renderLogic = new XC_MethodHook() {
+            @Override protected void beforeHookedMethod(MethodHookParam param) {
+                try {
+                    if (param.thisObject instanceof EditText) return;
+                    if (!htTextViewClass.isInstance(param.thisObject)) return;
+                    CharSequence cs = (CharSequence) param.args[0]; if (cs == null) return;
+                    String s = cs.toString(); if (s.isEmpty() || s.length() > 5000) return;
+                    if (s.endsWith(" \uD83C\uDF10") || s.endsWith(" \uD83D\uDD04")) return;
+                    String d = AITranslator.getDraftFuzzy(s);
+                    if (d == null) d = AITranslator.getChineseByForeign(s);
+                    if (d != null && !d.equals(s)) {
+                        SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
+                        ssb.append(" \uD83C\uDF10"); param.args[0] = ssb;
                     }
-                });
+                } catch (Throwable ignored) {}
+            }
+        };
+        // 原重载
+        try {
+            XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText",
+                    CharSequence.class, TextView.BufferType.class, renderLogic);
+        } catch (Throwable t) {}
+        // ★★★ 新增：单参数 setText 重载，堵住另一条渲染路径 ★★★
+        try {
+            XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText",
+                    CharSequence.class, renderLogic);
+        } catch (Throwable t) {}
+        // ★★★ 新增：setText(int) 资源重载不会触发（跳过），但 hook setText(char[],int,int) ★★★
+        try {
+            XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText",
+                    char[].class, int.class, int.class, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam param) {
+                            try {
+                                if (param.thisObject instanceof EditText) return;
+                                if (!htTextViewClass.isInstance(param.thisObject)) return;
+                                char[] chars = (char[]) param.args[0];
+                                int start = (int) param.args[1], len = (int) param.args[2];
+                                if (chars == null || len <= 0 || len > 5000) return;
+                                String s = new String(chars, start, len);
+                                if (s.endsWith(" \uD83C\uDF10") || s.endsWith(" \uD83D\uDD04")) return;
+                                String d = AITranslator.getDraftFuzzy(s);
+                                if (d == null) d = AITranslator.getChineseByForeign(s);
+                                if (d != null && !d.equals(s)) {
+                                    String ns = s + " \uD83C\uDF10";
+                                    param.args[0] = ns.toCharArray();
+                                    param.args[1] = 0;
+                                    param.args[2] = ns.length();
+                                }
+                            } catch (Throwable ignored) {}
+                        }
+                    });
         } catch (Throwable t) {}
     }
 
@@ -376,6 +408,10 @@ public class ChatHook {
             latestNativeLang = nl; latestNationality = nat != null ? nat : "";
             latestPartnerName = (nn != null && !nn.isEmpty()) ? nn : (un != null ? un : "");
             if (!latestPartnerName.isEmpty()) currentPartnerName = latestPartnerName;
+            // ★★★ 修复问题⑤：进入聊天时就把国籍写入好友档案 ★★★
+            if (!currentChatId.isEmpty() && !"0".equals(currentChatId)) {
+                AITranslator.updateFriendNationality(currentChatId, latestNationality);
+            }
         } catch (Throwable ignored) {}
     }
 
@@ -472,7 +508,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // ★ Receive hook (all 5 fixes)
+    // ★★★ Receive hook（问题①②③④全部修复） ★★★
     // =========================================================
 
     private static void hookRecv(ClassLoader cl) throws Exception {
@@ -496,7 +532,8 @@ public class ChatHook {
                     Object sno = invokeQuiet(mGetSenderName, msg);
                     if (sno != null) sn = String.valueOf(sno);
                     if (sn != null && !sn.isEmpty() && !isMine) {
-                        AITranslator.registerFriend(chatId, sn, AITranslator.getFriendLang(chatId));
+                        // ★★★ 修复问题⑤：注册好友时也传国籍 ★★★
+                        AITranslator.registerFriend(chatId, sn, AITranslator.getFriendLang(chatId), latestNationality);
                     }
 
                     Method gtm = ensureBeanGetText(bean);
@@ -577,13 +614,26 @@ public class ChatHook {
                     if (isMine) {
                         String d = AITranslator.getDraftFuzzy(text);
                         if (d == null) d = AITranslator.getChineseByForeign(text);
-                        if (d != null) { AITranslator.cacheResult(mid, text, d); }
-                        else {
+                        if (d != null) {
+                            AITranslator.cacheResult(mid, text, d);
+                            // ★★★ 修复问题①：映射已有但按钮可能没显示 → 强制触发重绘 ★★★
+                            final Object fbk = bean; final String ftk = text;
+                            new Thread(() -> {
+                                try { Thread.sleep(150); } catch (InterruptedException ignored) {}
+                                try { XposedHelpers.callMethod(fbk, "setText", ftk); } catch (Exception ignored) {}
+                            }).start();
+                        } else {
                             final String ft2 = text, fc2 = chatId, fm2 = mid;
+                            final Object fb2 = bean;
                             if (reverseTranslatedMsgIds.add(fm2)) reverseTranslateExecutor.execute(() -> {
                                 try {
                                     String zh = AITranslator.reverseTranslateMyForeign(ft2, fc2);
-                                    if (zh != null && !zh.isEmpty()) { AITranslator.cacheResult(fm2, ft2, zh); AITranslator.rememberDraft(ft2, zh); }
+                                    if (zh != null && !zh.isEmpty()) {
+                                        AITranslator.cacheResult(fm2, ft2, zh);
+                                        AITranslator.rememberDraft(ft2, zh);
+                                        // ★★★ 修复问题①：反译完成后重设bean文本，触发渲染钩子加按钮 ★★★
+                                        try { XposedHelpers.callMethod(fb2, "setText", ft2); } catch (Exception ignored) {}
+                                    }
                                 } catch (Exception ignored) {}
                             });
                         }
@@ -752,7 +802,8 @@ public class ChatHook {
             new Thread(() -> {
                 try {
                     String tl = determineSmartTargetLang(nats, nls, cs);
-                    if (cts == 1) AITranslator.registerFriend(cs, pns, tl);
+                    // ★★★ 修复问题⑤：注册好友时传国籍 ★★★
+                    if (cts == 1) AITranslator.registerFriend(cs, pns, tl, nats);
                     String lr = chatRequestMap.get(cs); int rc = chatRetryCountMap.getOrDefault(cs, 0);
                     boolean ir = ftt.equals(lr);
                     if (ir) { rc++; chatRetryCountMap.put(cs, rc); }
