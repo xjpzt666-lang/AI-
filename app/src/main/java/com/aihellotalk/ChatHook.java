@@ -260,7 +260,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // ★★★ 修复问题①：渲染钩子 — 双 setText 重载全覆盖 ★★★
+    // 渲染钩子 — setText 重载全覆盖
     // =========================================================
 
     private static void hookTextViewRender(ClassLoader cl) {
@@ -282,17 +282,14 @@ public class ChatHook {
                 } catch (Throwable ignored) {}
             }
         };
-        // 原重载
         try {
             XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText",
                     CharSequence.class, TextView.BufferType.class, renderLogic);
         } catch (Throwable t) {}
-        // ★★★ 新增：单参数 setText 重载，堵住另一条渲染路径 ★★★
         try {
             XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText",
                     CharSequence.class, renderLogic);
         } catch (Throwable t) {}
-        // ★★★ 新增：setText(int) 资源重载不会触发（跳过），但 hook setText(char[],int,int) ★★★
         try {
             XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText",
                     char[].class, int.class, int.class, new XC_MethodHook() {
@@ -410,7 +407,6 @@ public class ChatHook {
             latestNativeLang = nl; latestNationality = nat != null ? nat : "";
             latestPartnerName = (nn != null && !nn.isEmpty()) ? nn : (un != null ? un : "");
             if (!latestPartnerName.isEmpty()) currentPartnerName = latestPartnerName;
-            // ★★★ 修复问题⑤：进入聊天时就把国籍写入好友档案 ★★★
             if (!currentChatId.isEmpty() && !"0".equals(currentChatId)) {
                 AITranslator.updateFriendNationality(currentChatId, latestNationality);
             }
@@ -512,7 +508,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // ★★★ Receive hook（问题①②③④全部修复） ★★★
+    // Receive hook
     // =========================================================
 
     private static void hookRecv(ClassLoader cl) throws Exception {
@@ -536,7 +532,6 @@ public class ChatHook {
                     Object sno = invokeQuiet(mGetSenderName, msg);
                     if (sno != null) sn = String.valueOf(sno);
                     if (sn != null && !sn.isEmpty() && !isMine) {
-                        // ★★★ 修复问题⑤：注册好友时也传国籍 ★★★
                         AITranslator.registerFriend(chatId, sn, AITranslator.getFriendLang(chatId), latestNationality);
                     }
 
@@ -561,7 +556,7 @@ public class ChatHook {
                     Object sto = invokeQuiet(mGetSendTime, msg);
                     if (sto instanceof Long) st = (Long) sto;
 
-                    // ★ Fix 2: bidirectional quote extraction
+                    // ★ 双向引用提取
                     String quotedText = null;
                     try {
                         Object ri = invokeQuiet(mGetReplyInfo, msg);
@@ -601,7 +596,7 @@ public class ChatHook {
                         });
                     }
 
-                    // ★ Fix 3: pure symbol → keep original + bracket analysis
+                    // ★ 纯表情/纯标点：保留原文 + 括号分析
                     if (isPureSymbol && !isMine) {
                         final String ft3 = text; final Object fb3 = bean; final String fc3 = chatId;
                         new Thread(() -> {
@@ -622,7 +617,6 @@ public class ChatHook {
                         if (d == null) d = AITranslator.getChineseByForeign(text);
                         if (d != null) {
                             AITranslator.cacheResult(mid, text, d);
-                            // ★★★ 修复问题①：映射已有但按钮可能没显示 → 强制触发重绘 ★★★
                             final Object fbk = bean; final String ftk = text;
                             new Thread(() -> {
                                 try { Thread.sleep(150); } catch (InterruptedException ignored) {}
@@ -638,15 +632,14 @@ public class ChatHook {
                                         AITranslator.cacheResult(fm2, ft2, zh);
                                         AITranslator.rememberDraft(ft2, zh);
                                         reverseRetryMap.remove(fm2);
-                                        // ★★★ 修复问题①：反译完成后重设bean文本，触发渲染钩子加按钮 ★★★
                                         try { XposedHelpers.callMethod(fb2, "setText", ft2); } catch (Exception ignored) {}
                                     } else {
-                                        // ★ 新增：反译失败/空结果 → 最多再给2次机会，之后放弃（防止无限烧API）
+                                        // ★ 反译失败/空结果 → 最多再给2次机会，之后放弃（防止无限烧API）
                                         int rc = reverseRetryMap.getOrDefault(fm2, 0);
                                         if (rc < 2) { reverseRetryMap.put(fm2, rc + 1); reverseTranslatedMsgIds.remove(fm2); }
                                     }
                                 } catch (Exception ignored) {
-                                    // ★ 新增：异常同样最多重试2次
+                                    // ★ 异常同样最多重试2次
                                     int rc = reverseRetryMap.getOrDefault(fm2, 0);
                                     if (rc < 2) { reverseRetryMap.put(fm2, rc + 1); reverseTranslatedMsgIds.remove(fm2); }
                                 }
@@ -817,7 +810,6 @@ public class ChatHook {
             new Thread(() -> {
                 try {
                     String tl = determineSmartTargetLang(nats, nls, cs);
-                    // ★★★ 修复问题⑤：注册好友时传国籍 ★★★
                     if (cts == 1) AITranslator.registerFriend(cs, pns, tl, nats);
                     String lr = chatRequestMap.get(cs); int rc = chatRetryCountMap.getOrDefault(cs, 0);
                     boolean ir = ftt.equals(lr);
@@ -826,9 +818,10 @@ public class ChatHook {
                     String fpt = ftt; if (ir) fpt = ftt + "\n\n\u3010\u7cfb\u7edf\u5f3a\u5236\u6307\u4ee4\u3011\uff1a\u7528\u6237\u8981\u6c42\u91cd\u65b0\u751f\u6210\u3002\u8bf7\u7ed9\u51fa\u5b8c\u5168\u4e0d\u540c\u7684\u8868\u8fbe\u65b9\u5f0f\uff01";
                     Integer lsc = chatShortCountMap.get(cs);
                     if (lsc != null && !ftt.contains("[PURE_BRACKET_MODE]")) {
-                        if (lsc > 0) fpt += "\n\u3010\u7cfb\u7edf\u5f3a\u5236\u683c\u5f0f\u63d0\u9192\u3011\uff1a\u4e0a\u4e00\u6b21\u53ea\u8f93\u51fa\u4e86" + lsc + "\u4e2a\u7248\u672c\uff0c\u672c\u6b21\u5fc5\u987b\u6070\u597d4\u884c\uff01";
-                        else fpt += "\n\u3010\u7cfb\u7edf\u5f3a\u5236\u683c\u5f0f\u63d0\u9192\u3011\uff1a\u4e0a\u4e00\u6b21\u6ca1\u6709\u6709\u6548\u7ffb\u8bd1\u9009\u9879\uff0c\u672c\u6b21\u5fc5\u987b\u6070\u597d4\u884c\uff01";
+                        if (lsc > 0) fpt += "\n\u3010\u7cfb\u7edf\u5f3a\u5236\u683c\u5f0f\u63d0\u9192\u3011\uff1a\u4e0a\u4e00\u6b21\u53ea\u8f93\u51fa\u4e86" + lsc + "\u4e2a\u7248\u672c\uff0c\u672c\u6b21\u5fc5\u987b\u6070\u597d6\u884c\uff01";
+                        else fpt += "\n\u3010\u7cfb\u7edf\u5f3a\u5236\u683c\u5f0f\u63d0\u9192\u3011\uff1a\u4e0a\u4e00\u6b21\u6ca1\u6709\u6709\u6548\u7ffb\u8bd1\u9009\u9879\uff0c\u672c\u6b21\u5fc5\u987b\u6070\u597d6\u884c\uff01";
                     }
+                    // ★ 不做自动重试：AI给几个就显示几个；下次点【译】或弹窗【换一批】即为手动重试
                     String result = AITranslator.translateForPicker(fpt, tl, cs);
                     if (!ftt.contains("[PURE_BRACKET_MODE]")) {
                         int oc = AITranslator.parseTranslateOptions(result).size();
