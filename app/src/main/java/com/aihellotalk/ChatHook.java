@@ -53,6 +53,8 @@ public class ChatHook {
     private static final ConcurrentHashMap<String, Integer> chatShortCountMap = new ConcurrentHashMap<>();
 
     private static final Set<String> reverseTranslatedMsgIds = ConcurrentHashMap.newKeySet();
+    // ★ 新增：反译失败重试计数（失败最多再给2次机会，防止无限烧API）
+    private static final ConcurrentHashMap<String, Integer> reverseRetryMap = new ConcurrentHashMap<>();
 
     private static Method langCodeMethod = null;
 
@@ -412,6 +414,8 @@ public class ChatHook {
             if (!currentChatId.isEmpty() && !"0".equals(currentChatId)) {
                 AITranslator.updateFriendNationality(currentChatId, latestNationality);
             }
+            // ★ 观察日志：确认HelloTalk返回的国籍字符串格式（英文mexico还是中文墨西哥）
+            log("国籍原文: [" + latestNationality + "] 母语码: " + nl);
         } catch (Throwable ignored) {}
     }
 
@@ -562,6 +566,8 @@ public class ChatHook {
                     try {
                         Object ri = invokeQuiet(mGetReplyInfo, msg);
                         if (ri != null) {
+                            // ★ 观察日志：确认replyInfo类型是否是HTIMMessage（决定isSender是否有效）
+                            log("replyInfo类型: " + ri.getClass().getName());
                             Object rIs = invokeQuiet(mIsSender, ri);
                             boolean rIm = (rIs instanceof Boolean) && (Boolean) rIs;
                             Object rmt = invokeQuiet(mGetMsgType, ri);
@@ -631,10 +637,19 @@ public class ChatHook {
                                     if (zh != null && !zh.isEmpty()) {
                                         AITranslator.cacheResult(fm2, ft2, zh);
                                         AITranslator.rememberDraft(ft2, zh);
+                                        reverseRetryMap.remove(fm2);
                                         // ★★★ 修复问题①：反译完成后重设bean文本，触发渲染钩子加按钮 ★★★
                                         try { XposedHelpers.callMethod(fb2, "setText", ft2); } catch (Exception ignored) {}
+                                    } else {
+                                        // ★ 新增：反译失败/空结果 → 最多再给2次机会，之后放弃（防止无限烧API）
+                                        int rc = reverseRetryMap.getOrDefault(fm2, 0);
+                                        if (rc < 2) { reverseRetryMap.put(fm2, rc + 1); reverseTranslatedMsgIds.remove(fm2); }
                                     }
-                                } catch (Exception ignored) {}
+                                } catch (Exception ignored) {
+                                    // ★ 新增：异常同样最多重试2次
+                                    int rc = reverseRetryMap.getOrDefault(fm2, 0);
+                                    if (rc < 2) { reverseRetryMap.put(fm2, rc + 1); reverseTranslatedMsgIds.remove(fm2); }
+                                }
                             });
                         }
                         return;
