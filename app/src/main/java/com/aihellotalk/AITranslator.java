@@ -1076,7 +1076,8 @@ public class AITranslator {
                 else if ("assistant".equals(role)) { scriptBuilder.append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f")); hasContext = true; }
             }
             if (!hasContext) scriptBuilder.append("\uff08\u6682\u65e0\u6709\u6548\u4e0a\u4e0b\u6587\uff09\n");
-            scriptBuilder.append("\n").append(text);
+                        // ★ 修复：把待翻译原文圈起来，防止AI把上一句连带翻译进来
+            scriptBuilder.append("\n【系统指令】下方只有<<<和>>>标记内的原文才是要翻译的内容，上面对话剧本仅供理解语境参考，严禁翻译或复述剧本里已有的内容：\n<<<\n").append(text).append("\n>>>");
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
             try { String r = callChatMessages(messages); return refuseGuard(r, text); }
