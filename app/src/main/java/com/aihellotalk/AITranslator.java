@@ -483,6 +483,7 @@ public class AITranslator {
         } catch (Exception ignored) {}
     }
 
+    // ★★★ 修复问题①：阈值从0.60降到0.45，增加容错 ★★★
     public static String getDraftFuzzy(String sentForeignText) {
         if (sentForeignText == null || sentForeignText.trim().isEmpty()) return null;
         String clean = stripFlipMarks(sentForeignText);
@@ -497,15 +498,15 @@ public class AITranslator {
             if (key == null || key.isEmpty()) continue;
             int common = longestCommonSubstringLength(clean, key);
             double coverage = (double) common / Math.max(clean.length(), key.length());
-            if (coverage >= 0.60 && common > bestLen) { bestLen = common; bestKey = key; }
+            if (coverage >= 0.45 && common > bestLen) { bestLen = common; bestKey = key; }
         }
         if (bestKey != null) return mySentDrafts.get(bestKey);
 
         for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
             String key = stripFlipMarks(entry.getKey());
             if (key == null || key.isEmpty()) continue;
-            if (clean.contains(key) && (double) key.length() / clean.length() >= 0.60) return entry.getValue();
-            if (key.contains(clean) && (double) clean.length() / key.length() >= 0.60) return entry.getValue();
+            if (clean.contains(key) && (double) key.length() / clean.length() >= 0.45) return entry.getValue();
+            if (key.contains(clean) && (double) clean.length() / key.length() >= 0.45) return entry.getValue();
         }
         return null;
     }
@@ -786,7 +787,7 @@ public class AITranslator {
     }
 
     // =========================================================
-    // 好友
+    // ★★★ 好友（修复问题⑤：加入国籍存储） ★★★
     // =========================================================
 
     public static void loadFriends() {
@@ -809,6 +810,11 @@ public class AITranslator {
     }
 
     public static void registerFriend(String chatId, String name, String langCode) {
+        registerFriend(chatId, name, langCode, null);
+    }
+
+    // ★★★ 修复问题⑤：新增带国籍的版本 ★★★
+    public static void registerFriend(String chatId, String name, String langCode, String nationality) {
         try {
             if (chatId == null || chatId.isEmpty()) return;
             JSONObject friend = new JSONObject();
@@ -816,9 +822,30 @@ public class AITranslator {
             if (name != null && !name.isEmpty()) friend.put("name", name);
             else if (!friend.has("name")) friend.put("name", chatId);
             friend.put("lang", langCode != null ? langCode : "en");
+            if (nationality != null && !nationality.isEmpty()) friend.put("nationality", nationality.toLowerCase());
             friend.put("lastTime", System.currentTimeMillis());
             friendsData.put(chatId, friend); saveFriends();
         } catch (JSONException ignored) {}
+    }
+
+    // ★★★ 新增：单独更新国籍 ★★★
+    public static void updateFriendNationality(String chatId, String nationality) {
+        try {
+            if (chatId == null || chatId.isEmpty() || nationality == null || nationality.isEmpty()) return;
+            if (!friendsData.has(chatId)) return;
+            JSONObject friend = friendsData.getJSONObject(chatId);
+            friend.put("nationality", nationality.toLowerCase());
+            friendsData.put(chatId, friend); saveFriends();
+        } catch (JSONException ignored) {}
+    }
+
+    // ★★★ 新增：读取好友国籍 ★★★
+    public static String getFriendNationality(String chatId) {
+        try {
+            if (chatId != null && friendsData.has(chatId))
+                return friendsData.getJSONObject(chatId).optString("nationality", "");
+        } catch (JSONException ignored) {}
+        return "";
     }
 
     public static String getFriendLang(String chatId) {
@@ -843,6 +870,7 @@ public class AITranslator {
                 JSONObject item = new JSONObject();
                 item.put("id", id); item.put("name", info.optString("name", id));
                 item.put("lang", info.optString("lang", "en"));
+                item.put("nationality", info.optString("nationality", ""));
                 item.put("lastTime", info.optLong("lastTime", 0));
                 JSONArray hist = loadHistory(id); item.put("count", hist.length());
                 list.put(item);
@@ -985,7 +1013,6 @@ public class AITranslator {
             }
             if (foreign == null) continue;
             foreign = NUMBER_PREFIX.matcher(foreign).replaceFirst("").trim();
-            // Strip surrounding quotes safely
             foreign = foreign.replaceAll("^[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+|[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+$", "").trim();
             chinese = chinese.replaceFirst("^(\u4e2d\u6587)?(\u5927\u610f|\u610f\u601d|\u542b\u4e49|\u7ffb\u8bd1)?\\s*[:\uff1a]?\\s*", "").trim();
             label = label.replaceFirst("^(\u8bed\u6c14|\u98ce\u683c|\u6807\u7b7e)?\\s*[:\uff1a]?\\s*", "").trim();
@@ -1071,8 +1098,12 @@ public class AITranslator {
         else return toChinese(text, "0");
     }
 
+    // ★★★ 修复问题⑤：自动从好友档案读取国籍 ★★★
     public static String getSpanishRegionDirective(String nationality, int nativeLang, String chatId) {
         String nat = (nationality != null) ? nationality.toLowerCase() : "";
+        if (nat.isEmpty() && chatId != null) {
+            nat = getFriendNationality(chatId);
+        }
         String friendLang = getFriendLang(chatId);
         String langCode = (friendLang != null && !friendLang.isEmpty()) ? friendLang : "";
         String region = mapSpanishRegion(nat);
@@ -1081,16 +1112,18 @@ public class AITranslator {
 
         String description;
         switch (region) {
-            case "es-MX": description = "\u58a8\u897f\u54e5\u897f\u73ed\u7259\u8bed\uff1a\u8bf7\u4f7f\u7528\u58a8\u897f\u54e5\u5e38\u7528\u8bcd\u6c47\u548c\u8868\u8fbe\u4e60\u60ef"; break;
-            case "es-AR": description = "\u963f\u6839\u5ef7/\u62c9\u666e\u62c9\u5854\u897f\u73ed\u7259\u8bed\uff1a\u8bf7\u4f7f\u7528voseo\u3001\u963f\u6839\u5ef7\u5e38\u7528\u8bcd\u6c47"; break;
-            case "es-ES": description = "\u897f\u73ed\u7259\u672c\u571f\u897f\u73ed\u7259\u8bed\uff1a\u8bf7\u4f7f\u7528vosotros\u548c\u897f\u73ed\u7259\u5e38\u7528\u8868\u8fbe"; break;
-            case "es-CO": description = "\u62c9\u7f8e\u897f\u73ed\u7259\u8bed\uff08\u504f\u5b89\u7b2c\u65af\uff09\uff1a\u8bf7\u4f7f\u7528\u54e5\u4f26\u6bd4\u4e9a/\u79d8\u9c81/\u5384\u74dc\u591a\u5c14\u7b49\u5730\u5e38\u7528\u8868\u8fbe"; break;
+            case "es-MX": description = "\u58a8\u897f\u54e5\u897f\u73ed\u7259\u8bed\uff1a\u8bf7\u4f7f\u7528\u58a8\u897f\u54e5\u5e38\u7528\u8bcd\u6c47\u548c\u8868\u8fbe\u4e60\u60ef\uff0c\u5982\u201c\u00bfQu\u00e9 onda?\u201d\u98ce\u683c"; break;
+            case "es-AR": description = "\u963f\u6839\u5ef7/\u62c9\u666e\u62c9\u5854\u897f\u73ed\u7259\u8bed\uff1a\u8bf7\u4f7f\u7528voseo\uff08vos ten\u00e9s/vos quer\u00e9s\uff09\u3001\u963f\u6839\u5ef7\u5e38\u7528\u8bcd\u6c47"; break;
+            case "es-ES": description = "\u897f\u73ed\u7259\u672c\u571f\u897f\u73ed\u7259\u8bed\uff1a\u8bf7\u4f7f\u7528vosotros\u548c\u897f\u73ed\u7259\u5e38\u7528\u8868\u8fbe\uff0c\u5982\u201c\u00bfQu\u00e9 tal?\u201d\u98ce\u683c"; break;
+            case "es-CO": description = "\u62c9\u7f8e\u897f\u73ed\u7259\u8bed\uff08\u504f\u5b89\u7b2c\u65af\uff09\uff1a\u8bf7\u4f7f\u7528\u54e5\u4f26\u6bd4\u4e9a/\u79d8\u9c81/\u5384\u74dc\u591a\u5c14\u7b49\u5730\u5e38\u7528\u8868\u8fbe\uff0c\u8bed\u6c14\u793c\u8c8c\u6e29\u548c"; break;
+            case "es-US": description = "\u7f8e\u56fd\u897f\u73ed\u7259\u8bed\uff1a\u53ef\u6df7\u5165\u5c11\u91cf\u82f1\u8bed\u501f\u8bcd\uff0c\u62c9\u7f8e\u8868\u8fbe\u4e3a\u4e3b"; break;
             case "es-419": description = "\u62c9\u7f8e\u897f\u73ed\u7259\u8bed\uff08\u4e2d\u6027\uff09\uff1a\u8bf7\u4f7f\u7528\u62c9\u7f8e\u901a\u7528\u8868\u8fbe\uff0c\u907f\u514dvosotros"; break;
             default: description = "\u8bf7\u6839\u636e\u5bf9\u65b9\u56fd\u5bb6\u8c03\u6574\u897f\u73ed\u7259\u8bed\u8868\u8fbe"; break;
         }
         return "\n\n\u3010\u76ee\u6807\u8bed\u5730\u533a\u9002\u914d\u3011" + region + "\uff1a" + description + "\u3002";
     }
 
+    // ★★★ 修复问题⑤：补充更多国家 ★★★
     private static String mapSpanishRegion(String nationality) {
         if (nationality == null || nationality.isEmpty()) return null;
         switch (nationality) {
@@ -1100,7 +1133,7 @@ public class AITranslator {
             case "colombia": case "peru": case "ecuador": case "bolivia": case "venezuela": return "es-CO";
             case "chile": case "costa rica": case "panama": case "nicaragua": case "honduras":
             case "el salvador": case "guatemala": case "cuba": case "dominican republic": case "puerto rico": return "es-419";
-            case "united states": return "es-US";
+            case "united states": case "usa": case "us": case "america": return "es-US";
             default: return null;
         }
     }
@@ -1224,11 +1257,8 @@ public class AITranslator {
                 String content = choice.getJSONObject("message").optString("content", "").trim();
                 if (content.isEmpty()) throw new IOException("\u5927\u6a21\u578b\u8fd4\u56de\u4e86\u7a7a\u6570\u636e\u3002");
                 return content;
-            } catch (IOException e) {
-    throw e;
-} catch (Exception e) {
-    throw new IOException("JSON\u89e3\u6790\u5931\u8d25\uff1a" + responseBody);
-}
+            } catch (IOException e) { throw e; }
+            catch (Exception e) { throw new IOException("JSON\u89e3\u6790\u5931\u8d25\uff1a" + responseBody); }
         }
     }
 
