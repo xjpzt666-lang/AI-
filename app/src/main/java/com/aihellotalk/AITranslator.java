@@ -1443,8 +1443,10 @@ public class AITranslator {
     public static void appendHistory(String chatId, String msgId, String role, String content, long timestamp, String quotedText) {
         if (content == null || content.isEmpty()) return;
         maybeRecheckMode();
-        if (quotedText != null && !quotedText.isEmpty())
-            content = "\uff08\u5bf9\u65b9\u6b63\u5728\u5f15\u7528/\u56de\u590d\u6b64\u524d\u5bf9\u8bdd\uff1a\"" + quotedText + "\"\uff09\n" + content;
+        if (quotedText != null && !quotedText.isEmpty()) {
+    String who = "assistant".equals(role) ? "我" : "对方";
+    content = "（" + who + "正在引用/回复此前对话：\"" + quotedText + "\"）\n" + content;
+}
 
         List<JSONObject> distillBatch = null;
         synchronized (fileLock) {
