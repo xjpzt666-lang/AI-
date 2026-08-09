@@ -167,10 +167,6 @@ public class AITranslator {
         }
     }
 
-    // =========================================================
-    // 记忆模式
-    // =========================================================
-
     private static String runRoot(String cmd) {
         try {
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
@@ -285,10 +281,6 @@ public class AITranslator {
         } catch (Throwable ignored) {}
     }
 
-    // =========================================================
-    // 好友档案
-    // =========================================================
-
     private static File profileFile(String chatId) {
         return new File("/data/data/com.hellotalk/files/htai_profile_" + chatId + ".txt");
     }
@@ -320,10 +312,6 @@ public class AITranslator {
         if (p == null || p.trim().isEmpty()) return "";
         return "\n\n\u3010\u5bf9\u65b9\u80cc\u666f\u6863\u6848\u3011" + p.trim();
     }
-
-    // =========================================================
-    // 蒸馏
-    // =========================================================
 
     private static OkHttpClient getDistillClient() {
         if (distillClient == null) {
@@ -438,10 +426,6 @@ public class AITranslator {
         return isRefusalResponse(result) ? fallback : result;
     }
 
-    // =========================================================
-    // 草稿映射
-    // =========================================================
-
     private static void loadDrafts() {
         try {
             if (draftsFile != null && draftsFile.exists()) {
@@ -483,7 +467,6 @@ public class AITranslator {
         } catch (Exception ignored) {}
     }
 
-    // ★★★ 修复问题①：阈值从0.60降到0.45，增加容错 ★★★
     public static String getDraftFuzzy(String sentForeignText) {
         if (sentForeignText == null || sentForeignText.trim().isEmpty()) return null;
         String clean = stripFlipMarks(sentForeignText);
@@ -533,10 +516,6 @@ public class AITranslator {
         }
         return null;
     }
-
-    // =========================================================
-    // 纯表情/纯标点 + 智能分析
-    // =========================================================
 
     public static boolean hasAnyLetterOrDigit(String text) {
         if (text == null || text.isEmpty()) return false;
@@ -604,10 +583,6 @@ public class AITranslator {
         return symbolText;
     }
 
-    // =========================================================
-    // 反向翻译
-    // =========================================================
-
     private static OkHttpClient getReverseTranslateClient() {
         if (reverseTranslateClient == null) {
             synchronized (AITranslator.class) {
@@ -644,10 +619,6 @@ public class AITranslator {
         } catch (Exception e) { Log.w(TAG, "\u53cd\u5411\u7ffb\u8bd1\u5931\u8d25: " + e.getMessage()); }
         return null;
     }
-
-    // =========================================================
-    // 图片 Base64
-    // =========================================================
 
     private static String buildImageCacheKey(String path) {
         try {
@@ -786,10 +757,6 @@ public class AITranslator {
         msgObj.put("content", contentArray); return msgObj;
     }
 
-    // =========================================================
-    // ★★★ 好友（修复问题⑤：加入国籍存储） ★★★
-    // =========================================================
-
     public static void loadFriends() {
         try {
             if (friendsFile.exists()) {
@@ -813,7 +780,6 @@ public class AITranslator {
         registerFriend(chatId, name, langCode, null);
     }
 
-    // ★★★ 修复问题⑤：新增带国籍的版本 ★★★
     public static void registerFriend(String chatId, String name, String langCode, String nationality) {
         try {
             if (chatId == null || chatId.isEmpty()) return;
@@ -828,7 +794,6 @@ public class AITranslator {
         } catch (JSONException ignored) {}
     }
 
-    // ★★★ 新增：单独更新国籍 ★★★
     public static void updateFriendNationality(String chatId, String nationality) {
         try {
             if (chatId == null || chatId.isEmpty() || nationality == null || nationality.isEmpty()) return;
@@ -839,7 +804,6 @@ public class AITranslator {
         } catch (JSONException ignored) {}
     }
 
-    // ★★★ 新增：读取好友国籍 ★★★
     public static String getFriendNationality(String chatId) {
         try {
             if (chatId != null && friendsData.has(chatId))
@@ -879,10 +843,6 @@ public class AITranslator {
         return list;
     }
 
-    // =========================================================
-    // 语言判断
-    // =========================================================
-
     public static boolean containsJapanese(String s) {
         if (s == null || s.isEmpty()) return false;
         return JAPANESE_PATTERN.matcher(s).find();
@@ -894,9 +854,9 @@ public class AITranslator {
         for (char c : text.toCharArray()) {
             Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
             if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-                    || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) return true;
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+| block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) return true;
         }
         return false;
     }
@@ -911,9 +871,9 @@ public class AITranslator {
             if (!hasChinese) {
                 Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
                 if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-                        || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) hasChinese = true;
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+| block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) hasChinese = true;
             }
             if (hasChinese && hasForeignAlpha) break;
         }
@@ -931,11 +891,11 @@ public class AITranslator {
             if (b == Character.UnicodeBlock.BASIC_LATIN && Character.isLetter(c)) return true;
             if (b == Character.UnicodeBlock.LATIN_1_SUPPLEMENT && Character.isLetter(c)) return true;
             if (b == Character.UnicodeBlock.LATIN_EXTENDED_A || b == Character.UnicodeBlock.LATIN_EXTENDED_B
-                    || b == Character.UnicodeBlock.LATIN_EXTENDED_C || b == Character.UnicodeBlock.LATIN_EXTENDED_D) return true;
+| b == Character.UnicodeBlock.LATIN_EXTENDED_C || b == Character.UnicodeBlock.LATIN_EXTENDED_D) return true;
             if (b == Character.UnicodeBlock.CYRILLIC || b == Character.UnicodeBlock.CYRILLIC_SUPPLEMENTARY) return true;
             if (b == Character.UnicodeBlock.GREEK || b == Character.UnicodeBlock.GREEK_EXTENDED) return true;
             if (b == Character.UnicodeBlock.HANGUL_SYLLABLES || b == Character.UnicodeBlock.HANGUL_JAMO
-                    || b == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO) return true;
+| b == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO) return true;
             if (b == Character.UnicodeBlock.ARABIC) return true;
             if (b == Character.UnicodeBlock.HIRAGANA || b == Character.UnicodeBlock.KATAKANA) return true;
             if (b == Character.UnicodeBlock.THAI) return true;
@@ -1011,6 +971,16 @@ public class AITranslator {
                         label = paren.replaceFirst("^(\u8bed\u6c14|\u98ce\u683c|\u6807\u7b7e)?\\s*[:\uff1a]?\\s*", "");
                 }
             }
+            // ★★★ 新增：AI把格式写反（中文正文+外语括号/中文在前）时交换回来，防止有效版本被丢弃 ★★★
+            if (foreign != null && !foreign.isEmpty() && !containsForeignLetters(foreign)) {
+                String swapped = null;
+                if (label != null && !label.isEmpty() && containsForeignLetters(label)) { swapped = label; label = ""; }
+                else if (chinese != null && !chinese.isEmpty() && containsForeignLetters(chinese)) { swapped = chinese; chinese = ""; }
+                if (swapped != null) {
+                    if (foreign.matches(".*[\\u4e00-\\u9fa5].*") && (chinese == null || chinese.isEmpty())) chinese = foreign;
+                    foreign = swapped;
+                }
+            }
             if (foreign == null) continue;
             foreign = NUMBER_PREFIX.matcher(foreign).replaceFirst("").trim();
             foreign = foreign.replaceAll("^[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+|[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+$", "").trim();
@@ -1031,7 +1001,7 @@ public class AITranslator {
         if (splitData.length >= 2) return splitData[0].trim().replace("*", "");
         String[] lines = result.split("\n");
         int firstOptionLine = -1;
-        for (int i = 0; i < lines.length; i++) {
+        for (int i = 0; i < lines.length(); i++) {
             String t = lines[i].trim().replace("*", "");
             if (t.isEmpty()) continue;
             if (t.contains("|") || NUMBER_PREFIX.matcher(t).find()) { firstOptionLine = i; break; }
@@ -1044,10 +1014,6 @@ public class AITranslator {
         }
         return an.toString().trim().replace("*", "");
     }
-
-    // =========================================================
-    // 翻译核心
-    // =========================================================
 
     public static String toChinese(String text) throws IOException { return toChinese(text, "0"); }
 
@@ -1076,7 +1042,7 @@ public class AITranslator {
                 else if ("assistant".equals(role)) { scriptBuilder.append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f")); hasContext = true; }
             }
             if (!hasContext) scriptBuilder.append("\uff08\u6682\u65e0\u6709\u6548\u4e0a\u4e0b\u6587\uff09\n");
-                        // ★ 修复：把待翻译原文圈起来，防止AI把上一句连带翻译进来
+            // ★ 修复：把待翻译原文圈起来，防止AI把上一句连带翻译进来
             scriptBuilder.append("\n【系统指令】下方只有<<<和>>>标记内的原文才是要翻译的内容，上面对话剧本仅供理解语境参考，严禁翻译或复述剧本里已有的内容：\n<<<\n").append(text).append("\n>>>");
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
@@ -1099,7 +1065,6 @@ public class AITranslator {
         else return toChinese(text, "0");
     }
 
-    // ★★★ 修复问题⑤：自动从好友档案读取国籍 ★★★
     public static String getSpanishRegionDirective(String nationality, int nativeLang, String chatId) {
         String nat = (nationality != null) ? nationality.toLowerCase() : "";
         if (nat.isEmpty() && chatId != null) {
@@ -1124,7 +1089,6 @@ public class AITranslator {
         return "\n\n\u3010\u76ee\u6807\u8bed\u5730\u533a\u9002\u914d\u3011" + region + "\uff1a" + description + "\u3002";
     }
 
-    // ★★★ 修复问题⑤：补充更多国家 ★★★
     private static String mapSpanishRegion(String nationality) {
         if (nationality == null || nationality.isEmpty()) return null;
         switch (nationality) {
@@ -1158,7 +1122,7 @@ public class AITranslator {
             String fullProtocol = sysPrompt + profileBlock(chatId) + spanishDirective +
                     "\n\n\u3010\u7cfb\u7edf\u6700\u9ad8\u5f3a\u5236\u534f\u8bae\u3011\uff1a" +
                     "\n\u8bf7\u6839\u636e\u5386\u53f2\u804a\u5929\u5267\u672c\uff0c\u628a\u6211\u7684\u4e2d\u6587\u8f93\u5165\u7ffb\u8bd1\u6210\u5730\u9053\u5916\u8bed\u3002" +
-                    "\n\u4e25\u7981\u7834\u6298\u53f7\u3001\u5206\u53f7\u3002\u5fc5\u987b\u8f93\u51fa4\u4e2a\u7ffb\u8bd1\u7248\u672c\uff0c\u683c\u5f0f\uff1a\u5916\u8bed|\u4e2d\u6587\u5927\u610f|\u8bed\u6c14\u6807\u7b7e\u3002" +
+                    "\n严禁破折号、分号。必须输出恰好6个互不相同、语气各异的翻译版本（宁多勿少），每行格式：外语|中文大意|语气标签。" +
                     "\n\u7528==========\u5206\u5272\u4e0a\u4e0b\u534a\u90e8\u5206\u3002";
 
             messages.put(createMessageObj("system", fullProtocol));
@@ -1289,10 +1253,6 @@ public class AITranslator {
         return result;
     }
 
-    // =========================================================
-    // 缓存
-    // =========================================================
-
     private static void loadCache() {
         if (cacheFile == null || !cacheFile.exists()) return;
         try (BufferedReader r = new BufferedReader(new FileReader(cacheFile))) {
@@ -1368,10 +1328,6 @@ public class AITranslator {
         return null;
     }
 
-    // =========================================================
-    // Prompt
-    // =========================================================
-
     private static void loadPrompts() {
         try {
             if (promptFile.exists()) {
@@ -1409,10 +1365,6 @@ public class AITranslator {
         receivePrompt = zh; promptEN = en; promptRU = ru; promptUK = uk; promptKO = ko; promptES = es;
     }
 
-    // =========================================================
-    // 历史记录
-    // =========================================================
-
     private static File historyFile(String chatId) {
         return new File("/data/data/com.hellotalk/files/htai_hist_" + chatId + ".json");
     }
@@ -1445,9 +1397,9 @@ public class AITranslator {
         if (content == null || content.isEmpty()) return;
         maybeRecheckMode();
         if (quotedText != null && !quotedText.isEmpty()) {
-    String who = "assistant".equals(role) ? "我" : "对方";
-    content = "（" + who + "正在引用/回复此前对话：\"" + quotedText + "\"）\n" + content;
-}
+            String who = "assistant".equals(role) ? "我" : "对方";
+            content = "（" + who + "正在引用/回复此前对话：\"" + quotedText + "\"）\n" + content;
+        }
 
         List<JSONObject> distillBatch = null;
         synchronized (fileLock) {
