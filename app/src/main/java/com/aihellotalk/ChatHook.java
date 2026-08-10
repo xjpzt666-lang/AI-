@@ -53,7 +53,6 @@ public class ChatHook {
     private static final ConcurrentHashMap<String, Integer> chatShortCountMap = new ConcurrentHashMap<>();
 
     private static final Set<String> reverseTranslatedMsgIds = ConcurrentHashMap.newKeySet();
-    // ★ 新增：反译失败重试计数（失败最多再给2次机会，防止无限烧API）
     private static final ConcurrentHashMap<String, Integer> reverseRetryMap = new ConcurrentHashMap<>();
 
     private static Method langCodeMethod = null;
@@ -117,7 +116,7 @@ public class ChatHook {
             });
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v5.4 修复版 ===");
+        log("=== Hook v5.4 \u4fee\u590d\u7248 ===");
         try { htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl); } catch (Throwable ignored) {}
         try { Class<?> avClass = XposedHelpers.findClass("av.a", cl); langCodeMethod = avClass.getMethod("a", int.class); } catch (Throwable ignored) {}
         try { hookTextViewRender(cl); } catch (Throwable t) { log("render hook fail"); }
@@ -260,7 +259,7 @@ public class ChatHook {
     }
 
     // =========================================================
-    // 渲染钩子 — setText 重载全覆盖
+    // 渲染钩子
     // =========================================================
 
     private static void hookTextViewRender(ClassLoader cl) {
@@ -410,8 +409,7 @@ public class ChatHook {
             if (!currentChatId.isEmpty() && !"0".equals(currentChatId)) {
                 AITranslator.updateFriendNationality(currentChatId, latestNationality);
             }
-            // ★ 观察日志：确认HelloTalk返回的国籍字符串格式（英文mexico还是中文墨西哥）
-            log("国籍原文: [" + latestNationality + "] 母语码: " + nl);
+            log("\u56fd\u7c4d\u539f\u6587: [" + latestNationality + "] \u6bcd\u8bed\u7801: " + nl);
         } catch (Throwable ignored) {}
     }
 
@@ -556,13 +554,11 @@ public class ChatHook {
                     Object sto = invokeQuiet(mGetSendTime, msg);
                     if (sto instanceof Long) st = (Long) sto;
 
-                    // ★ 双向引用提取
                     String quotedText = null;
                     try {
                         Object ri = invokeQuiet(mGetReplyInfo, msg);
                         if (ri != null) {
-                            // ★ 观察日志：确认replyInfo类型是否是HTIMMessage（决定isSender是否有效）
-                            log("replyInfo类型: " + ri.getClass().getName());
+                            log("replyInfo\u7c7b\u578b: " + ri.getClass().getName());
                             Object rIs = invokeQuiet(mIsSender, ri);
                             boolean rIm = (rIs instanceof Boolean) && (Boolean) rIs;
                             Object rmt = invokeQuiet(mGetMsgType, ri);
@@ -596,7 +592,6 @@ public class ChatHook {
                         });
                     }
 
-                    // ★ 纯表情/纯标点：保留原文 + 括号分析
                     if (isPureSymbol && !isMine) {
                         final String ft3 = text; final Object fb3 = bean; final String fc3 = chatId;
                         new Thread(() -> {
@@ -634,12 +629,10 @@ public class ChatHook {
                                         reverseRetryMap.remove(fm2);
                                         try { XposedHelpers.callMethod(fb2, "setText", ft2); } catch (Exception ignored) {}
                                     } else {
-                                        // ★ 反译失败/空结果 → 最多再给2次机会，之后放弃（防止无限烧API）
                                         int rc = reverseRetryMap.getOrDefault(fm2, 0);
                                         if (rc < 2) { reverseRetryMap.put(fm2, rc + 1); reverseTranslatedMsgIds.remove(fm2); }
                                     }
                                 } catch (Exception ignored) {
-                                    // ★ 异常同样最多重试2次
                                     int rc = reverseRetryMap.getOrDefault(fm2, 0);
                                     if (rc < 2) { reverseRetryMap.put(fm2, rc + 1); reverseTranslatedMsgIds.remove(fm2); }
                                 }
@@ -818,14 +811,15 @@ public class ChatHook {
                     String fpt = ftt; if (ir) fpt = ftt + "\n\n\u3010\u7cfb\u7edf\u5f3a\u5236\u6307\u4ee4\u3011\uff1a\u7528\u6237\u8981\u6c42\u91cd\u65b0\u751f\u6210\u3002\u8bf7\u7ed9\u51fa\u5b8c\u5168\u4e0d\u540c\u7684\u8868\u8fbe\u65b9\u5f0f\uff01";
                     Integer lsc = chatShortCountMap.get(cs);
                     if (lsc != null && !ftt.contains("[PURE_BRACKET_MODE]")) {
-                        if (lsc > 0) fpt += "\n\u3010\u7cfb\u7edf\u5f3a\u5236\u683c\u5f0f\u63d0\u9192\u3011\uff1a\u4e0a\u4e00\u6b21\u53ea\u8f93\u51fa\u4e86" + lsc + "\u4e2a\u7248\u672c\uff0c\u672c\u6b21\u5fc5\u987b\u6070\u597d6\u884c\uff01";
-                        else fpt += "\n\u3010\u7cfb\u7edf\u5f3a\u5236\u683c\u5f0f\u63d0\u9192\u3011\uff1a\u4e0a\u4e00\u6b21\u6ca1\u6709\u6709\u6548\u7ffb\u8bd1\u9009\u9879\uff0c\u672c\u6b21\u5fc5\u987b\u6070\u597d6\u884c\uff01";
+                        // ★★★ 修复：不再写死"6行"，改为"4个翻译版本" ★★★
+                        if (lsc > 0) fpt += "\n\u3010\u7cfb\u7edf\u683c\u5f0f\u63d0\u9192\u3011\uff1a\u4e0a\u4e00\u6b21\u53ea\u89e3\u6790\u51fa" + lsc + "\u4e2a\u6709\u6548\u7248\u672c\uff0c\u672c\u6b21\u8bf7\u4e25\u683c\u8f93\u51fa\u6070\u597d4\u4e2a\u7ffb\u8bd1\u7248\u672c\uff0c\u683c\u5f0f\uff1a\u5916\u8bed|\u4e2d\u6587\u5927\u610f|\u8bed\u6c14\u6807\u7b7e";
+                        else fpt += "\n\u3010\u7cfb\u7edf\u683c\u5f0f\u63d0\u9192\u3011\uff1a\u4e0a\u4e00\u6b21\u6ca1\u6709\u89e3\u6790\u51fa\u6709\u6548\u7ffb\u8bd1\u9009\u9879\uff0c\u672c\u6b21\u8bf7\u4e25\u683c\u8f93\u51fa\u6070\u597d4\u4e2a\u7ffb\u8bd1\u7248\u672c\uff0c\u683c\u5f0f\uff1a\u5916\u8bed|\u4e2d\u6587\u5927\u610f|\u8bed\u6c14\u6807\u7b7e";
                     }
-                    // ★ 不做自动重试：AI给几个就显示几个；下次点【译】或弹窗【换一批】即为手动重试
                     String result = AITranslator.translateForPicker(fpt, tl, cs);
                     if (!ftt.contains("[PURE_BRACKET_MODE]")) {
                         int oc = AITranslator.parseTranslateOptions(result).size();
-                        if (oc >= 4) chatShortCountMap.remove(cs); else chatShortCountMap.put(cs, oc);
+                        // ★★★ 修复：宽松判断，>=2 就算成功 ★★★
+                        if (oc >= 2) chatShortCountMap.remove(cs); else chatShortCountMap.put(cs, oc);
                     }
                     isTranslatingAPI = false; String fr = result;
                     edit.post(() -> { btn.setEnabled(true); btn.setText("\u8bd1"); btn.setAlpha(0.92f); showPicker(edit, btn, fr, rci, pns); });
@@ -879,69 +873,140 @@ public class ChatHook {
     }
 
     // =========================================================
-    // Picker dialog
+    // ★★★ 重写：弹窗布局修复 ★★★
     // =========================================================
 
     private static void showPicker(EditText edit, Button btn, String result, String origChinese, String pn) {
         android.content.Context ctx = edit.getContext();
         String at = AITranslator.extractAnalysis(result);
         List<String[]> items = AITranslator.parseTranslateOptions(result);
-        if (items.isEmpty()) { Toast.makeText(ctx, "\u26a0\ufe0f AI \u8fd4\u56de\u683c\u5f0f\u5f02\u5e38", Toast.LENGTH_LONG).show(); return; }
+        if (items.isEmpty()) {
+            Toast.makeText(ctx, "\u26a0\ufe0f AI \u8fd4\u56de\u683c\u5f0f\u5f02\u5e38\uff0c\u8bf7\u70b9\u3010\u8bd1\u3011\u91cd\u8bd5", Toast.LENGTH_LONG).show();
+            return;
+        }
 
         android.widget.LinearLayout root = new android.widget.LinearLayout(ctx);
         root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.setPadding(0, 12, 0, 12);
 
         if (at != null && !at.isEmpty()) {
+            TextView header = new TextView(ctx);
+            header.setText("\ud83d\udccb \u5206\u6790");
+            header.setTextSize(12f);
+            header.setTextColor(Color.parseColor("#999999"));
+            header.setPadding(48, 12, 48, 4);
+            root.addView(header);
+
             android.widget.ScrollView ts = new android.widget.ScrollView(ctx);
-            ts.setLayoutParams(new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f));
-            ts.setPadding(40, 20, 40, 10);
-            TextView ta = new TextView(ctx); ta.setText(at); ta.setTextColor(Color.parseColor("#6C757D")); ta.setTextSize(13f); ta.setTextIsSelectable(true);
-            ts.addView(ta); root.addView(ts);
+            android.widget.LinearLayout.LayoutParams tsLp = new android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
+            tsLp.setMargins(0, 0, 0, 16);
+            ts.setLayoutParams(tsLp);
+            TextView ta = new TextView(ctx);
+            ta.setText(at);
+            ta.setTextColor(Color.parseColor("#555555"));
+            ta.setTextSize(13f);
+            ta.setLineSpacing(4f, 1.1f);
+            ta.setTextIsSelectable(true);
+            ta.setPadding(48, 0, 48, 12);
+            ts.addView(ta);
+            root.addView(ts);
         }
 
+        TextView optHeader = new TextView(ctx);
+        optHeader.setText("\ud83d\udcac \u9009\u4e00\u4e2a\u53d1\u9001\uff08\u5171" + items.size() + "\u4e2a\u7248\u672c\uff09");
+        optHeader.setTextSize(12f);
+        optHeader.setTextColor(Color.parseColor("#999999"));
+        optHeader.setPadding(48, 0, 48, 8);
+        root.addView(optHeader);
+
         android.widget.ScrollView bs = new android.widget.ScrollView(ctx);
-        bs.setLayoutParams(new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 2.0f));
+        android.widget.LinearLayout.LayoutParams bsLp = new android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, (at != null && !at.isEmpty()) ? 2.2f : 1.0f);
+        bs.setLayoutParams(bsLp);
+        bs.setFillViewport(true);
+
         android.widget.LinearLayout cont = new android.widget.LinearLayout(ctx);
-        cont.setOrientation(android.widget.LinearLayout.VERTICAL); cont.setPadding(40, 10, 40, 20);
-        bs.addView(cont); root.addView(bs);
+        cont.setOrientation(android.widget.LinearLayout.VERTICAL);
+        cont.setPadding(36, 8, 36, 24);
+        bs.addView(cont);
+        root.addView(bs);
 
         String dn = (pn != null && !pn.isEmpty()) ? pn : currentPartnerName;
         String title = (dn != null && !dn.isEmpty()) ? ("\u9009\u7248\u672c - " + dn) : "\u9009\u7248\u672c";
         final android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
-                .setTitle(title).setView(root)
-                .setNegativeButton("\u53d6\u6d88", (d, w) -> edit.post(() -> edit.setText(edit.getText().toString())))
+                .setTitle(title)
+                .setView(root)
+                .setNegativeButton("\u53d6\u6d88", (d, w) -> {})
                 .setPositiveButton("\uD83D\uDD04 \u6362\u4e00\u6279", (d, w) -> edit.post(() -> btn.performClick()))
                 .create();
 
-        for (String[] item : items) {
-            final String foreign = item[0]; String ch = item[1]; String lb = item[2];
+        for (int idx = 0; idx < items.size(); idx++) {
+            String[] item = items.get(idx);
+            final String foreign = item[0];
+            String ch = item[1];
+            String lb = item[2];
+
             android.widget.LinearLayout card = new android.widget.LinearLayout(ctx);
-            card.setOrientation(android.widget.LinearLayout.VERTICAL); card.setPadding(35, 35, 35, 35);
-            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.setMargins(0, 10, 0, 15); card.setLayoutParams(lp);
-            GradientDrawable cbg = new GradientDrawable(); cbg.setColor(Color.parseColor("#F8F9FA")); cbg.setCornerRadius(16f); cbg.setStroke(2, Color.parseColor("#E9ECEF"));
+            card.setOrientation(android.widget.LinearLayout.VERTICAL);
+            card.setPadding(32, 24, 32, 24);
+            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(0, 8, 0, 12);
+            card.setLayoutParams(lp);
+
+            GradientDrawable cbg = new GradientDrawable();
+            cbg.setColor(Color.parseColor("#F8F9FA"));
+            cbg.setCornerRadius(14f);
+            cbg.setStroke(2, Color.parseColor("#DEE2E6"));
             card.setBackground(cbg);
-            TextView tf = new TextView(ctx); tf.setText(foreign); tf.setTextColor(Color.parseColor("#212529")); tf.setTextSize(16f); tf.setTypeface(null, android.graphics.Typeface.BOLD);
+
+            TextView tf = new TextView(ctx);
+            tf.setText((idx + 1) + ". " + foreign);
+            tf.setTextColor(Color.parseColor("#212529"));
+            tf.setTextSize(15f);
+            tf.setTypeface(null, android.graphics.Typeface.BOLD);
+            tf.setLineSpacing(3f, 1.1f);
             card.addView(tf);
+
             if ((ch != null && !ch.isEmpty()) || (lb != null && !lb.isEmpty())) {
                 TextView tc = new TextView(ctx);
-                String st = ch != null ? ch : ""; if (lb != null && !lb.isEmpty()) st += " [" + lb + "]";
-                tc.setText(st); tc.setTextColor(Color.parseColor("#6C757D")); tc.setTextSize(13f); tc.setPadding(0, 15, 0, 0);
+                String st = (ch != null) ? ch : "";
+                if (lb != null && !lb.isEmpty()) st += "  [" + lb + "]";
+                tc.setText(st);
+                tc.setTextColor(Color.parseColor("#6C757D"));
+                tc.setTextSize(12f);
+                tc.setPadding(0, 8, 0, 0);
                 card.addView(tc);
             }
+
             card.setOnClickListener(v2 -> {
                 AITranslator.rememberDraft(foreign, origChinese);
-                edit.setText(foreign); edit.setSelection(foreign.length());
-                try { ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", foreign)); } catch (Exception ignored) {}
+                edit.setText(foreign);
+                edit.setSelection(foreign.length());
+                try {
+                    ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
+                            .setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", foreign));
+                } catch (Exception ignored) {}
                 dialog.dismiss();
             });
             card.setOnLongClickListener(v2 -> {
-                try { ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", foreign));
-                Toast.makeText(ctx, "\u2705 \u5df2\u590d\u5236\u5230\u526a\u8d34\u677f", Toast.LENGTH_SHORT).show(); } catch (Exception ignored) {}
+                try {
+                    ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
+                            .setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", foreign));
+                    Toast.makeText(ctx, "\u2705 \u5df2\u590d\u5236\u5230\u526a\u8d34\u677f", Toast.LENGTH_SHORT).show();
+                } catch (Exception ignored) {}
                 return true;
             });
             cont.addView(card);
         }
+
         dialog.show();
+        if (dialog.getWindow() != null) {
+            android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+            int h = (int) (dm.heightPixels * 0.72);
+            dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, h);
+        }
     }
 }
