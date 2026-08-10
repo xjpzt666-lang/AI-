@@ -854,9 +854,9 @@ public class AITranslator {
         for (char c : text.toCharArray()) {
             Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
             if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-| block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) return true;
+                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+                    || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+                    || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) return true;
         }
         return false;
     }
@@ -871,9 +871,9 @@ public class AITranslator {
             if (!hasChinese) {
                 Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
                 if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-| block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-| block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) hasChinese = true;
+                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+                        || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+                        || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) hasChinese = true;
             }
             if (hasChinese && hasForeignAlpha) break;
         }
@@ -891,11 +891,11 @@ public class AITranslator {
             if (b == Character.UnicodeBlock.BASIC_LATIN && Character.isLetter(c)) return true;
             if (b == Character.UnicodeBlock.LATIN_1_SUPPLEMENT && Character.isLetter(c)) return true;
             if (b == Character.UnicodeBlock.LATIN_EXTENDED_A || b == Character.UnicodeBlock.LATIN_EXTENDED_B
-| b == Character.UnicodeBlock.LATIN_EXTENDED_C || b == Character.UnicodeBlock.LATIN_EXTENDED_D) return true;
+                    || b == Character.UnicodeBlock.LATIN_EXTENDED_C || b == Character.UnicodeBlock.LATIN_EXTENDED_D) return true;
             if (b == Character.UnicodeBlock.CYRILLIC || b == Character.UnicodeBlock.CYRILLIC_SUPPLEMENTARY) return true;
             if (b == Character.UnicodeBlock.GREEK || b == Character.UnicodeBlock.GREEK_EXTENDED) return true;
             if (b == Character.UnicodeBlock.HANGUL_SYLLABLES || b == Character.UnicodeBlock.HANGUL_JAMO
-| b == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO) return true;
+                    || b == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO) return true;
             if (b == Character.UnicodeBlock.ARABIC) return true;
             if (b == Character.UnicodeBlock.HIRAGANA || b == Character.UnicodeBlock.KATAKANA) return true;
             if (b == Character.UnicodeBlock.THAI) return true;
@@ -921,35 +921,46 @@ public class AITranslator {
         return t.trim();
     }
 
+    // ★★★ 重写：更鲁棒的选项解析 ★★★
     public static List<String[]> parseTranslateOptions(String result) {
         List<String[]> items = new ArrayList<>();
         if (result == null || result.trim().isEmpty()) return items;
 
-        String optionsText;
+        String optionsText = result;
         String[] splitData = result.split("={3,}");
         if (splitData.length >= 2) {
             optionsText = splitData[splitData.length - 1];
         } else {
-            StringBuilder sb = new StringBuilder(); boolean inOptions = false;
+            StringBuilder sb = new StringBuilder();
+            boolean inOptions = false;
             for (String line : result.split("\n")) {
                 String t = line.trim();
-                if (!inOptions && (t.contains("\u4e0b\u534a\u90e8\u5206") || t.matches("^[=+\\-]{3,}.*$"))) { inOptions = true; continue; }
+                if (!inOptions) {
+                    boolean isSep = t.matches("^[=+\\-*\u2500]{3,}.*$")
+                            || t.contains("\u4e0b\u534a\u90e8\u5206")
+                            || t.matches("^(\u7ffb\u8bd1\u9009\u9879|\u9009\u9879\u5982\u4e0b|\u4ee5\u4e0b\u662f.*\u7248\u672c|\u7ffb\u8bd1\u5982\u4e0b).{0,10}$");
+                    if (isSep) { inOptions = true; continue; }
+                }
                 if (inOptions) sb.append(line).append("\n");
             }
-            optionsText = sb.length() > 0 ? sb.toString() : result;
+            if (sb.length() > 0) optionsText = sb.toString();
         }
 
         Set<String> seen = new HashSet<>();
         for (String rawLine : optionsText.split("\n")) {
+            if (items.size() >= 6) break;
+
             String line = rawLine.trim().replace("*", "").replace("\uff5c", "|");
             if (line.isEmpty()) continue;
             if (line.matches("^[=+\\-|:\uff1a\\s]{3,}$")) continue;
+            if (line.matches("^(\u7ffb\u8bd1\u9009\u9879|\u9009\u9879|\u7248\u672c|\u4ee5\u4e0b\u4e3a|\u4ee5\u4e0b\u662f).{0,12}$")) continue;
             if (line.startsWith("|")) line = line.substring(1).trim();
             if (line.endsWith("|")) line = line.substring(0, line.length() - 1).trim();
-            line = line.replaceFirst("^[\u2022\u00b7\u25e6\u25cb]\\s*", "");
+            line = line.replaceFirst("^[\u2022\u00b7\u25e6\u25cb\u25aa]\\s*", "");
             if (line.isEmpty()) continue;
 
             String foreign = null, chinese = "", label = "";
+
             if (line.contains("|")) {
                 String[] parts = line.split("\\|");
                 List<String> cells = new ArrayList<>();
@@ -971,7 +982,7 @@ public class AITranslator {
                         label = paren.replaceFirst("^(\u8bed\u6c14|\u98ce\u683c|\u6807\u7b7e)?\\s*[:\uff1a]?\\s*", "");
                 }
             }
-            // ★★★ 新增：AI把格式写反（中文正文+外语括号/中文在前）时交换回来，防止有效版本被丢弃 ★★★
+
             if (foreign != null && !foreign.isEmpty() && !containsForeignLetters(foreign)) {
                 String swapped = null;
                 if (label != null && !label.isEmpty() && containsForeignLetters(label)) { swapped = label; label = ""; }
@@ -981,16 +992,17 @@ public class AITranslator {
                     foreign = swapped;
                 }
             }
+
             if (foreign == null) continue;
             foreign = NUMBER_PREFIX.matcher(foreign).replaceFirst("").trim();
             foreign = foreign.replaceAll("^[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+|[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+$", "").trim();
             chinese = chinese.replaceFirst("^(\u4e2d\u6587)?(\u5927\u610f|\u610f\u601d|\u542b\u4e49|\u7ffb\u8bd1)?\\s*[:\uff1a]?\\s*", "").trim();
             label = label.replaceFirst("^(\u8bed\u6c14|\u98ce\u683c|\u6807\u7b7e)?\\s*[:\uff1a]?\\s*", "").trim();
             foreign = sanitizeForeignText(foreign);
+
             if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
             if (!seen.add(foreign.toLowerCase())) continue;
             items.add(new String[]{foreign, chinese, label});
-            if (items.size() >= 4) break;
         }
         return items;
     }
@@ -1042,8 +1054,7 @@ public class AITranslator {
                 else if ("assistant".equals(role)) { scriptBuilder.append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f")); hasContext = true; }
             }
             if (!hasContext) scriptBuilder.append("\uff08\u6682\u65e0\u6709\u6548\u4e0a\u4e0b\u6587\uff09\n");
-            // ★ 修复：把待翻译原文圈起来，防止AI把上一句连带翻译进来
-            scriptBuilder.append("\n【系统指令】下方只有<<<和>>>标记内的原文才是要翻译的内容，上面对话剧本仅供理解语境参考，严禁翻译或复述剧本里已有的内容：\n<<<\n").append(text).append("\n>>>");
+            scriptBuilder.append("\n\u3010\u7cfb\u7edf\u6307\u4ee4\u3011\u4e0b\u65b9\u53ea\u6709<<<\u548c>>>\u6807\u8bb0\u5185\u7684\u539f\u6587\u624d\u662f\u8981\u7ffb\u8bd1\u7684\u5185\u5bb9\uff0c\u4e0a\u9762\u5bf9\u8bdd\u5267\u672c\u4ec5\u4f9b\u7406\u89e3\u8bed\u5883\u53c2\u8003\uff0c\u4e25\u7981\u7ffb\u8bd1\u6216\u590d\u8ff0\u5267\u672c\u91cc\u5df2\u6709\u7684\u5185\u5bb9\uff1a\n<<<\n").append(text).append("\n>>>");
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
             try { String r = callChatMessages(messages); return refuseGuard(r, text); }
@@ -1103,6 +1114,7 @@ public class AITranslator {
         }
     }
 
+    // ★★★ 重写：fullProtocol 不再硬编码数量，完全尊重用户 prompt ★★★
     public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
         maybeRecheckMode();
         try {
@@ -1120,10 +1132,9 @@ public class AITranslator {
             if ("es".equals(langCode)) spanishDirective = getSpanishRegionDirective(null, 0, chatId);
 
             String fullProtocol = sysPrompt + profileBlock(chatId) + spanishDirective +
-                    "\n\n\u3010\u7cfb\u7edf\u6700\u9ad8\u5f3a\u5236\u534f\u8bae\u3011\uff1a" +
-                    "\n\u8bf7\u6839\u636e\u5386\u53f2\u804a\u5929\u5267\u672c\uff0c\u628a\u6211\u7684\u4e2d\u6587\u8f93\u5165\u7ffb\u8bd1\u6210\u5730\u9053\u5916\u8bed\u3002" +
-                    "\n严禁破折号、分号。必须输出恰好6个互不相同、语气各异的翻译版本（宁多勿少），每行格式：外语|中文大意|语气标签。" +
-                    "\n\u7528==========\u5206\u5272\u4e0a\u4e0b\u534a\u90e8\u5206\u3002";
+                    "\n\n\u3010\u7cfb\u7edf\u8865\u5145\u6307\u4ee4\u3011\uff1a" +
+                    "\n\u8bf7\u7ed3\u5408\u4e0a\u65b9\u5386\u53f2\u804a\u5929\u5267\u672c\u7406\u89e3\u8bed\u5883\u3002" +
+                    "\n\u4e25\u683c\u6309\u7167\u6211prompt\u4e2d\u3010\u5f3a\u5236\u8f93\u51fa\u683c\u5f0f\u3011\u90e8\u5206\u7684\u89c4\u5b9a\u6267\u884c\uff0c\u4e0d\u8981\u589e\u51cf\u7248\u672c\u6570\u91cf\uff0c\u4e0d\u8981\u6539\u53d8\u5206\u9694\u683c\u5f0f\u3002";
 
             messages.put(createMessageObj("system", fullProtocol));
 
@@ -1397,8 +1408,8 @@ public class AITranslator {
         if (content == null || content.isEmpty()) return;
         maybeRecheckMode();
         if (quotedText != null && !quotedText.isEmpty()) {
-            String who = "assistant".equals(role) ? "我" : "对方";
-            content = "（" + who + "正在引用/回复此前对话：\"" + quotedText + "\"）\n" + content;
+            String who = "assistant".equals(role) ? "\u6211" : "\u5bf9\u65b9";
+            content = "\uff08" + who + "\u6b63\u5728\u5f15\u7528/\u56de\u590d\u6b64\u524d\u5bf9\u8bdd\uff1a\"" + quotedText + "\"\uff09\n" + content;
         }
 
         List<JSONObject> distillBatch = null;
