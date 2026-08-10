@@ -811,14 +811,12 @@ public class ChatHook {
                     String fpt = ftt; if (ir) fpt = ftt + "\n\n\u3010\u7cfb\u7edf\u5f3a\u5236\u6307\u4ee4\u3011\uff1a\u7528\u6237\u8981\u6c42\u91cd\u65b0\u751f\u6210\u3002\u8bf7\u7ed9\u51fa\u5b8c\u5168\u4e0d\u540c\u7684\u8868\u8fbe\u65b9\u5f0f\uff01";
                     Integer lsc = chatShortCountMap.get(cs);
                     if (lsc != null && !ftt.contains("[PURE_BRACKET_MODE]")) {
-                        // ★★★ 修复：契合新 prompt 格式，不再使用旧的 | 分隔符提示 ★★★
                         if (lsc > 0) fpt += "\n\u3010\u7cfb\u7edf\u683c\u5f0f\u8b66\u544a\u3011\uff1a\u4e0a\u6b21\u89e3\u6790\u5931\u8d25\uff01\u8bf7\u4e25\u683c\u9075\u5b88 prompt \u8981\u6c42\uff0c\u5fc5\u987b\u4f7f\u7528 ========== \u5206\u9694\u4e0a\u4e0b\u534a\u90e8\u5206\uff0c\u5e76\u5728\u4e0b\u534a\u90e8\u5206\u4e25\u683c\u8f93\u51fa 4 \u4e2a\u7248\u672c\uff01";
                         else fpt += "\n\u3010\u7cfb\u7edf\u683c\u5f0f\u8b66\u544a\u3011\uff1a\u4e0a\u6b21\u672a\u8bc6\u522b\u5230\u9009\u9879\uff01\u8bf7\u4e25\u683c\u9075\u5b88 prompt \u8981\u6c42\uff0c\u5fc5\u987b\u4f7f\u7528 ========== \u5206\u9694\u4e0a\u4e0b\u534a\u90e8\u5206\uff0c\u5e76\u5728\u4e0b\u534a\u90e8\u5206\u4e25\u683c\u8f93\u51fa 4 \u4e2a\u7248\u672c\uff01";
                     }
                     String result = AITranslator.translateForPicker(fpt, tl, cs);
                     if (!ftt.contains("[PURE_BRACKET_MODE]")) {
                         int oc = AITranslator.parseTranslateOptions(result).size();
-                        // ★★★ 修复：宽松判断，>=2 就算成功 ★★★
                         if (oc >= 2) chatShortCountMap.remove(cs); else chatShortCountMap.put(cs, oc);
                     }
                     isTranslatingAPI = false; String fr = result;
@@ -899,6 +897,7 @@ public class ChatHook {
             root.addView(header);
 
             android.widget.ScrollView ts = new android.widget.ScrollView(ctx);
+            // 微调：如果存在分析区，让下方的选项区占的比例更大一点点
             android.widget.LinearLayout.LayoutParams tsLp = new android.widget.LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
             tsLp.setMargins(0, 0, 0, 16);
@@ -922,8 +921,9 @@ public class ChatHook {
         root.addView(optHeader);
 
         android.widget.ScrollView bs = new android.widget.ScrollView(ctx);
+        // 微调：下部占位比例从 2.2f 提升到 2.5f，让卡片有更多空间
         android.widget.LinearLayout.LayoutParams bsLp = new android.widget.LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, (at != null && !at.isEmpty()) ? 2.2f : 1.0f);
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, (at != null && !at.isEmpty()) ? 2.5f : 1.0f);
         bs.setLayoutParams(bsLp);
         bs.setFillViewport(true);
 
@@ -1005,7 +1005,8 @@ public class ChatHook {
         dialog.show();
         if (dialog.getWindow() != null) {
             android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
-            int h = (int) (dm.heightPixels * 0.72);
+            // ★★★ 这里将原来的 0.72 (72%) 改成了 0.88 (88%)，大幅增加弹窗高度 ★★★[cite: 5]
+            int h = (int) (dm.heightPixels * 0.88);
             dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, h);
         }
     }
