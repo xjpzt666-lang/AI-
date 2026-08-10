@@ -921,7 +921,7 @@ public class AITranslator {
         return t.trim();
     }
 
-    // ★★★ 重写：更鲁棒的选项解析 ★★★
+    // ★★★ 核心重写：极其严格的“强 | 分隔”解析器 ★★★
     public static List<String[]> parseTranslateOptions(String result) {
         List<String[]> items = new ArrayList<>();
         if (result == null || result.trim().isEmpty()) return items;
@@ -929,8 +929,9 @@ public class AITranslator {
         String optionsText = result;
         String[] splitData = result.split("={3,}");
         if (splitData.length >= 2) {
-            optionsText = splitData[splitData.length - 1];
+            optionsText = splitData[splitData.length - 1]; // 取最后一部分（下半部分）
         } else {
+            // 如果 AI 忘记写 ==========，靠寻找关键字来强行截断
             StringBuilder sb = new StringBuilder();
             boolean inOptions = false;
             for (String line : result.split("\n")) {
@@ -938,6 +939,7 @@ public class AITranslator {
                 if (!inOptions) {
                     boolean isSep = t.matches("^[=+\\-*\u2500]{3,}.*$")
                             || t.contains("\u4e0b\u534a\u90e8\u5206")
+                            || t.contains("\u9009\u9879\u533a")
                             || t.matches("^(\u7ffb\u8bd1\u9009\u9879|\u9009\u9879\u5982\u4e0b|\u4ee5\u4e0b\u662f.*\u7248\u672c|\u7ffb\u8bd1\u5982\u4e0b).{0,10}$");
                     if (isSep) { inOptions = true; continue; }
                 }
@@ -948,60 +950,42 @@ public class AITranslator {
 
         Set<String> seen = new HashSet<>();
         for (String rawLine : optionsText.split("\n")) {
-            // ★★★ 修复：将原来的 6 收紧至 4，防止 AI 废话被当成多余选项 ★★★
+            // 严格限制只取前 4 个选项
             if (items.size() >= 4) break;
 
-            String line = rawLine.trim().replace("*", "").replace("\uff5c", "|");
+            String line = rawLine.trim().replace("*", "").replace("\uff5c", "|").replace("｜", "|");
             if (line.isEmpty()) continue;
-            if (line.matches("^[=+\\-|:\uff1a\\s]{3,}$")) continue;
-            if (line.matches("^(\u7ffb\u8bd1\u9009\u9879|\u9009\u9879|\u7248\u672c|\u4ee5\u4e0b\u4e3a|\u4ee5\u4e0b\u662f).{0,12}$")) continue;
+            
+            // ★★★ 防御神技：如果这一行根本没有“|”号，说明它肯定是 AI 夹带的私货分析，直接跳过！ ★★★
+            if (!line.contains("|")) continue;
+
             if (line.startsWith("|")) line = line.substring(1).trim();
             if (line.endsWith("|")) line = line.substring(0, line.length() - 1).trim();
             line = line.replaceFirst("^[\u2022\u00b7\u25e6\u25cb\u25aa]\\s*", "");
-            if (line.isEmpty()) continue;
+            line = NUMBER_PREFIX.matcher(line).replaceFirst("").trim();
 
             String foreign = null, chinese = "", label = "";
 
-            if (line.contains("|")) {
-                String[] parts = line.split("\\|");
-                List<String> cells = new ArrayList<>();
-                for (String p : parts) { String c2 = p.trim(); if (!c2.isEmpty()) cells.add(c2); }
-                if (cells.isEmpty()) continue;
-                foreign = cells.get(0);
-                if (cells.size() > 1) chinese = cells.get(1);
-                if (cells.size() > 2) label = cells.get(2);
-            } else {
-                String core = NUMBER_PREFIX.matcher(line).replaceFirst("").trim();
-                Matcher m = PAREN_TAIL.matcher(core);
-                String paren = "";
-                if (m.find()) { paren = m.group(1).trim(); core = core.substring(0, m.start()).trim(); }
-                foreign = core;
-                if (!paren.isEmpty()) {
-                    if (paren.matches(".*[\\u4e00-\\u9fa5].*"))
-                        chinese = paren.replaceFirst("^(\u4e2d\u6587)?(\u5927\u610f|\u610f\u601d|\u542b\u4e49|\u7ffb\u8bd1)?\\s*[:\uff1a]?\\s*", "");
-                    else
-                        label = paren.replaceFirst("^(\u8bed\u6c14|\u98ce\u683c|\u6807\u7b7e)?\\s*[:\uff1a]?\\s*", "");
-                }
-            }
-
-            if (foreign != null && !foreign.isEmpty() && !containsForeignLetters(foreign)) {
-                String swapped = null;
-                if (label != null && !label.isEmpty() && containsForeignLetters(label)) { swapped = label; label = ""; }
-                else if (chinese != null && !chinese.isEmpty() && containsForeignLetters(chinese)) { swapped = chinese; chinese = ""; }
-                if (swapped != null) {
-                    if (foreign.matches(".*[\\u4e00-\\u9fa5].*") && (chinese == null || chinese.isEmpty())) chinese = foreign;
-                    foreign = swapped;
-                }
-            }
+            String[] parts = line.split("\\|");
+            List<String> cells = new ArrayList<>();
+            for (String p : parts) { String c2 = p.trim(); if (!c2.isEmpty()) cells.add(c2); }
+            if (cells.isEmpty()) continue;
+            foreign = cells.get(0);
+            if (cells.size() > 1) chinese = cells.get(1);
+            if (cells.size() > 2) label = cells.get(2);
 
             if (foreign == null) continue;
-            foreign = NUMBER_PREFIX.matcher(foreign).replaceFirst("").trim();
+            
             foreign = foreign.replaceAll("^[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+|[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+$", "").trim();
             chinese = chinese.replaceFirst("^(\u4e2d\u6587)?(\u5927\u610f|\u610f\u601d|\u542b\u4e49|\u7ffb\u8bd1)?\\s*[:\uff1a]?\\s*", "").trim();
             label = label.replaceFirst("^(\u8bed\u6c14|\u98ce\u683c|\u6807\u7b7e)?\\s*[:\uff1a]?\\s*", "").trim();
             foreign = sanitizeForeignText(foreign);
 
             if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
+            
+            // ★★★ 二次防御：如果外语部分竟然全是中文，那肯定是解析错位了，跳过 ★★★
+            if (isChineseOnly(foreign)) continue;
+
             if (!seen.add(foreign.toLowerCase())) continue;
             items.add(new String[]{foreign, chinese, label});
         }
@@ -1012,12 +996,15 @@ public class AITranslator {
         if (result == null) return "";
         String[] splitData = result.split("={3,}");
         if (splitData.length >= 2) return splitData[0].trim().replace("*", "");
+        
+        // 如果 AI 忘记写 ==========
         String[] lines = result.split("\n");
         int firstOptionLine = -1;
         for (int i = 0; i < lines.length; i++) {
-            String t = lines[i].trim().replace("*", "");
+            String t = lines[i].trim().replace("*", "").replace("\uff5c", "|").replace("｜", "|");
             if (t.isEmpty()) continue;
-            if (t.contains("|") || NUMBER_PREFIX.matcher(t).find()) { firstOptionLine = i; break; }
+            // 只要碰到有 | 的行，或者是下半部分的标题，就认为是分析部分的结束
+            if (t.contains("|") || t.contains("下半部分") || t.contains("选项区")) { firstOptionLine = i; break; }
         }
         if (firstOptionLine <= 0) return "";
         StringBuilder an = new StringBuilder();
@@ -1115,7 +1102,6 @@ public class AITranslator {
         }
     }
 
-    // ★★★ 重写：fullProtocol 不再硬编码数量，完全尊重用户 prompt ★★★
     public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
         maybeRecheckMode();
         try {
