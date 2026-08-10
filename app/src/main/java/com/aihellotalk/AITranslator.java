@@ -948,7 +948,8 @@ public class AITranslator {
 
         Set<String> seen = new HashSet<>();
         for (String rawLine : optionsText.split("\n")) {
-            if (items.size() >= 6) break;
+            // ★★★ 修复：将原来的 6 收紧至 4，防止 AI 废话被当成多余选项 ★★★
+            if (items.size() >= 4) break;
 
             String line = rawLine.trim().replace("*", "").replace("\uff5c", "|");
             if (line.isEmpty()) continue;
