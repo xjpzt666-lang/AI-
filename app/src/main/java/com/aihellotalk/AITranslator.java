@@ -91,6 +91,30 @@ public class AITranslator {
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
 
     // =========================================================
+    // 读取温度配置的方法
+    // =========================================================
+    private static double getTemperature() {
+        double temp = 0.7; // 默认保留 0.7 作为兜底
+        try {
+            File f = new File("/data/local/tmp/htai_config.txt");
+            if (f.exists()) {
+                BufferedReader r = new BufferedReader(new FileReader(f));
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (line.trim().startsWith("temperature=")) {
+                        temp = Double.parseDouble(line.substring(12).trim());
+                        break;
+                    }
+                }
+                r.close();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Read temperature failed: " + e.getMessage());
+        }
+        return temp;
+    }
+
+    // =========================================================
     // 记忆系统
     // =========================================================
 
@@ -921,7 +945,6 @@ public class AITranslator {
         return t.trim();
     }
 
-    // ★★★ 核心重写：极其严格的“强 | 分隔”解析器 ★★★
     public static List<String[]> parseTranslateOptions(String result) {
         List<String[]> items = new ArrayList<>();
         if (result == null || result.trim().isEmpty()) return items;
@@ -931,7 +954,6 @@ public class AITranslator {
         if (splitData.length >= 2) {
             optionsText = splitData[splitData.length - 1]; // 取最后一部分（下半部分）
         } else {
-            // 如果 AI 忘记写 ==========，靠寻找关键字来强行截断
             StringBuilder sb = new StringBuilder();
             boolean inOptions = false;
             for (String line : result.split("\n")) {
@@ -950,13 +972,11 @@ public class AITranslator {
 
         Set<String> seen = new HashSet<>();
         for (String rawLine : optionsText.split("\n")) {
-            // 严格限制只取前 4 个选项
             if (items.size() >= 4) break;
 
             String line = rawLine.trim().replace("*", "").replace("\uff5c", "|").replace("｜", "|");
             if (line.isEmpty()) continue;
             
-            // ★★★ 防御神技：如果这一行根本没有“|”号，说明它肯定是 AI 夹带的私货分析，直接跳过！ ★★★
             if (!line.contains("|")) continue;
 
             if (line.startsWith("|")) line = line.substring(1).trim();
@@ -983,7 +1003,6 @@ public class AITranslator {
 
             if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
             
-            // ★★★ 二次防御：如果外语部分竟然全是中文，那肯定是解析错位了，跳过 ★★★
             if (isChineseOnly(foreign)) continue;
 
             if (!seen.add(foreign.toLowerCase())) continue;
@@ -997,13 +1016,11 @@ public class AITranslator {
         String[] splitData = result.split("={3,}");
         if (splitData.length >= 2) return splitData[0].trim().replace("*", "");
         
-        // 如果 AI 忘记写 ==========
         String[] lines = result.split("\n");
         int firstOptionLine = -1;
         for (int i = 0; i < lines.length; i++) {
             String t = lines[i].trim().replace("*", "").replace("\uff5c", "|").replace("｜", "|");
             if (t.isEmpty()) continue;
-            // 只要碰到有 | 的行，或者是下半部分的标题，就认为是分析部分的结束
             if (t.contains("|") || t.contains("下半部分") || t.contains("选项区")) { firstOptionLine = i; break; }
         }
         if (firstOptionLine <= 0) return "";
@@ -1184,7 +1201,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model); body.put("max_tokens", 2000);
-            body.put("temperature", 0.7);
+            body.put("temperature", getTemperature());
             JSONArray msgs = new JSONArray();
             JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
             msgs.put(m); body.put("messages", msgs);
@@ -1198,7 +1215,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model); body.put("max_tokens", 2000);
-            body.put("temperature", 0.7);
+            body.put("temperature", getTemperature());
             body.put("messages", messages);
             return executeRequest(body);
         } catch (JSONException e) { throw new IOException("\u6784\u5efa\u5931\u8d25"); }
