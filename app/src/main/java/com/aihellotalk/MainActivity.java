@@ -657,6 +657,25 @@ public class MainActivity extends Activity {
         sendMessage();
     }
 
+    // ==========================================
+    // ★ 找回被遗漏的 runRoot 方法
+    // ==========================================
+    private String runRoot(String cmd) {
+        try {
+            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
+            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String l;
+            while ((l = r.readLine()) != null) {
+                sb.append(l).append("\n");
+            }
+            p.waitFor();
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private void deleteHTChatRoot(ChatSession s) {
         new Thread(() -> {
             try {
