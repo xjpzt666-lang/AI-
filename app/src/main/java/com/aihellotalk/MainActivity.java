@@ -61,7 +61,6 @@ public class MainActivity extends Activity {
     private String cachedModel = "";
     private SharedPreferences prefs;
 
-    // ★ 记忆系统 2.0
     private TextView memStatus;
     private volatile boolean claimDialogShowing = false;
 
@@ -78,9 +77,6 @@ public class MainActivity extends Activity {
         mainContent.setOrientation(LinearLayout.VERTICAL);
         mainContent.setBackgroundColor(Color.WHITE);
 
-        // ──────────────────────────────────────
-        // 顶部栏
-        // ──────────────────────────────────────
         LinearLayout topBar = new LinearLayout(this);
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setPadding(16, 48, 16, 16);
@@ -119,7 +115,6 @@ public class MainActivity extends Activity {
         topBar.addView(rightMenuBtn);
         mainContent.addView(topBar);
 
-        // ★ 记忆状态行（长按 = 记忆管理菜单）
         memStatus = new TextView(this);
         memStatus.setTag("memStatus");
         memStatus.setText("🧠 记忆：检测中...");
@@ -133,7 +128,6 @@ public class MainActivity extends Activity {
         });
         mainContent.addView(memStatus);
 
-        // 当前对话标题
         TextView chatTitle = new TextView(this);
         chatTitle.setText("当前: 未选择好友");
         chatTitle.setTag("chatTitle");
@@ -143,9 +137,6 @@ public class MainActivity extends Activity {
         chatTitle.setBackgroundColor(Color.parseColor("#E9ECEF"));
         mainContent.addView(chatTitle);
 
-        // ──────────────────────────────────────
-        // 消息滚动区
-        // ──────────────────────────────────────
         messageScrollView = new ScrollView(this);
         messageScrollView.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         messageScrollView.setPadding(16, 8, 16, 8);
@@ -154,9 +145,6 @@ public class MainActivity extends Activity {
         messageScrollView.addView(messageContainer);
         mainContent.addView(messageScrollView);
 
-        // ──────────────────────────────────────
-        // 图片预览条
-        // ──────────────────────────────────────
         imagePreviewBar = new LinearLayout(this);
         imagePreviewBar.setOrientation(LinearLayout.HORIZONTAL);
         imagePreviewBar.setPadding(8, 4, 8, 4);
@@ -188,9 +176,6 @@ public class MainActivity extends Activity {
         imagePreviewBar.addView(previewCloseBtn);
         mainContent.addView(imagePreviewBar);
 
-        // ──────────────────────────────────────
-        // 底部输入栏
-        // ──────────────────────────────────────
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setPadding(8, 6, 8, 6);
@@ -259,9 +244,6 @@ public class MainActivity extends Activity {
         mainContent.addView(bottomBar);
         drawerLayout.addView(mainContent);
 
-        // ──────────────────────────────────────
-        // 侧滑菜单
-        // ──────────────────────────────────────
         drawerContent = new LinearLayout(this);
         drawerContent.setOrientation(LinearLayout.VERTICAL);
         drawerContent.setPadding(20, 90, 20, 20);
@@ -278,7 +260,6 @@ public class MainActivity extends Activity {
         drawerTitle.setPadding(10, 0, 0, 30);
         drawerContent.addView(drawerTitle);
 
-        // ★ 异步加载，不卡开屏
         refreshDrawerList();
         drawerLayout.addView(drawerContent);
         setContentView(drawerLayout);
@@ -287,17 +268,11 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        // ★ 每次回到遥控器：检查是否需要认领记忆，并刷新状态行
         checkMemoryClaim();
     }
 
-    // =========================================================
-    // ★ 记忆系统 2.0：认领 / 状态显示 / 手动管理
-    // =========================================================
-
     private void checkMemoryClaim() {
         new Thread(() -> {
-            // ★ 性能修复：3 条 su 命令合并成 1 条
             String out = runRoot(
                     "cat /data/local/tmp/htai_mem_mode.txt 2>/dev/null; echo '<<<HTAI_SEP>>>';"
                     + " ls /data/data/com.hellotalk/files/htai_* 2>/dev/null; echo '<<<HTAI_SEP>>>';"
@@ -315,8 +290,6 @@ public class MainActivity extends Activity {
             boolean sandboxHas = !sandboxLs.isEmpty();
             boolean storeHas = !storeLs.isEmpty();
 
-            // 只有保险箱真的有货，认领才有意义；保险箱空 = 没东西可恢复
-            // ★ 补丁④：标记是 temp 时，即使沙箱是空的也不弹认领窗（尊重一次性模式的选择）
             final boolean pending = storeHas && !"temp".equals(marker)
                     && ("pending".equals(marker) || !sandboxHas);
             final String fMarker = marker;
@@ -326,7 +299,6 @@ public class MainActivity extends Activity {
                     updateMemStatus("pending");
                     showClaimDialog();
                 } else if ("pending".equals(fMarker)) {
-                    // 陈旧的 pending：保险箱已空，没东西可恢复 → 复位为全新主账号
                     new Thread(() ->
                             runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt")
                     ).start();
@@ -342,11 +314,11 @@ public class MainActivity extends Activity {
         TextView ms = (TextView) drawerLayout.findViewWithTag("memStatus");
         if (ms == null) return;
         if ("noroot".equals(marker)) {
-            ms.setText("⚠️ 记忆：遥控器未获得root权限，无法检测/切换记忆（去Magisk授权后重开）");
+            ms.setText("⚠️ 记忆：遥控器未获得root权限，无法检测/切换记忆");
             ms.setTextColor(Color.parseColor("#B02A37"));
             ms.setBackgroundColor(Color.parseColor("#FDECEE"));
         } else if ("temp".equals(marker)) {
-            ms.setText("🧠 记忆：一次性模式（功能照常，不备份，清数据即焚）｜长按管理");
+            ms.setText("🧠 记忆：一次性模式（功能照常，不备份，清数据即焚）");
             ms.setTextColor(Color.parseColor("#B45309"));
             ms.setBackgroundColor(Color.parseColor("#FFF7E6"));
         } else if ("pending".equals(marker)) {
@@ -387,7 +359,7 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 updateMemStatus("main");
                 refreshDrawerList();
-                Toast.makeText(MainActivity.this, "✅ 主账号记忆已恢复，HelloTalk 已重启，直接去聊吧", Toast.LENGTH_LONG).show();
+                Toast.makeText(MainActivity.this, "✅ 主账号记忆已恢复，HelloTalk 已重启", Toast.LENGTH_LONG).show();
             });
         }).start();
     }
@@ -397,14 +369,10 @@ public class MainActivity extends Activity {
             runRoot("echo temp > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
             runOnUiThread(() -> {
                 updateMemStatus("temp");
-                Toast.makeText(MainActivity.this, "已进入一次性模式：功能一样不少，只是不备份，清数据即焚", Toast.LENGTH_LONG).show();
+                Toast.makeText(MainActivity.this, "已进入一次性模式", Toast.LENGTH_LONG).show();
             });
         }).start();
     }
-
-    // =========================================================
-    // ★ 长按记忆状态栏 → 手动记忆管理
-    // =========================================================
 
     private void showMemoryMenu() {
         new AlertDialog.Builder(this)
@@ -432,7 +400,7 @@ public class MainActivity extends Activity {
             String storeLs = runRoot("ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
             boolean ok = storeLs != null && !storeLs.trim().isEmpty();
             runOnUiThread(() -> Toast.makeText(MainActivity.this,
-                    ok ? "✅ 保险箱已有备份" : "❌ 备份后保险箱仍是空的（沙箱没记忆，或遥控器没有root权限）",
+                    ok ? "✅ 保险箱已有备份" : "❌ 备份失败",
                     Toast.LENGTH_LONG).show());
         }).start();
     }
@@ -440,12 +408,7 @@ public class MainActivity extends Activity {
     private void confirmSwitchToTemp() {
         new AlertDialog.Builder(this)
                 .setTitle("切换一次性模式")
-                .setMessage("将依次执行：\n" +
-                        "1. 把主账号记忆备份进保险箱\n" +
-                        "2. 清空 HelloTalk 沙箱记忆（小号从零开始）\n" +
-                        "3. 标记为一次性模式，之后不备份\n\n" +
-                        "备份不成功会立刻中止，绝不丢主账号记忆。\n" +
-                        "小号聊完想回主账号：先清空HelloTalk数据，再长按记忆栏 →【切换主账号模式】。\n\n确定切换？")
+                .setMessage("将依次执行：\n1. 备份主账号记忆\n2. 清空沙箱\n3. 标记为一次性\n\n确定切换？")
                 .setPositiveButton("切换", (d, w) -> switchToTemp())
                 .setNegativeButton("取消", null)
                 .show();
@@ -465,7 +428,7 @@ public class MainActivity extends Activity {
                 boolean storeOk = storeLs != null && !storeLs.trim().isEmpty();
                 if (!storeOk) {
                     runOnUiThread(() -> Toast.makeText(MainActivity.this,
-                            "❌ 备份失败，已中止切换（防止主账号记忆丢失）。请检查遥控器root权限",
+                            "❌ 备份失败，已中止切换",
                             Toast.LENGTH_LONG).show());
                     return;
                 }
@@ -477,9 +440,7 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 updateMemStatus("temp");
                 refreshDrawerList();
-                Toast.makeText(MainActivity.this,
-                        "🕶 已进入一次性模式：小号从零开始，主账号记忆已封存进保险箱",
-                        Toast.LENGTH_LONG).show();
+                Toast.makeText(MainActivity.this, "🕶 已进入一次性模式", Toast.LENGTH_LONG).show();
             });
         }).start();
     }
@@ -504,10 +465,7 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 updateMemStatus("main");
                 refreshDrawerList();
-                Toast.makeText(MainActivity.this,
-                        restored ? "👑 已切回主账号模式，保险箱记忆已恢复，HelloTalk已重启"
-                                 : "👑 已切回主账号模式（沙箱记忆本来就在），HelloTalk已重启",
-                        Toast.LENGTH_LONG).show();
+                Toast.makeText(MainActivity.this, "👑 已切回主账号模式", Toast.LENGTH_LONG).show();
             });
         }).start();
     }
@@ -519,12 +477,9 @@ public class MainActivity extends Activity {
             String store = runRoot("ls -la /data/local/tmp/htai_store/ 2>/dev/null | grep htai");
 
             StringBuilder sb = new StringBuilder();
-            sb.append("【模式标记】\n")
-              .append(marker == null ? "(读取失败：遥控器没有root权限)" : (marker.trim().isEmpty() ? "(空)" : marker.trim()))
-              .append("\n\n【沙箱 /data/data/com.hellotalk/files】\n")
-              .append(sandbox == null ? "(读取失败)" : (sandbox.trim().isEmpty() ? "(没有htai文件)" : sandbox.trim()))
-              .append("\n\n【保险箱 /data/local/tmp/htai_store】\n")
-              .append(store == null ? "(读取失败)" : (store.trim().isEmpty() ? "(没有htai文件)" : store.trim()));
+            sb.append("【模式标记】\n").append(marker == null ? "读取失败" : marker.trim())
+              .append("\n\n【沙箱】\n").append(sandbox == null ? "读取失败" : sandbox.trim())
+              .append("\n\n【保险箱】\n").append(store == null ? "读取失败" : store.trim());
 
             runOnUiThread(() -> new AlertDialog.Builder(MainActivity.this)
                     .setTitle("记忆文件诊断")
@@ -533,8 +488,6 @@ public class MainActivity extends Activity {
                     .show());
         }).start();
     }
-
-    // =========================================================
 
     private void showPopupMenu(View v) {
         PopupMenu popup = new PopupMenu(this, v);
@@ -574,11 +527,13 @@ public class MainActivity extends Activity {
             String key = prefs.getString("api_key", "");
             String url = prefs.getString("api_url", "https://api.openai.com/v1/chat/completions");
             String mList = prefs.getString("model_list", "");
+            String tempStr = prefs.getString("temperature", "0.7");
             String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
                     + "api_key=" + key + "\n"
                     + "api_url=" + url + "\n"
                     + "model=" + newModel + "\n"
                     + "model_list=" + mList + "\n"
+                    + "temperature=" + tempStr + "\n"
                     + "EOF\n";
             runRoot(cfg);
             runRoot("chmod 644 /data/local/tmp/htai_config.txt");
@@ -702,22 +657,6 @@ public class MainActivity extends Activity {
         sendMessage();
     }
 
-    private String runRoot(String cmd) {
-        try {
-            Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
-            BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream()));
-            StringBuilder sb = new StringBuilder();
-            String l;
-            while ((l = r.readLine()) != null) {
-                sb.append(l).append("\n");
-            }
-            p.waitFor();
-            return sb.toString().trim();
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
     private void deleteHTChatRoot(ChatSession s) {
         new Thread(() -> {
             try {
@@ -761,9 +700,6 @@ public class MainActivity extends Activity {
         }).start();
     }
 
-    /**
-     * ★ 异步加载好友列表，不卡界面
-     */
     private void refreshDrawerList() {
         new Thread(() -> {
             final List<ChatSession> htFriends = new ArrayList<>();
@@ -830,9 +766,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /**
-     * ★ 聊天记录读取也在后台线程，点击好友不再卡
-     */
     private void loadHTMessagesRoot(String chatId) {
         messageContainer.removeAllViews();
         new Thread(() -> {
