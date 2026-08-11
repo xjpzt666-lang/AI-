@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 
 public class SettingsActivity extends Activity {
 
-    private EditText etKey, etUrl, etModel;
+    private EditText etKey, etUrl, etModel, etTemperature;
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
     private Button btnFetch, btnSave, btnTest;
 
@@ -58,7 +58,7 @@ public class SettingsActivity extends Activity {
         etUrl = edit(prefs.getString("api_url", "https://www.wintoken.dev"));
         ll.addView(etUrl);
 
-        btnFetch = btn("📡 获取模型列表");
+        btnFetch = btn("获取模型列表");
         btnFetch.setOnClickListener(v -> fetchModels());
         ll.addView(btnFetch);
 
@@ -67,43 +67,42 @@ public class SettingsActivity extends Activity {
         etModel.setHint("先获取后选择，或手动输入");
         ll.addView(etModel);
 
+        ll.addView(lab("Temperature (模型发散温度):"));
+        etTemperature = edit(prefs.getString("temperature", "0.7"));
+        etTemperature.setHint("0.0 到 2.0 之间，推荐 0.7");
+        ll.addView(etTemperature);
+
         ll.addView(div());
 
-        // ★ 接收翻译 Prompt（外语→中文）
-        ll.addView(lab("🇨🇳 接收翻译 Prompt (外语→中文):"));
+        ll.addView(lab("接收翻译 Prompt (外语→中文):"));
         etPromptZH = bigEdit(prefs.getString("prompt_zh", ""));
         ll.addView(etPromptZH);
 
-        // ★ 英语 Prompt
-        ll.addView(lab("🇬🇧 英语 Prompt (发送):"));
+        ll.addView(lab("英语 Prompt (发送):"));
         etPromptEN = bigEdit(prefs.getString("prompt_en", ""));
         ll.addView(etPromptEN);
 
-        // ★ 俄语 Prompt
-        ll.addView(lab("🇷🇺 俄语 Prompt (发送):"));
+        ll.addView(lab("俄语 Prompt (发送):"));
         etPromptRU = bigEdit(prefs.getString("prompt_ru", ""));
         ll.addView(etPromptRU);
 
-        // ★ 乌克兰语 Prompt
-        ll.addView(lab("🇺🇦 乌克兰语 Prompt (发送):"));
+        ll.addView(lab("乌克兰语 Prompt (发送):"));
         etPromptUK = bigEdit(prefs.getString("prompt_uk", ""));
         ll.addView(etPromptUK);
 
-        // ★★★ 新增：韩语 Prompt ★★★
-        ll.addView(lab("🇰🇷 韩语 Prompt (发送):"));
+        ll.addView(lab("韩语 Prompt (发送):"));
         etPromptKO = bigEdit(prefs.getString("prompt_ko", ""));
         ll.addView(etPromptKO);
 
-        // ★★★ 新增：西班牙语 Prompt ★★★
-        ll.addView(lab("🇪🇸 西班牙语 Prompt (发送):"));
+        ll.addView(lab("西班牙语 Prompt (发送):"));
         etPromptES = bigEdit(prefs.getString("prompt_es", ""));
         ll.addView(etPromptES);
 
-        btnSave = btn("💾 保存全部配置");
+        btnSave = btn("保存全部配置");
         btnSave.setOnClickListener(v -> saveAll());
         ll.addView(btnSave);
 
-        btnTest = btn("🧪 测试翻译");
+        btnTest = btn("测试翻译");
         btnTest.setOnClickListener(v -> testTranslate());
         ll.addView(btnTest);
 
@@ -187,9 +186,6 @@ public class SettingsActivity extends Activity {
         return def;
     }
 
-    /**
-     * ★ 支持 KO### 和 ES### 分段读取
-     */
     private String readPrompt(String section) {
         String all = runRoot("cat /data/local/tmp/htai_prompts.txt 2>/dev/null");
         if (all == null || all.isEmpty()) return "";
@@ -228,7 +224,7 @@ public class SettingsActivity extends Activity {
                 List<String> models = autoFetchModels(key, baseUrl);
                 runOnUiThread(() -> {
                     btnFetch.setEnabled(true);
-                    btnFetch.setText("📡 获取模型列表");
+                    btnFetch.setText("获取模型列表");
                     if (models.isEmpty()) {
                         new AlertDialog.Builder(SettingsActivity.this)
                                 .setTitle("获取失败")
@@ -242,7 +238,7 @@ public class SettingsActivity extends Activity {
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     btnFetch.setEnabled(true);
-                    btnFetch.setText("📡 获取模型列表");
+                    btnFetch.setText("获取模型列表");
                     new AlertDialog.Builder(SettingsActivity.this)
                             .setTitle("获取失败")
                             .setMessage("错误: " + e.getMessage() + "\n\n你可以手动输入模型名。")
@@ -382,23 +378,33 @@ public class SettingsActivity extends Activity {
         String en = etPromptEN.getText().toString().trim();
         String ru = etPromptRU.getText().toString().trim();
         String uk = etPromptUK.getText().toString().trim();
-        // ★ 新增：读取韩语和西班牙语 Prompt
         String ko = etPromptKO.getText().toString().trim();
         String es = etPromptES.getText().toString().trim();
+
+        String tempStr = etTemperature.getText().toString().trim();
+        if (tempStr.isEmpty()) {
+            tempStr = "0.7";
+        }
+        try {
+            Double.parseDouble(tempStr);
+        } catch (NumberFormatException e) {
+            tempStr = "0.7";
+        }
 
         SharedPreferences.Editor editor = prefs.edit();
         editor.putString("api_key", key);
         editor.putString("api_url", url);
         editor.putString("model", mdl);
+        editor.putString("temperature", tempStr);
         editor.putString("prompt_zh", zh);
         editor.putString("prompt_en", en);
         editor.putString("prompt_ru", ru);
         editor.putString("prompt_uk", uk);
-        // ★ 新增：保存韩语和西班牙语到 SharedPreferences
         editor.putString("prompt_ko", ko);
         editor.putString("prompt_es", es);
         editor.apply();
 
+        String finalTempStr = tempStr;
         new Thread(() -> {
             try {
                 String modelList = prefs.getString("model_list", "");
@@ -407,10 +413,10 @@ public class SettingsActivity extends Activity {
                         + "api_url=" + url + "\n"
                         + "model=" + mdl + "\n"
                         + "model_list=" + modelList + "\n"
+                        + "temperature=" + finalTempStr + "\n"
                         + "EOF\n";
                 runRoot(cfg);
 
-                // ★ 新增 KO### 和 ES### 分段
                 String prompts = "cat > /data/local/tmp/htai_prompts.txt << 'EOF'\n"
                         + "###ZH###\n" + zh + "\n"
                         + "###EN###\n" + en + "\n"
@@ -423,26 +429,23 @@ public class SettingsActivity extends Activity {
 
                 runRoot("chmod 644 /data/local/tmp/htai_config.txt /data/local/tmp/htai_prompts.txt");
 
-                // ★ 兼容处理：如果 AITranslator.savePrompts 只接受4个参数，用反射或直接调用6参版本
                 try {
-                    // 尝试调用6参数版本（如果 AITranslator 已更新）
                     java.lang.reflect.Method m = AITranslator.class.getMethod("savePrompts", String.class, String.class, String.class, String.class, String.class, String.class);
                     m.invoke(null, zh, en, ru, uk, ko, es);
                 } catch (NoSuchMethodException e) {
-                    //  fallback：只传原来的4个参数
                     AITranslator.savePrompts(zh, en, ru, uk);
                 }
 
                 runOnUiThread(() -> {
                     btnSave.setEnabled(true);
-                    btnSave.setText("💾 保存全部配置");
-                    toast("✅ 已保存！强制停止 HelloTalk 后重开");
+                    btnSave.setText("保存全部配置");
+                    toast("配置已保存，请强制停止 HelloTalk 后重开生效");
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     btnSave.setEnabled(true);
-                    btnSave.setText("💾 保存全部配置");
-                    toast("❌ " + e.getMessage());
+                    btnSave.setText("保存全部配置");
+                    toast("保存失败: " + e.getMessage());
                 });
             }
         }).start();
@@ -469,18 +472,18 @@ public class SettingsActivity extends Activity {
                 String result = AITranslator.translateTest("你好世界", "English");
                 runOnUiThread(() -> {
                     btnTest.setEnabled(true);
-                    btnTest.setText("🧪 测试翻译");
+                    btnTest.setText("测试翻译");
                     if ("你好世界".equals(result)) {
-                        toast("❌ 未翻译");
+                        toast("未翻译");
                     } else {
-                        toast("✅ " + result);
+                        toast("翻译结果: " + result);
                     }
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     btnTest.setEnabled(true);
-                    btnTest.setText("🧪 测试翻译");
-                    toast("❌ " + e.getMessage());
+                    btnTest.setText("测试翻译");
+                    toast("翻译失败: " + e.getMessage());
                 });
             }
         }).start();
