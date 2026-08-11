@@ -1184,6 +1184,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model); body.put("max_tokens", 2000);
+            body.put("temperature", 0.7);
             JSONArray msgs = new JSONArray();
             JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
             msgs.put(m); body.put("messages", msgs);
@@ -1196,7 +1197,9 @@ public class AITranslator {
         if (client == null) throw new IOException("\u672a\u521d\u59cb\u5316");
         try {
             JSONObject body = new JSONObject();
-            body.put("model", model); body.put("max_tokens", 2000); body.put("messages", messages);
+            body.put("model", model); body.put("max_tokens", 2000);
+            body.put("temperature", 0.7);
+            body.put("messages", messages);
             return executeRequest(body);
         } catch (JSONException e) { throw new IOException("\u6784\u5efa\u5931\u8d25"); }
     }
