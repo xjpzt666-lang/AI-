@@ -656,7 +656,7 @@ public class ChatHook {
                             try { t = AITranslator.toChinese(ft, chatId); }
                             catch (Exception fe) {
                                 String m = fe.getMessage() == null ? "" : fe.getMessage();
-                                if (!m.contains("Key\u672a\u914d\u7f6e") && !m.contains("\u672a\u521d\u59cb\u5316")) {
+                                if (!m.contains("Key未配置") && !m.contains("未初始化")) {
                                     try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
                                     t = AITranslator.toChinese(ft, chatId);
                                 }
@@ -808,7 +808,11 @@ public class ChatHook {
                     boolean ir = ftt.equals(lr);
                     if (ir) { rc++; chatRetryCountMap.put(cs, rc); }
                     else { chatRequestMap.put(cs, ftt); chatRetryCountMap.put(cs, 0); }
-                    String fpt = ftt; if (ir) fpt = ftt + "\n\n\u3010\u7cfb\u7edf\u5f3a\u5236\u6307\u4ee4\u3011\uff1a\u7528\u6237\u8981\u6c42\u91cd\u65b0\u751f\u6210\u3002\u8bf7\u7ed9\u51fa\u5b8c\u5168\u4e0d\u540c\u7684\u8868\u8fbe\u65b9\u5f0f\uff01";
+                    
+                    // ★ 修改：移除导致语感突变的“完全不同的表达方式”隐藏指令，仅提醒AI重新生成，保持原有松弛基调
+                    String fpt = ftt; 
+                    if (ir) fpt = ftt + "\n\n【系统提示】：用户请求重新生成。请严格保持设定的松弛、自然人设，提供其他符合该语境的翻译选项。";
+                    
                     Integer lsc = chatShortCountMap.get(cs);
                     if (lsc != null && !ftt.contains("[PURE_BRACKET_MODE]")) {
                         if (lsc > 0) fpt += "\n\u3010\u7cfb\u7edf\u683c\u5f0f\u8b66\u544a\u3011\uff1a\u4e0a\u6b21\u89e3\u6790\u5931\u8d25\uff01\u8bf7\u4e25\u683c\u9075\u5b88 prompt \u8981\u6c42\uff0c\u5fc5\u987b\u4f7f\u7528 ========== \u5206\u9694\u4e0a\u4e0b\u534a\u90e8\u5206\uff0c\u5e76\u5728\u4e0b\u534a\u90e8\u5206\u4e25\u683c\u8f93\u51fa 4 \u4e2a\u7248\u672c\uff01";
@@ -870,10 +874,6 @@ public class ChatHook {
         }
     }
 
-    // =========================================================
-    // ★★★ 重写：弹窗布局修复 ★★★
-    // =========================================================
-
     private static void showPicker(EditText edit, Button btn, String result, String origChinese, String pn) {
         android.content.Context ctx = edit.getContext();
         String at = AITranslator.extractAnalysis(result);
@@ -897,7 +897,6 @@ public class ChatHook {
             root.addView(header);
 
             android.widget.ScrollView ts = new android.widget.ScrollView(ctx);
-            // 微调：如果存在分析区，让下方的选项区占的比例更大一点点
             android.widget.LinearLayout.LayoutParams tsLp = new android.widget.LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
             tsLp.setMargins(0, 0, 0, 16);
@@ -921,7 +920,6 @@ public class ChatHook {
         root.addView(optHeader);
 
         android.widget.ScrollView bs = new android.widget.ScrollView(ctx);
-        // 微调：下部占位比例从 2.2f 提升到 2.5f，让卡片有更多空间
         android.widget.LinearLayout.LayoutParams bsLp = new android.widget.LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, (at != null && !at.isEmpty()) ? 2.5f : 1.0f);
         bs.setLayoutParams(bsLp);
@@ -1005,7 +1003,6 @@ public class ChatHook {
         dialog.show();
         if (dialog.getWindow() != null) {
             android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
-            // ★★★ 这里将原来的 0.72 (72%) 改成了 0.88 (88%)，大幅增加弹窗高度 ★★★[cite: 5]
             int h = (int) (dm.heightPixels * 0.88);
             dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, h);
         }
