@@ -25,8 +25,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -757,12 +755,20 @@ public class ChatHook {
                     || text.startsWith("一次性:")
                     || text.startsWith("[一次性]");
 
-            if (oneTime) {
-                text = text.replaceFirst("^(一次性：|一次性:|\$$一次性\$$)", "").trim();
-                if (text.isEmpty()) return;
-            } else {
-                Matcher m = Pattern.compile("[（(][^（）()]*一次性[^（）()]*[）)]").matcher(text);
-                if (m.find()) {
+            if (text.startsWith("一次性：")) {
+                text = text.substring("一次性：".length()).trim();
+            } else if (text.startsWith("一次性:")) {
+                text = text.substring("一次性:".length()).trim();
+            } else if (text.startsWith("[一次性]")) {
+                text = text.substring("[一次性]".length()).trim();
+            }
+
+            if (text.isEmpty()) return;
+
+            if (!oneTime) {
+                int p1 = text.indexOf("（");
+                int p2 = text.indexOf("）");
+                if (p1 >= 0 && p2 > p1 && text.substring(p1, p2 + 1).contains("一次性")) {
                     oneTime = true;
                 }
             }
