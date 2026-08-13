@@ -1243,6 +1243,10 @@ public class AITranslator {
     }
 
     public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
+        return translateWithHistory(text, langCode, chatId, false);
+    }
+
+    public static String translateWithHistory(String text, String langCode, String chatId, boolean retry) throws IOException {
         maybeRecheckMode();
         try {
             JSONArray messages = new JSONArray();
@@ -1258,12 +1262,23 @@ public class AITranslator {
             String spanishDirective = "";
             if ("es".equals(langCode)) spanishDirective = getSpanishRegionDirective(null, 0, chatId);
 
-            String formatProtocol = "\n\n【强制输出格式】\n"
-                    + "上半部分：按照你的prompt中的要求进行自由分析，不限制字数。\n"
-                    + "然后单独一行输出：==========\n"
-                    + "下半部分：必须输出4个版本。\n"
-                    + "每个版本必须严格使用这个格式：外语|中文大意|语气标签\n"
-                    + "禁止输出序号，禁止代码块，禁止Markdown表格，禁止额外解释，禁止警告。\n";
+            String formatProtocol;
+            if (retry) {
+                formatProtocol = "\n\n【重新生成模式】\n"
+                        + "用户点击了“换一批”。这次不要输出上半部分分析。\n"
+                        + "直接输出一行==========，然后严格输出4个新版本。\n"
+                        + "每个版本必须严格使用这个格式：外语|中文大意|语气标签\n"
+                        + "禁止输出序号，禁止代码块，禁止Markdown表格，禁止额外解释，禁止警告。\n"
+                        + "选项优先：必须完整输出4个版本。\n";
+            } else {
+                formatProtocol = "\n\n【强制输出格式】\n"
+                        + "上半部分：按照你的prompt中的要求进行自由分析，不限制字数。\n"
+                        + "然后单独一行输出：==========\n"
+                        + "下半部分：必须输出4个版本。\n"
+                        + "每个版本必须严格使用这个格式：外语|中文大意|语气标签\n"
+                        + "禁止输出序号，禁止代码块，禁止Markdown表格，禁止额外解释，禁止警告。\n"
+                        + "选项优先：如果发现输出空间不足，压缩分析，必须保证4个选项完整输出。\n";
+            }
 
             String contextRule = "\n【上下文使用规则】\n"
                     + "历史记录仅用于理解对话语义和对方背景。\n"
@@ -1299,7 +1314,11 @@ public class AITranslator {
     }
 
     public static String translateForPicker(String text, String langCode, String chatId) throws IOException {
-        return translateWithHistory(text, langCode, chatId);
+        return translateWithHistory(text, langCode, chatId, false);
+    }
+
+    public static String translateForPicker(String text, String langCode, String chatId, boolean retry) throws IOException {
+        return translateWithHistory(text, langCode, chatId, retry);
     }
 
     private static String fallbackToPureTextRequest(JSONArray originalMessages) throws IOException {
