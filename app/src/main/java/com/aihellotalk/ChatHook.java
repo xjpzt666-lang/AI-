@@ -50,7 +50,6 @@ public class ChatHook {
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
     private static final ConcurrentHashMap<String, String> chatRequestMap = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
-    private static final ConcurrentHashMap<String, Integer> chatShortCountMap = new ConcurrentHashMap<>();
 
     private static final Set<String> reverseTranslatedMsgIds = ConcurrentHashMap.newKeySet();
     private static final ConcurrentHashMap<String, Integer> reverseRetryMap = new ConcurrentHashMap<>();
@@ -219,10 +218,6 @@ public class ChatHook {
         return null;
     }
 
-    // =========================================================
-    // Stealth hooks
-    // =========================================================
-
     private static void hookUltimateStealth(ClassLoader cl) {
         try {
             Class<?> tc = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
@@ -257,10 +252,6 @@ public class ChatHook {
             });
         } catch (Throwable ignored) {}
     }
-
-    // =========================================================
-    // 渲染钩子
-    // =========================================================
 
     private static void hookTextViewRender(ClassLoader cl) {
         if (htTextViewClass == null) return;
@@ -338,10 +329,6 @@ public class ChatHook {
         catch (Throwable ignored) {}
     }
 
-    // =========================================================
-    // Bubble flip
-    // =========================================================
-
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
         XposedHelpers.findAndHookMethod(HT_TEXT_VIEW_CLASS, cl, "onTouchEvent", MotionEvent.class,
             new XC_MethodHook() {
@@ -371,10 +358,6 @@ public class ChatHook {
                 }
             });
     }
-
-    // =========================================================
-    // Start chat
-    // =========================================================
 
     private static void hookStartChat(ClassLoader cl) throws Exception {
         XposedHelpers.findAndHookMethod("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl,
@@ -424,10 +407,6 @@ public class ChatHook {
             }
         });
     }
-
-    // =========================================================
-    // Image hooks
-    // =========================================================
 
     private static void hookImageRenderLayer(ClassLoader cl) {
         try {
@@ -505,10 +484,6 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // =========================================================
-    // Receive hook
-    // =========================================================
-
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
         XposedHelpers.findAndHookMethod(hm, "getMessageContent", Class.class, boolean.class, new XC_MethodHook() {
@@ -558,7 +533,6 @@ public class ChatHook {
                     try {
                         Object ri = invokeQuiet(mGetReplyInfo, msg);
                         if (ri != null) {
-                            log("replyInfo\u7c7b\u578b: " + ri.getClass().getName());
                             Object rIs = invokeQuiet(mIsSender, ri);
                             boolean rIm = (rIs instanceof Boolean) && (Boolean) rIs;
                             Object rmt = invokeQuiet(mGetMsgType, ri);
@@ -582,13 +556,15 @@ public class ChatHook {
                         }
                     } catch (Exception ignored) {}
 
+                    final boolean oneTime = isMine && text != null && AITranslator.consumeSuppressSent(text);
+
                     final boolean isPureSymbol = !AITranslator.hasAnyLetterOrDigit(text);
                     boolean isNew = recordedMsgIds.add(chatId + "_" + mid);
                     if (isNew) {
                         final String fm = mid, ft = text, fq = quotedText; final long fst = st; final boolean fmn = isMine;
                         historyExecutor.execute(() -> {
-                            if (fmn) AITranslator.appendHistory(chatId, fm, "assistant", ft, fst, fq);
-                            else AITranslator.appendHistory(chatId, fm, "user", ft, fst, fq);
+                            if (fmn) AITranslator.appendHistory(chatId, fm, "assistant", ft, fst, fq, oneTime);
+                            else AITranslator.appendHistory(chatId, fm, "user", ft, fst, fq, false);
                         });
                     }
 
@@ -673,10 +649,6 @@ public class ChatHook {
             }
         });
     }
-
-    // =========================================================
-    // Input button
-    // =========================================================
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
         Class<?> bc = XposedHelpers.findClass("com.hellotalk.chat.ui.ChatInputBoxView", cl);
@@ -778,6 +750,18 @@ public class ChatHook {
         btn.setOnClickListener(v -> {
             String text = edit.getText().toString().trim();
             if (text.isEmpty() || !AITranslator.isChineseOnly(text)) return;
+
+            boolean oneTime = text.startsWith("一次性：")
+                    || text.startsWith("一次性:")
+                    || text.startsWith("[一次性]");
+
+            if (oneTime) {
+                text = text.replaceFirst("^(一次性：|一次性:|\$$一次性\$$)", "").trim();
+                if (text.isEmpty()) return;
+            }
+
+            final boolean oneTimeFinal = oneTime;
+
             String cid = currentChatId;
             if (cid == null || cid.isEmpty() || "0".equals(cid) || "null".equals(cid)) {
                 Toast.makeText(edit.getContext(), "\u26a0\ufe0f \u4f1a\u8bdd\u5c1a\u672a\u5c31\u7eea\uff0c\u8bf7\u9000\u51fa\u804a\u5929\u91cd\u65b0\u8fdb\u5165\u540e\u518d\u8bd5", Toast.LENGTH_SHORT).show(); return;
@@ -804,31 +788,39 @@ public class ChatHook {
                 try {
                     String tl = determineSmartTargetLang(nats, nls, cs);
                     if (cts == 1) AITranslator.registerFriend(cs, pns, tl, nats);
-                    String lr = chatRequestMap.get(cs); int rc = chatRetryCountMap.getOrDefault(cs, 0);
+                    String lr = chatRequestMap.get(cs);
                     boolean ir = ftt.equals(lr);
-                    if (ir) { rc++; chatRetryCountMap.put(cs, rc); }
-                    else { chatRequestMap.put(cs, ftt); chatRetryCountMap.put(cs, 0); }
-                    
-                    // ★ 修改：移除导致语感突变的“完全不同的表达方式”隐藏指令，仅提醒AI重新生成，保持原有松弛基调
-                    String fpt = ftt; 
-                    if (ir) fpt = ftt + "\n\n【系统提示】：用户请求重新生成。请严格保持设定的松弛、自然人设，提供其他符合该语境的翻译选项。";
-                    
-                    Integer lsc = chatShortCountMap.get(cs);
-                    if (lsc != null && !ftt.contains("[PURE_BRACKET_MODE]")) {
-                        if (lsc > 0) fpt += "\n\u3010\u7cfb\u7edf\u683c\u5f0f\u8b66\u544a\u3011\uff1a\u4e0a\u6b21\u89e3\u6790\u5931\u8d25\uff01\u8bf7\u4e25\u683c\u9075\u5b88 prompt \u8981\u6c42\uff0c\u5fc5\u987b\u4f7f\u7528 ========== \u5206\u9694\u4e0a\u4e0b\u534a\u90e8\u5206\uff0c\u5e76\u5728\u4e0b\u534a\u90e8\u5206\u4e25\u683c\u8f93\u51fa 4 \u4e2a\u7248\u672c\uff01";
-                        else fpt += "\n\u3010\u7cfb\u7edf\u683c\u5f0f\u8b66\u544a\u3011\uff1a\u4e0a\u6b21\u672a\u8bc6\u522b\u5230\u9009\u9879\uff01\u8bf7\u4e25\u683c\u9075\u5b88 prompt \u8981\u6c42\uff0c\u5fc5\u987b\u4f7f\u7528 ========== \u5206\u9694\u4e0a\u4e0b\u534a\u90e8\u5206\uff0c\u5e76\u5728\u4e0b\u534a\u90e8\u5206\u4e25\u683c\u8f93\u51fa 4 \u4e2a\u7248\u672c\uff01";
+                    if (ir) {
+                        chatRetryCountMap.put(cs, chatRetryCountMap.getOrDefault(cs, 0) + 1);
+                    } else {
+                        chatRequestMap.put(cs, ftt);
+                        chatRetryCountMap.put(cs, 0);
                     }
+
+                    String fpt = ftt;
+                    if (ir) {
+                        fpt = ftt + "\n\n【系统提示】：用户请求重新生成。请严格保持设定的松弛、自然人设，提供其他符合该语境的翻译选项。";
+                    }
+
                     String result = AITranslator.translateForPicker(fpt, tl, cs);
-                    if (!ftt.contains("[PURE_BRACKET_MODE]")) {
-                        int oc = AITranslator.parseTranslateOptions(result).size();
-                        if (oc >= 2) chatShortCountMap.remove(cs); else chatShortCountMap.put(cs, oc);
-                    }
-                    isTranslatingAPI = false; String fr = result;
-                    edit.post(() -> { btn.setEnabled(true); btn.setText("\u8bd1"); btn.setAlpha(0.92f); showPicker(edit, btn, fr, rci, pns); });
+                    isTranslatingAPI = false;
+                    String fr = result;
+                    edit.post(() -> {
+                        btn.setEnabled(true);
+                        btn.setText("\u8bd1");
+                        btn.setAlpha(0.92f);
+                        showPicker(edit, btn, fr, rci, pns, oneTimeFinal);
+                    });
                 } catch (Exception e) {
-                    isTranslatingAPI = false; chatRequestMap.remove(cs); chatRetryCountMap.put(cs, 0);
-                    edit.post(() -> { btn.setEnabled(true); btn.setText("\u8bd1"); btn.setAlpha(0.88f);
-                        Toast.makeText(edit.getContext(), "\u26a0\ufe0f \u7ffb\u8bd1\u5931\u8d25: " + (e.getMessage() != null ? e.getMessage() : "\u672a\u77e5\u9519\u8bef"), Toast.LENGTH_LONG).show(); });
+                    isTranslatingAPI = false;
+                    chatRequestMap.remove(cs);
+                    chatRetryCountMap.put(cs, 0);
+                    edit.post(() -> {
+                        btn.setEnabled(true);
+                        btn.setText("\u8bd1");
+                        btn.setAlpha(0.88f);
+                        Toast.makeText(edit.getContext(), "\u26a0\ufe0f \u7ffb\u8bd1\u5931\u8d25: " + (e.getMessage() != null ? e.getMessage() : "\u672a\u77e5\u9519\u8bef"), Toast.LENGTH_LONG).show();
+                    });
                 }
             }).start();
         });
@@ -874,12 +866,26 @@ public class ChatHook {
         }
     }
 
-    private static void showPicker(EditText edit, Button btn, String result, String origChinese, String pn) {
+    private static void showPicker(EditText edit, Button btn, String result, String origChinese, String pn, boolean oneTime) {
         android.content.Context ctx = edit.getContext();
         String at = AITranslator.extractAnalysis(result);
         List<String[]> items = AITranslator.parseTranslateOptions(result);
+
         if (items.isEmpty()) {
-            Toast.makeText(ctx, "\u26a0\ufe0f AI \u8fd4\u56de\u683c\u5f0f\u5f02\u5e38\uff0c\u8bf7\u70b9\u3010\u8bd1\u3011\u91cd\u8bd5", Toast.LENGTH_LONG).show();
+            AITranslator.dumpDebug("picker_fail", result);
+
+            boolean refused = AITranslator.isRefusalResponse(result);
+            String showText = result == null ? "" : result.trim();
+            if (showText.length() > 800) {
+                showText = showText.substring(0, 800) + "\n\n...";
+            }
+
+            new android.app.AlertDialog.Builder(ctx)
+                    .setTitle(refused ? "AI 拒绝或触发安全策略" : "AI 未按格式返回")
+                    .setMessage(showText)
+                    .setPositiveButton("重试", (d, w) -> edit.post(() -> btn.performClick()))
+                    .setNegativeButton("取消", null)
+                    .show();
             return;
         }
 
@@ -980,7 +986,14 @@ public class ChatHook {
             }
 
             card.setOnClickListener(v2 -> {
-                AITranslator.rememberDraft(foreign, origChinese);
+                String cleanChinese = AITranslator.stripMetaInstructions(origChinese);
+
+                if (oneTime) {
+                    AITranslator.suppressSentForeign(foreign);
+                } else if (cleanChinese != null && !cleanChinese.isEmpty()) {
+                    AITranslator.rememberDraft(foreign, cleanChinese);
+                }
+
                 edit.setText(foreign);
                 edit.setSelection(foreign.length());
                 try {
@@ -989,6 +1002,7 @@ public class ChatHook {
                 } catch (Exception ignored) {}
                 dialog.dismiss();
             });
+
             card.setOnLongClickListener(v2 -> {
                 try {
                     ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
@@ -997,6 +1011,7 @@ public class ChatHook {
                 } catch (Exception ignored) {}
                 return true;
             });
+
             cont.addView(card);
         }
 
