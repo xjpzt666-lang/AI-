@@ -3,6 +3,8 @@ package com.aihellotalk;
 import android.content.ClipData;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.Editable;
 import android.text.Layout;
 import android.text.SpannableStringBuilder;
@@ -68,6 +70,16 @@ public class ChatHook {
 
     private static final String HT_TEXT_VIEW_CLASS = "com.hellotalk.lib.ui.text.view.HTCompatTextView";
     private static Class<?> htTextViewClass = null;
+
+    private static final Handler uiHandler = new Handler(Looper.getMainLooper());
+
+    private static volatile String pendingSelectedForeign = null;
+    private static volatile String lastPickerResult = null;
+    private static volatile String lastPickerOrig = null;
+    private static volatile String lastPickerPns = null;
+    private static volatile boolean lastPickerOneTime = false;
+    private static volatile Button versionButton = null;
+    private static volatile EditText versionEdit = null;
 
     private static class RenderedImageInfo {
         final String path, url, compressedUrl; final long ts;
@@ -522,6 +534,14 @@ public class ChatHook {
                         else return;
                     }
 
+                    if (isMine && pendingSelectedForeign != null && pendingSelectedForeign.equals(text)) {
+                        pendingSelectedForeign = null;
+                        lastPickerResult = null;
+                        uiHandler.post(() -> {
+                            if (versionButton != null) versionButton.setVisibility(View.GONE);
+                        });
+                    }
+
                     Object mio = invokeQuiet(mGetMsgId, msg);
                     String mid = (mio != null) ? String.valueOf(mio) : null;
                     if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
@@ -714,10 +734,44 @@ public class ChatHook {
         if ("HT_AI_BTN".equals(String.valueOf(layout.getTag()))) return;
 
         Button btn = new Button(layout.getContext());
-        btn.setText("\u8bd1"); btn.setTextSize(12f); btn.setAllCaps(false); btn.setPadding(12, 4, 12, 4);
-        GradientDrawable bg = new GradientDrawable(); bg.setColor(Color.parseColor("#CC333333")); bg.setCornerRadius(8f);
-        btn.setBackground(bg); btn.setTextColor(Color.parseColor("#FFFFFFFF")); btn.setAlpha(0.95f);
-        btn.setVisibility(View.GONE); layout.addView(btn, 0); layout.setTag("HT_AI_BTN");
+        btn.setText("\u8bd1");
+        btn.setTextSize(12f);
+        btn.setAllCaps(false);
+        btn.setPadding(12, 4, 12, 4);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.parseColor("#CC333333"));
+        bg.setCornerRadius(8f);
+        btn.setBackground(bg);
+        btn.setTextColor(Color.parseColor("#FFFFFFFF"));
+        btn.setAlpha(0.95f);
+        btn.setVisibility(View.GONE);
+        layout.addView(btn, 0);
+        layout.setTag("HT_AI_BTN");
+
+        Button verBtn = new Button(layout.getContext());
+        verBtn.setText("版本");
+        verBtn.setTextSize(12f);
+        verBtn.setAllCaps(false);
+        verBtn.setPadding(12, 4, 12, 4);
+        GradientDrawable vbg = new GradientDrawable();
+        vbg.setColor(Color.parseColor("#0B5ED7"));
+        vbg.setCornerRadius(8f);
+        verBtn.setBackground(vbg);
+        verBtn.setTextColor(Color.parseColor("#FFFFFFFF"));
+        verBtn.setAlpha(0.95f);
+        verBtn.setVisibility(View.GONE);
+        layout.addView(verBtn, 0);
+
+        versionButton = verBtn;
+        versionEdit = edit;
+
+        verBtn.setOnClickListener(v -> {
+            if (lastPickerResult != null) {
+                showPicker(edit, btn, lastPickerResult, lastPickerOrig, lastPickerPns, lastPickerOneTime);
+            } else {
+                Toast.makeText(edit.getContext(), "暂无可选版本", Toast.LENGTH_SHORT).show();
+            }
+        });
 
         final View[] nsb = new View[1];
         Runnable ev = new Runnable() {
@@ -725,7 +779,12 @@ public class ChatHook {
                 if (nsb[0] == null) nsb[0] = findNativeSendBtn(layout);
                 String ct = edit.getText().toString().replace("@", "");
                 if (!ct.trim().isEmpty() && AITranslator.isChineseOnly(ct)) {
-                    if (!isTranslatingAPI) { btn.setVisibility(View.VISIBLE); btn.setEnabled(true); btn.setText("\u8bd1"); btn.setAlpha(0.93f); }
+                    if (!isTranslatingAPI) {
+                        btn.setVisibility(View.VISIBLE);
+                        btn.setEnabled(true);
+                        btn.setText("\u8bd1");
+                        btn.setAlpha(0.93f);
+                    }
                     if (nsb[0] != null) nsb[0].setVisibility(View.GONE);
                 } else {
                     if (!isTranslatingAPI) btn.setVisibility(View.GONE);
@@ -745,11 +804,18 @@ public class ChatHook {
                 }
             }
         });
-        edit.postDelayed(ev, 100); edit.postDelayed(ev, 500);
+        edit.postDelayed(ev, 100);
+        edit.postDelayed(ev, 500);
 
         btn.setOnClickListener(v -> {
             String text = edit.getText().toString().trim();
             if (text.isEmpty() || !AITranslator.isChineseOnly(text)) return;
+
+            if (verBtn.getVisibility() == View.VISIBLE) {
+                verBtn.setVisibility(View.GONE);
+            }
+            pendingSelectedForeign = null;
+            lastPickerResult = null;
 
             boolean oneTime = text.startsWith("一次性：")
                     || text.startsWith("一次性:")
@@ -777,30 +843,51 @@ public class ChatHook {
 
             String cid = currentChatId;
             if (cid == null || cid.isEmpty() || "0".equals(cid) || "null".equals(cid)) {
-                Toast.makeText(edit.getContext(), "\u26a0\ufe0f \u4f1a\u8bdd\u5c1a\u672a\u5c31\u7eea\uff0c\u8bf7\u9000\u51fa\u804a\u5929\u91cd\u65b0\u8fdb\u5165\u540e\u518d\u8bd5", Toast.LENGTH_SHORT).show(); return;
+                Toast.makeText(edit.getContext(), "\u26a0\ufe0f \u4f1a\u8bdd\u5c1a\u672a\u5c31\u7eea\uff0c\u8bf7\u9000\u51fa\u804a\u5929\u91cd\u65b0\u8fdb\u5165\u540e\u518d\u8bd5", Toast.LENGTH_SHORT).show();
+                return;
             }
-            isTranslatingAPI = true; btn.setEnabled(false); btn.setText("..."); btn.setAlpha(1.0f);
-            final String cs = cid; final int cts = currentChatType; final String pns = currentPartnerName;
-            final String nats = latestNationality; final int nls = latestNativeLang;
-            String quote = null; try { quote = getQuoteReplyText(edit.getRootView()); } catch (Exception ignored) {}
-            final String qis = currentQuotedImagePath; final boolean qms = currentQuotedImageMissing;
-            currentQuotedImagePath = null; currentQuotedImageMissing = false;
+            isTranslatingAPI = true;
+            btn.setEnabled(false);
+            btn.setText("...");
+            btn.setAlpha(1.0f);
+
+            final String cs = cid;
+            final int cts = currentChatType;
+            final String pns = currentPartnerName;
+            final String nats = latestNationality;
+            final int nls = latestNativeLang;
+
+            String quote = null;
+            try { quote = getQuoteReplyText(edit.getRootView()); } catch (Exception ignored) {}
+            final String qis = currentQuotedImagePath;
+            final boolean qms = currentQuotedImageMissing;
+            currentQuotedImagePath = null;
+            currentQuotedImageMissing = false;
 
             boolean pbm = isPureBracketQuery(text);
             String ttt = text;
             if (!pbm && quote != null && !quote.trim().isEmpty()) {
-                String orig = AITranslator.getForeignFuzzy(quote); if (orig != null) quote = orig;
-                ttt = "\u3010\u6211\u8981\u56de\u590d\u7684\u5bf9\u65b9\u539f\u8bdd\u3011\uff1a" + quote.trim() + "\n\u3010\u6211\u7684\u56de\u590d\u3011\uff1a" + text;
+                String orig = AITranslator.getForeignFuzzy(quote);
+                if (orig != null) quote = orig;
+                ttt = "\u3010\u6211\u8981\u56de\u590d\u7684\u5bf9\u65b9\u539f\u8bdd\u3011\uff1a" + quote.trim()
+                        + "\n\u3010\u6211\u7684\u56de\u590d\u3011\uff1a" + text;
             }
             if (pbm) ttt = "[PURE_BRACKET_MODE]\n" + ttt;
-            if (qis != null) { File qf = new File(qis); if (qf.exists() && qf.length() > 0) ttt += "\n[QUOTED_LOCAL_IMAGE:" + qis + "]"; }
-            else if (qms) ttt += "\n[QUOTED_IMAGE_BUT_PATH_MISSING]";
+            if (qis != null) {
+                File qf = new File(qis);
+                if (qf.exists() && qf.length() > 0) ttt += "\n[QUOTED_LOCAL_IMAGE:" + qis + "]";
+            } else if (qms) {
+                ttt += "\n[QUOTED_IMAGE_BUT_PATH_MISSING]";
+            }
 
-            final String ftt = ttt, rci = text;
+            final String ftt = ttt;
+            final String rci = text;
+
             new Thread(() -> {
                 try {
                     String tl = determineSmartTargetLang(nats, nls, cs);
                     if (cts == 1) AITranslator.registerFriend(cs, pns, tl, nats);
+
                     String lr = chatRequestMap.get(cs);
                     boolean retry = ftt.equals(lr);
                     if (retry) {
@@ -810,11 +897,10 @@ public class ChatHook {
                         chatRetryCountMap.put(cs, 0);
                     }
 
-                    String fpt = ftt;
-
-                    String result = AITranslator.translateForPicker(fpt, tl, cs, retry);
+                    String result = AITranslator.translateForPicker(ftt, tl, cs, retry);
                     isTranslatingAPI = false;
                     String fr = result;
+
                     edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("\u8bd1");
@@ -829,7 +915,9 @@ public class ChatHook {
                         btn.setEnabled(true);
                         btn.setText("\u8bd1");
                         btn.setAlpha(0.88f);
-                        Toast.makeText(edit.getContext(), "\u26a0\ufe0f \u7ffb\u8bd1\u5931\u8d25: " + (e.getMessage() != null ? e.getMessage() : "\u672a\u77e5\u9519\u8bef"), Toast.LENGTH_LONG).show();
+                        Toast.makeText(edit.getContext(),
+                                "\u26a0\ufe0f \u7ffb\u8bd1\u5931\u8d25: " + (e.getMessage() != null ? e.getMessage() : "\u672a\u77e5\u9519\u8bef"),
+                                Toast.LENGTH_LONG).show();
                     });
                 }
             }).start();
@@ -1034,6 +1122,20 @@ public class ChatHook {
                     ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
                             .setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", foreign));
                 } catch (Exception ignored) {}
+
+                pendingSelectedForeign = foreign;
+                lastPickerResult = result;
+                lastPickerOrig = origChinese;
+                lastPickerPns = pn;
+                lastPickerOneTime = oneTime;
+
+                uiHandler.post(() -> {
+                    if (versionButton != null) {
+                        versionButton.setVisibility(View.VISIBLE);
+                        versionButton.setText("版本");
+                    }
+                });
+
                 dialog.dismiss();
             });
 
