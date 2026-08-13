@@ -1259,7 +1259,7 @@ public class AITranslator {
             if ("es".equals(langCode)) spanishDirective = getSpanishRegionDirective(null, 0, chatId);
 
             String formatProtocol = "\n\n【强制输出格式】\n"
-                    + "上半部分：用1到3句话简要分析语境、语气和注意点，不要出现候选翻译。\n"
+                    + "上半部分：按照你的prompt中的要求进行自由分析，不限制字数。\n"
                     + "然后单独一行输出：==========\n"
                     + "下半部分：必须输出4个版本。\n"
                     + "每个版本必须严格使用这个格式：外语|中文大意|语气标签\n"
@@ -1331,7 +1331,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 2000);
+            body.put("max_tokens", 4000);
             body.put("temperature", getTemperature());
             JSONArray msgs = new JSONArray();
             JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
@@ -1346,7 +1346,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 2000);
+            body.put("max_tokens", 4000);
             body.put("temperature", getTemperature());
             body.put("messages", messages);
             return executeRequest(body);
