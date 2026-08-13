@@ -758,7 +758,7 @@ public class ChatHook {
                     || text.startsWith("[一次性]");
 
             if (oneTime) {
-                text = text.replaceFirst("^(一次性：|一次性:|\\[一次性\\])", "").trim();
+                text = text.replaceFirst("^(一次性：|一次性:|\$$一次性\$$)", "").trim();
                 if (text.isEmpty()) return;
             } else {
                 Matcher m = Pattern.compile("[（(][^（）()]*一次性[^（）()]*[）)]").matcher(text);
@@ -883,16 +883,40 @@ public class ChatHook {
 
             boolean refused = AITranslator.isRefusalResponse(result);
             String showText = result == null ? "" : result.trim();
-            if (showText.length() > 800) {
-                showText = showText.substring(0, 800) + "\n\n...";
-            }
 
-            new android.app.AlertDialog.Builder(ctx)
+            android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+            TextView rawTv = new TextView(ctx);
+            rawTv.setText(showText);
+            rawTv.setTextIsSelectable(true);
+            rawTv.setTextSize(13f);
+            rawTv.setTextColor(Color.BLACK);
+            rawTv.setPadding(32, 24, 32, 24);
+            rawTv.setLineSpacing(4f, 1.1f);
+            sv.addView(rawTv, new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
                     .setTitle(refused ? "AI 拒绝或触发安全策略" : "AI 未按格式返回")
-                    .setMessage(showText)
+                    .setView(sv)
                     .setPositiveButton("重试", (d, w) -> edit.post(() -> btn.performClick()))
+                    .setNeutralButton("复制原文", (d, w) -> {
+                        try {
+                            ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
+                                    .setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", showText));
+                            Toast.makeText(ctx, "已复制", Toast.LENGTH_SHORT).show();
+                        } catch (Exception ignored) {}
+                    })
                     .setNegativeButton("取消", null)
-                    .show();
+                    .create();
+
+            dialog.show();
+            if (dialog.getWindow() != null) {
+                android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+                dialog.getWindow().setLayout(
+                        (int) (dm.widthPixels * 0.92),
+                        (int) (dm.heightPixels * 0.75));
+            }
             return;
         }
 
