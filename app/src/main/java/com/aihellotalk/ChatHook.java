@@ -45,7 +45,6 @@ public class ChatHook {
     private static volatile String latestPartnerName = "";
 
     private static volatile boolean isTranslatingAPI = false;
-    private static volatile boolean fastMode = false;
 
     private static final Set<String> translating = ConcurrentHashMap.newKeySet();
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
@@ -133,14 +132,6 @@ public class ChatHook {
     }
 
     private static void log(String msg) { XposedBridge.log("HT_AI " + msg); }
-
-    private static void updateModeButton(Button btn, boolean fast) {
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(fast ? Color.parseColor("#0B5ED7") : Color.parseColor("#CC333333"));
-        bg.setCornerRadius(8f);
-        btn.setBackground(bg);
-        btn.setText(fast ? "快译" : "译");
-    }
 
     private static boolean isPureBracketQuery(String text) {
         if (text == null) return false;
@@ -723,24 +714,10 @@ public class ChatHook {
         if ("HT_AI_BTN".equals(String.valueOf(layout.getTag()))) return;
 
         Button btn = new Button(layout.getContext());
-        btn.setLongClickable(true);
-        btn.setAllCaps(false);
-        btn.setPadding(12, 4, 12, 4);
-        updateModeButton(btn, fastMode);
-        btn.setTextColor(Color.parseColor("#FFFFFFFF"));
-        btn.setAlpha(0.95f);
-        btn.setVisibility(View.GONE);
-        layout.addView(btn, 0);
-        layout.setTag("HT_AI_BTN");
-
-        btn.setOnLongClickListener(v -> {
-            fastMode = !fastMode;
-            updateModeButton(btn, fastMode);
-            Toast.makeText(btn.getContext(),
-                    fastMode ? "已切换：快速模式，只出4个选项" : "已切换：深度模式，分析+4个选项",
-                    Toast.LENGTH_SHORT).show();
-            return true;
-        });
+        btn.setText("\u8bd1"); btn.setTextSize(12f); btn.setAllCaps(false); btn.setPadding(12, 4, 12, 4);
+        GradientDrawable bg = new GradientDrawable(); bg.setColor(Color.parseColor("#CC333333")); bg.setCornerRadius(8f);
+        btn.setBackground(bg); btn.setTextColor(Color.parseColor("#FFFFFFFF")); btn.setAlpha(0.95f);
+        btn.setVisibility(View.GONE); layout.addView(btn, 0); layout.setTag("HT_AI_BTN");
 
         final View[] nsb = new View[1];
         Runnable ev = new Runnable() {
@@ -748,12 +725,7 @@ public class ChatHook {
                 if (nsb[0] == null) nsb[0] = findNativeSendBtn(layout);
                 String ct = edit.getText().toString().replace("@", "");
                 if (!ct.trim().isEmpty() && AITranslator.isChineseOnly(ct)) {
-                    if (!isTranslatingAPI) {
-                        btn.setVisibility(View.VISIBLE);
-                        btn.setEnabled(true);
-                        updateModeButton(btn, fastMode);
-                        btn.setAlpha(0.93f);
-                    }
+                    if (!isTranslatingAPI) { btn.setVisibility(View.VISIBLE); btn.setEnabled(true); btn.setText("\u8bd1"); btn.setAlpha(0.93f); }
                     if (nsb[0] != null) nsb[0].setVisibility(View.GONE);
                 } else {
                     if (!isTranslatingAPI) btn.setVisibility(View.GONE);
@@ -773,23 +745,11 @@ public class ChatHook {
                 }
             }
         });
-        edit.postDelayed(ev, 100);
-        edit.postDelayed(ev, 500);
+        edit.postDelayed(ev, 100); edit.postDelayed(ev, 500);
 
         btn.setOnClickListener(v -> {
             String text = edit.getText().toString().trim();
             if (text.isEmpty() || !AITranslator.isChineseOnly(text)) return;
-
-            boolean forceFast = text.startsWith("&");
-            boolean forceDeep = text.startsWith("$");
-
-            if (forceFast) {
-                text = text.substring(1).trim();
-            } else if (forceDeep) {
-                text = text.substring(1).trim();
-            }
-
-            if (text.isEmpty()) return;
 
             boolean oneTime = text.startsWith("一次性：")
                     || text.startsWith("一次性:")
@@ -814,54 +774,33 @@ public class ChatHook {
             }
 
             final boolean oneTimeFinal = oneTime;
-            final boolean useFast = forceFast || (!forceDeep && fastMode);
 
             String cid = currentChatId;
             if (cid == null || cid.isEmpty() || "0".equals(cid) || "null".equals(cid)) {
                 Toast.makeText(edit.getContext(), "\u26a0\ufe0f \u4f1a\u8bdd\u5c1a\u672a\u5c31\u7eea\uff0c\u8bf7\u9000\u51fa\u804a\u5929\u91cd\u65b0\u8fdb\u5165\u540e\u518d\u8bd5", Toast.LENGTH_SHORT).show(); return;
             }
-            isTranslatingAPI = true;
-            btn.setEnabled(false);
-            btn.setText("...");
-            btn.setAlpha(1.0f);
-
-            final String cs = cid;
-            final int cts = currentChatType;
-            final String pns = currentPartnerName;
-            final String nats = latestNationality;
-            final int nls = latestNativeLang;
-
-            String quote = null;
-            try { quote = getQuoteReplyText(edit.getRootView()); } catch (Exception ignored) {}
-            final String qis = currentQuotedImagePath;
-            final boolean qms = currentQuotedImageMissing;
-            currentQuotedImagePath = null;
-            currentQuotedImageMissing = false;
+            isTranslatingAPI = true; btn.setEnabled(false); btn.setText("..."); btn.setAlpha(1.0f);
+            final String cs = cid; final int cts = currentChatType; final String pns = currentPartnerName;
+            final String nats = latestNationality; final int nls = latestNativeLang;
+            String quote = null; try { quote = getQuoteReplyText(edit.getRootView()); } catch (Exception ignored) {}
+            final String qis = currentQuotedImagePath; final boolean qms = currentQuotedImageMissing;
+            currentQuotedImagePath = null; currentQuotedImageMissing = false;
 
             boolean pbm = isPureBracketQuery(text);
             String ttt = text;
             if (!pbm && quote != null && !quote.trim().isEmpty()) {
-                String orig = AITranslator.getForeignFuzzy(quote);
-                if (orig != null) quote = orig;
-                ttt = "\u3010\u6211\u8981\u56de\u590d\u7684\u5bf9\u65b9\u539f\u8bdd\u3011\uff1a" + quote.trim()
-                        + "\n\u3010\u6211\u7684\u56de\u590d\u3011\uff1a" + text;
+                String orig = AITranslator.getForeignFuzzy(quote); if (orig != null) quote = orig;
+                ttt = "\u3010\u6211\u8981\u56de\u590d\u7684\u5bf9\u65b9\u539f\u8bdd\u3011\uff1a" + quote.trim() + "\n\u3010\u6211\u7684\u56de\u590d\u3011\uff1a" + text;
             }
             if (pbm) ttt = "[PURE_BRACKET_MODE]\n" + ttt;
-            if (qis != null) {
-                File qf = new File(qis);
-                if (qf.exists() && qf.length() > 0) ttt += "\n[QUOTED_LOCAL_IMAGE:" + qis + "]";
-            } else if (qms) {
-                ttt += "\n[QUOTED_IMAGE_BUT_PATH_MISSING]";
-            }
+            if (qis != null) { File qf = new File(qis); if (qf.exists() && qf.length() > 0) ttt += "\n[QUOTED_LOCAL_IMAGE:" + qis + "]"; }
+            else if (qms) ttt += "\n[QUOTED_IMAGE_BUT_PATH_MISSING]";
 
-            final String ftt = ttt;
-            final String rci = text;
-
+            final String ftt = ttt, rci = text;
             new Thread(() -> {
                 try {
                     String tl = determineSmartTargetLang(nats, nls, cs);
                     if (cts == 1) AITranslator.registerFriend(cs, pns, tl, nats);
-
                     String lr = chatRequestMap.get(cs);
                     boolean retry = ftt.equals(lr);
                     if (retry) {
@@ -871,13 +810,14 @@ public class ChatHook {
                         chatRetryCountMap.put(cs, 0);
                     }
 
-                    String result = AITranslator.translateForPicker(ftt, tl, cs, retry, useFast);
+                    String fpt = ftt;
+
+                    String result = AITranslator.translateForPicker(fpt, tl, cs, retry);
                     isTranslatingAPI = false;
                     String fr = result;
-
                     edit.post(() -> {
                         btn.setEnabled(true);
-                        updateModeButton(btn, fastMode);
+                        btn.setText("\u8bd1");
                         btn.setAlpha(0.92f);
                         showPicker(edit, btn, fr, rci, pns, oneTimeFinal);
                     });
@@ -887,11 +827,9 @@ public class ChatHook {
                     chatRetryCountMap.put(cs, 0);
                     edit.post(() -> {
                         btn.setEnabled(true);
-                        updateModeButton(btn, fastMode);
+                        btn.setText("\u8bd1");
                         btn.setAlpha(0.88f);
-                        Toast.makeText(edit.getContext(),
-                                "\u26a0\ufe0f \u7ffb\u8bd1\u5931\u8d25: " + (e.getMessage() != null ? e.getMessage() : "\u672a\u77e5\u9519\u8bef"),
-                                Toast.LENGTH_LONG).show();
+                        Toast.makeText(edit.getContext(), "\u26a0\ufe0f \u7ffb\u8bd1\u5931\u8d25: " + (e.getMessage() != null ? e.getMessage() : "\u672a\u77e5\u9519\u8bef"), Toast.LENGTH_LONG).show();
                     });
                 }
             }).start();
