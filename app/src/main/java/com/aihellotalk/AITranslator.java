@@ -1243,10 +1243,14 @@ public class AITranslator {
     }
 
     public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
-        return translateWithHistory(text, langCode, chatId, false);
+        return translateWithHistory(text, langCode, chatId, false, false);
     }
 
     public static String translateWithHistory(String text, String langCode, String chatId, boolean retry) throws IOException {
+        return translateWithHistory(text, langCode, chatId, retry, false);
+    }
+
+    public static String translateWithHistory(String text, String langCode, String chatId, boolean retry, boolean fast) throws IOException {
         maybeRecheckMode();
         try {
             JSONArray messages = new JSONArray();
@@ -1267,6 +1271,13 @@ public class AITranslator {
                 formatProtocol = "\n\n【重新生成模式】\n"
                         + "用户点击了“换一批”。这次不要输出上半部分分析。\n"
                         + "直接输出一行==========，然后严格输出4个新版本。\n"
+                        + "每个版本必须严格使用这个格式：外语|中文大意|语气标签\n"
+                        + "禁止输出序号，禁止代码块，禁止Markdown表格，禁止额外解释，禁止警告。\n"
+                        + "选项优先：必须完整输出4个版本。\n";
+            } else if (fast) {
+                formatProtocol = "\n\n【快速模式】\n"
+                        + "这次不要输出上半部分分析。\n"
+                        + "直接输出一行==========，然后严格输出4个版本。\n"
                         + "每个版本必须严格使用这个格式：外语|中文大意|语气标签\n"
                         + "禁止输出序号，禁止代码块，禁止Markdown表格，禁止额外解释，禁止警告。\n"
                         + "选项优先：必须完整输出4个版本。\n";
@@ -1314,11 +1325,15 @@ public class AITranslator {
     }
 
     public static String translateForPicker(String text, String langCode, String chatId) throws IOException {
-        return translateWithHistory(text, langCode, chatId, false);
+        return translateWithHistory(text, langCode, chatId, false, false);
     }
 
     public static String translateForPicker(String text, String langCode, String chatId, boolean retry) throws IOException {
-        return translateWithHistory(text, langCode, chatId, retry);
+        return translateWithHistory(text, langCode, chatId, retry, false);
+    }
+
+    public static String translateForPicker(String text, String langCode, String chatId, boolean retry, boolean fast) throws IOException {
+        return translateWithHistory(text, langCode, chatId, retry, fast);
     }
 
     private static String fallbackToPureTextRequest(JSONArray originalMessages) throws IOException {
@@ -1350,7 +1365,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 4000);
+            body.put("max_tokens", 8000);
             body.put("temperature", getTemperature());
             JSONArray msgs = new JSONArray();
             JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
@@ -1365,7 +1380,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 4000);
+            body.put("max_tokens", 8000);
             body.put("temperature", getTemperature());
             body.put("messages", messages);
             return executeRequest(body);
