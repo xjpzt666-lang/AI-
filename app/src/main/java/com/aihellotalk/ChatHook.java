@@ -25,6 +25,8 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -758,6 +760,11 @@ public class ChatHook {
             if (oneTime) {
                 text = text.replaceFirst("^(一次性：|一次性:|\\[一次性\\])", "").trim();
                 if (text.isEmpty()) return;
+            } else {
+                Matcher m = Pattern.compile("[（(][^（）()]*一次性[^（）()]*[）)]").matcher(text);
+                if (m.find()) {
+                    oneTime = true;
+                }
             }
 
             final boolean oneTimeFinal = oneTime;
