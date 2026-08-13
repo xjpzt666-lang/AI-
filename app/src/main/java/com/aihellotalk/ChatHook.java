@@ -758,7 +758,7 @@ public class ChatHook {
                     || text.startsWith("[一次性]");
 
             if (oneTime) {
-                text = text.replaceFirst("^(一次性：|一次性:|\$$一次性\$$)", "").trim();
+                text = text.replaceFirst("^(一次性：|一次性:|\\[一次性\\])", "").trim();
                 if (text.isEmpty()) return;
             } else {
                 Matcher m = Pattern.compile("[（(][^（）()]*一次性[^（）()]*[）)]").matcher(text);
