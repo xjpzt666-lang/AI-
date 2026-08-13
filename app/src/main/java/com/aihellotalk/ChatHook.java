@@ -795,7 +795,24 @@ public class ChatHook {
 
         edit.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
-            @Override public void afterTextChanged(Editable s) { edit.post(ev); }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                edit.post(ev);
+
+                String now = s == null ? "" : s.toString();
+
+                if (pendingSelectedForeign != null && now.trim().isEmpty()) {
+                    pendingSelectedForeign = null;
+                    lastPickerResult = null;
+                    uiHandler.post(() -> {
+                        if (versionButton != null) {
+                            versionButton.setVisibility(View.GONE);
+                        }
+                    });
+                }
+            }
+
             @Override public void onTextChanged(CharSequence s, int st, int b, int c) {
                 if (s != null && isTranslatingAPI && s.toString().contains("@")) {
                     AITranslator.cancelOngoingTranslation();
