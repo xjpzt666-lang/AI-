@@ -33,6 +33,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import okhttp3.Call;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -48,6 +49,8 @@ public class AITranslator {
     private static String apiUrl;
     private static String model;
     private static OkHttpClient client;
+
+    private static volatile Call activePickerStreamCall = null;
 
     public static final Map<String, String[]> cache = new ConcurrentHashMap<>();
     public static final Map<String, String> foreignToChinese = new ConcurrentHashMap<>();
@@ -90,6 +93,12 @@ public class AITranslator {
             "^(?:\u7248\u672c\\s*\\d*|[Oo]ption\\s*\\d*|\u9009\u9879\\s*\\d*|\\d{1,2}\\s*[.\u3001)\uff09:\uff1a]|[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u2460-\u2473]+\\s*[.\u3001)\uff09:\uff1a]?)\\s*");
 
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
+
+    public interface PickerStreamCallback {
+        void onPartial(String fullTextSoFar);
+        void onDone(String fullText);
+        void onError(String error);
+    }
 
     private static double getTemperature() {
         double temp = 0.3;
@@ -184,6 +193,15 @@ public class AITranslator {
         t = t.trim();
         if (t.isEmpty()) return false;
         return oneTimeSentSuppress.remove(t);
+    }
+
+    public static void cancelPickerStream() {
+        Call c = activePickerStreamCall;
+        if (c != null) {
+            try {
+                c.cancel();
+            } catch (Throwable ignored) {}
+        }
     }
 
     private static final String STORE_DIR = "/data/local/tmp/htai_store";
@@ -1242,11 +1260,7 @@ public class AITranslator {
         }
     }
 
-    public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
-        return translateWithHistory(text, langCode, chatId, false);
-    }
-
-    public static String translateWithHistory(String text, String langCode, String chatId, boolean retry) throws IOException {
+    private static JSONArray buildPickerMessages(String text, String langCode, String chatId, boolean retry) throws IOException {
         maybeRecheckMode();
         try {
             JSONArray messages = new JSONArray();
@@ -1287,7 +1301,6 @@ public class AITranslator {
                     + "本次翻译的语气只由 <translate> 内的当前原文决定。\n";
 
             String fullProtocol = sysPrompt + profileBlock(chatId) + spanishDirective + formatProtocol + contextRule;
-
             messages.put(createMessageObj("system", fullProtocol));
 
             JSONArray fullHistory = loadHistory(chatId);
@@ -1304,13 +1317,108 @@ public class AITranslator {
             }
             scriptBuilder.append("\n<translate>\n").append(text).append("\n</translate>");
             messages.put(createMessageObj("user", scriptBuilder.toString()));
+            return messages;
+        } catch (JSONException e) {
+            throw new IOException("\u6784\u5efaMessages\u5931\u8d25");
+        }
+    }
 
-            try { return callChatMessages(messages); }
-            catch (IOException e) {
-                if (e.getMessage() != null && e.getMessage().contains("400")) return fallbackToPureTextRequest(messages);
-                else throw e;
+    public static String translateWithHistory(String text, String langCode, String chatId) throws IOException {
+        return translateWithHistory(text, langCode, chatId, false);
+    }
+
+    public static String translateWithHistory(String text, String langCode, String chatId, boolean retry) throws IOException {
+        JSONArray messages = buildPickerMessages(text, langCode, chatId, retry);
+        try {
+            return callChatMessages(messages);
+        } catch (IOException e) {
+            if (e.getMessage() != null && e.getMessage().contains("400")) {
+                return fallbackToPureTextRequest(messages);
+            } else {
+                throw e;
             }
-        } catch (JSONException e) { throw new IOException("\u6784\u5efaMessages\u5931\u8d25"); }
+        }
+    }
+
+    public static void translateForPickerStream(String text, String langCode, String chatId, boolean retry, PickerStreamCallback cb) {
+        try {
+            JSONArray messages = buildPickerMessages(text, langCode, chatId, retry);
+            streamChatMessages(messages, cb);
+        } catch (Exception e) {
+            cb.onError(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        }
+    }
+
+    private static void streamChatMessages(JSONArray messages, PickerStreamCallback cb) {
+        if (apiKey == null || apiKey.isEmpty()) {
+            cb.onError("Key未配置");
+            return;
+        }
+        if (client == null) {
+            cb.onError("未初始化");
+            return;
+        }
+
+        Call call = null;
+        try {
+            JSONObject body = new JSONObject();
+            body.put("model", model);
+            body.put("max_tokens", 8000);
+            body.put("temperature", getTemperature());
+            body.put("stream", true);
+            body.put("messages", messages);
+
+            Request req = new Request.Builder()
+                    .url(fixUrl(apiUrl))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .post(RequestBody.create(body.toString(), JSON_TYPE))
+                    .build();
+
+            call = client.newCall(req);
+            activePickerStreamCall = call;
+
+            try (Response resp = call.execute()) {
+                if (!resp.isSuccessful()) {
+                    String errorBody = resp.body() != null ? resp.body().string() : "";
+                    cb.onError("HTTP " + resp.code() + " " + errorBody);
+                    return;
+                }
+
+                BufferedReader reader = new BufferedReader(resp.body().charStream());
+                StringBuilder fullText = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String t = line.trim();
+                    if (!t.startsWith("data:")) continue;
+
+                    String data = t.substring(5).trim();
+                    if ("[DONE]".equals(data)) break;
+                    if (data.isEmpty()) continue;
+
+                    try {
+                        JSONObject json = new JSONObject(data);
+                        JSONArray choices = json.optJSONArray("choices");
+                        if (choices != null && choices.length() > 0) {
+                            JSONObject delta = choices.optJSONObject(0).optJSONObject("delta");
+                            if (delta != null) {
+                                String piece = delta.optString("content", "");
+                                if (!piece.isEmpty()) {
+                                    fullText.append(piece);
+                                    cb.onPartial(fullText.toString());
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+
+                cb.onDone(fullText.toString());
+            }
+        } catch (Exception e) {
+            cb.onError(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        } finally {
+            activePickerStreamCall = null;
+        }
     }
 
     public static String translateForPicker(String text, String langCode, String chatId) throws IOException {
@@ -1350,7 +1458,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 4000);
+            body.put("max_tokens", 8000);
             body.put("temperature", getTemperature());
             JSONArray msgs = new JSONArray();
             JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
@@ -1365,7 +1473,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 4000);
+            body.put("max_tokens", 8000);
             body.put("temperature", getTemperature());
             body.put("messages", messages);
             return executeRequest(body);
