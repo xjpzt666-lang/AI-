@@ -758,7 +758,7 @@ public class ChatHook {
                     || text.startsWith("[一次性]");
 
             if (oneTime) {
-                text = text.replaceFirst("^(一次性：|一次性:|\\[一次性\\])", "").trim();
+                text = text.replaceFirst("^(一次性：|一次性:|\$$一次性\$$)", "").trim();
                 if (text.isEmpty()) return;
             } else {
                 Matcher m = Pattern.compile("[（(][^（）()]*一次性[^（）()]*[）)]").matcher(text);
@@ -796,8 +796,8 @@ public class ChatHook {
                     String tl = determineSmartTargetLang(nats, nls, cs);
                     if (cts == 1) AITranslator.registerFriend(cs, pns, tl, nats);
                     String lr = chatRequestMap.get(cs);
-                    boolean ir = ftt.equals(lr);
-                    if (ir) {
+                    boolean retry = ftt.equals(lr);
+                    if (retry) {
                         chatRetryCountMap.put(cs, chatRetryCountMap.getOrDefault(cs, 0) + 1);
                     } else {
                         chatRequestMap.put(cs, ftt);
@@ -805,11 +805,8 @@ public class ChatHook {
                     }
 
                     String fpt = ftt;
-                    if (ir) {
-                        fpt = ftt + "\n\n【系统提示】：用户请求重新生成。请严格保持设定的松弛、自然人设，提供其他符合该语境的翻译选项。";
-                    }
 
-                    String result = AITranslator.translateForPicker(fpt, tl, cs);
+                    String result = AITranslator.translateForPicker(fpt, tl, cs, retry);
                     isTranslatingAPI = false;
                     String fr = result;
                     edit.post(() -> {
