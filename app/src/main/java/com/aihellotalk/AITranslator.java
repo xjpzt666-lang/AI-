@@ -60,6 +60,7 @@ public class AITranslator {
     };
 
     private static final Map<String, String> imageBase64Cache = new ConcurrentHashMap<>();
+    private static final Set<String> oneTimeSentSuppress = ConcurrentHashMap.newKeySet();
 
     private static File cacheFile;
     private static File promptFile;
@@ -90,11 +91,8 @@ public class AITranslator {
 
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
 
-    // =========================================================
-    // 读取温度配置的方法
-    // =========================================================
     private static double getTemperature() {
-        double temp = 0.7; // 默认保留 0.7 作为兜底
+        double temp = 0.3;
         try {
             File f = new File("/data/local/tmp/htai_config.txt");
             if (f.exists()) {
@@ -111,12 +109,82 @@ public class AITranslator {
         } catch (Exception e) {
             Log.w(TAG, "Read temperature failed: " + e.getMessage());
         }
+
+        if (Double.isNaN(temp) || temp < 0.0) temp = 0.3;
+        if (temp > 2.0) temp = 2.0;
+
+        Log.i(TAG, "HT_AI temperature=" + temp);
         return temp;
     }
 
-    // =========================================================
-    // 记忆系统
-    // =========================================================
+    public static void dumpDebug(String name, String text) {
+        try {
+            File f = new File("/data/data/com.hellotalk/files/htai_debug_" + name + ".txt");
+            BufferedWriter w = new BufferedWriter(new FileWriter(f));
+            w.write(text == null ? "" : text);
+            w.close();
+        } catch (Exception ignored) {}
+    }
+
+    public static String stripMetaInstructions(String s) {
+        if (s == null) return "";
+        String t = s;
+
+        String[] metaWords = {
+                "指令", "系统", "仅限本次", "直白", "露骨",
+                "调情", "粗俗", "审查", "道德", "人设",
+                "模块", "崩溃"
+        };
+
+        try {
+            Pattern p = Pattern.compile("[（(][^（）()]*[）)]");
+            Matcher m = p.matcher(t);
+            StringBuffer sb = new StringBuffer();
+
+            while (m.find()) {
+                String seg = m.group();
+                boolean isMeta = false;
+
+                for (String k : metaWords) {
+                    if (seg.contains(k)) {
+                        isMeta = true;
+                        break;
+                    }
+                }
+
+                if (isMeta) {
+                    m.appendReplacement(sb, "");
+                } else {
+                    m.appendReplacement(sb, Matcher.quoteReplacement(seg));
+                }
+            }
+
+            m.appendTail(sb);
+            t = sb.toString();
+        } catch (Throwable ignored) {}
+
+        t = t.replaceAll("(?m)^\\s*(系统强制指令|【系统|系统提示|#).*$", "");
+        t = t.replaceAll("\\s+", " ").trim();
+
+        return t;
+    }
+
+    public static void suppressSentForeign(String s) {
+        if (s == null) return;
+        String t = stripFlipMarks(s);
+        if (t == null) return;
+        t = t.trim();
+        if (!t.isEmpty()) oneTimeSentSuppress.add(t);
+    }
+
+    public static boolean consumeSuppressSent(String s) {
+        if (s == null) return false;
+        String t = stripFlipMarks(s);
+        if (t == null) return false;
+        t = t.trim();
+        if (t.isEmpty()) return false;
+        return oneTimeSentSuppress.remove(t);
+    }
 
     private static final String STORE_DIR = "/data/local/tmp/htai_store";
     private static final String MARKER_FILE = "/data/local/tmp/htai_mem_mode.txt";
@@ -149,7 +217,8 @@ public class AITranslator {
             "2. \u65b0\u4fe1\u606f\u4e0e\u65e7\u6863\u6848\u51b2\u7a81\u65f6\uff0c\u4ee5\u65b0\u4fe1\u606f\u4e3a\u51c6\uff1b\u5df2\u7ed3\u675f\u7684\u8bdd\u9898\u3001\u5df2\u8fc7\u671f\u6216\u5df2\u5151\u73b0\u7684\u7ea6\u5b9a\u3001\u8fc7\u65f6\u7684\u72b6\u6001\u8981\u5220\u6389\u3002\n" +
             "3. \u4e0d\u8981\u8bb0\u5f55\u7410\u788e\u95f2\u804a\u7ec6\u8282\uff0c\u4e0d\u8981\u9010\u6761\u590d\u8ff0\u804a\u5929\u5185\u5bb9\u3002\n" +
             "4. \u8f93\u51fa\u7eaf\u6587\u672c\u6863\u6848\uff0c\u5206\u5c0f\u8282\u3001\u6bcf\u884c\u4e00\u6761\uff0c\u603b\u957f\u5ea6\u4e25\u683c\u63a7\u5236\u5728500\u5b57\u4ee5\u5185\u3002\n" +
-            "5. \u53ea\u8f93\u51fa\u6863\u6848\u6b63\u6587\u672c\u8eab\uff0c\u4e0d\u8981\u4efb\u4f55\u524d\u7f00\u3001\u540e\u7f00\u3001\u89e3\u91ca\u3002";
+            "5. \u53ea\u8f93\u51fa\u6863\u6848\u6b63\u6587\u672c\u8eab\uff0c\u4e0d\u8981\u4efb\u4f55\u524d\u7f00\u3001\u540e\u7f00\u3001\u89e3\u91ca\u3002\n" +
+            "6. \u4e0d\u8981\u8bb0\u5f55\u9732\u9aa8\u3001\u8272\u60c5\u3001\u7c97\u4fd7\u3001\u8c03\u60c5\u7684\u5177\u4f53\u8868\u8fbe\u3002\u53ea\u4fdd\u7559\u4e2d\u6027\u5173\u7cfb\u63cf\u8ff0\uff0c\u4f8b\u5982\u201c\u53cc\u65b9\u8f83\u719f\u3001\u8bed\u6c14\u968f\u610f\u201d\u3002";
 
     public static void init(String key, String url, String m) {
         apiKey = key;
@@ -353,7 +422,10 @@ public class AITranslator {
     private static String callDistill(JSONArray messages) {
         try {
             JSONObject body = new JSONObject();
-            body.put("model", model); body.put("max_tokens", 1200); body.put("messages", messages);
+            body.put("model", model);
+            body.put("max_tokens", 1200);
+            body.put("temperature", 0.2);
+            body.put("messages", messages);
             return executeRequestWith(getDistillClient(), body);
         } catch (Exception e) { return null; }
     }
@@ -363,20 +435,29 @@ public class AITranslator {
             if (apiKey == null || apiKey.isEmpty()) return;
             long now = System.currentTimeMillis();
             if (now - lastDistillFailTs < DISTILL_COOLDOWN_MS) return;
+
+            List<JSONObject> distillable = new ArrayList<>();
+            for (JSONObject obj : batch) {
+                if (!obj.optBoolean("oneTime", false)) distillable.add(obj);
+            }
+            if (distillable.isEmpty()) return;
+
             String oldProfile = getProfile(chatId);
             StringBuilder sb = new StringBuilder();
             sb.append("\u3010\u73b0\u6709\u6863\u6848\u3011\n");
             sb.append(oldProfile.isEmpty() ? "\uff08\u6682\u65e0\uff09" : oldProfile).append("\n\n");
             sb.append("\u3010\u5373\u5c06\u5f52\u6863\u7684\u804a\u5929\u8bb0\u5f55\u3011\n");
+
             boolean hasMaterial = false;
-            for (JSONObject obj : batch) {
+            for (JSONObject obj : distillable) {
                 String role = obj.optString("role", "");
                 String content = obj.optString("content", "");
                 if (content == null || content.isEmpty()) continue;
                 if ("user".equals(role)) { sb.append(scriptLine("\u5bf9\u65b9", content, "\u4e2d\u6587\u610f\u601d")); hasMaterial = true; }
                 else if ("assistant".equals(role)) { sb.append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f")); hasMaterial = true; }
             }
-            if (!hasMaterial) { removeBatchFromHistory(chatId, batch); return; }
+            if (!hasMaterial) return;
+
             JSONArray messages = new JSONArray();
             messages.put(createRawMessage("system", DISTILL_SYSTEM_PROMPT));
             messages.put(createRawMessage("user", sb.toString()));
@@ -385,7 +466,7 @@ public class AITranslator {
             String newProfile = result.trim();
             if (newProfile.isEmpty() || isRefusalResponse(newProfile)) { lastDistillFailTs = now; return; }
             if (newProfile.length() > PROFILE_HARD_CAP) newProfile = newProfile.substring(0, PROFILE_HARD_CAP);
-            removeBatchFromHistory(chatId, batch);
+            removeBatchFromHistory(chatId, distillable);
             writeProfileFile(chatId, newProfile);
             lastDistillFailTs = 0; lastBackupTs = 0; maybeBackup();
         } catch (Throwable t) { lastDistillFailTs = System.currentTimeMillis(); }
@@ -427,6 +508,7 @@ public class AITranslator {
             String clean = stripFlipMarks(content);
             String zh = (clean == null) ? null : foreignToChinese.get(clean);
             if (zh == null) zh = mySentDrafts.get(clean);
+            if (zh != null) zh = stripMetaInstructions(zh);
             if (zh != null && !zh.isEmpty() && !zh.equals(clean))
                 return who + ": " + content + "\uff08" + noteLabel + "\uff1a" + zh + "\uff09\n";
         } catch (Throwable ignored) {}
@@ -435,13 +517,22 @@ public class AITranslator {
 
     public static boolean isRefusalResponse(String raw) {
         if (raw == null) return false;
-        String t = raw.trim(); if (t.isEmpty() || t.length() > 500) return false;
+        String t = raw.trim();
+        if (t.isEmpty() || t.length() > 800) return false;
         String low = t.toLowerCase();
         String[] marks = {"i'm sorry","i am sorry","im sorry","sorry, but","sorry, i","i can't","i cannot",
                 "i'm unable","i am unable","not able to","i apologize","as an ai","as a language model",
                 "can't assist","cannot assist","unable to assist","decline","against my","violat",
                 "content policy","safety guideline","guidelines","inappropriate","offensive","explicit"};
         for (String m : marks) { if (low.contains(m)) return true; }
+
+        String[] zhMarks = {
+                "抱歉", "对不起", "无法", "不能", "拒绝", "不方便",
+                "不适合", "不适当", "不合适", "违反", "政策", "规范",
+                "安全", "审查", "敏感", "露骨", "色情", "冒犯",
+                "不雅", "粗俗", "内容策略", "安全准则"
+        };
+        for (String m : zhMarks) { if (t.contains(m)) return true; }
         return false;
     }
 
@@ -461,7 +552,8 @@ public class AITranslator {
                 JSONObject obj = new JSONObject(s);
                 Iterator<String> it = obj.keys();
                 while (it.hasNext()) {
-                    String k = it.next(); String v = obj.optString(k, "");
+                    String k = it.next();
+                    String v = stripMetaInstructions(obj.optString(k, ""));
                     if (k == null || k.trim().isEmpty() || v == null || v.trim().isEmpty()) continue;
                     mySentDrafts.put(k, v); foreignToChinese.put(k, v); chineseToForeign.put(v, k);
                 }
@@ -482,9 +574,11 @@ public class AITranslator {
 
     public static void rememberDraft(String foreign, String chinese) {
         try {
-            String f = stripFlipMarks(foreign), c = stripFlipMarks(chinese);
+            String f = stripFlipMarks(foreign);
+            String c = stripFlipMarks(chinese);
             if (f == null || c == null) return;
-            f = f.trim(); c = c.trim();
+            f = f.trim();
+            c = stripMetaInstructions(c).trim();
             if (f.isEmpty() || c.isEmpty() || f.equals(c)) return;
             mySentDrafts.put(f, c); foreignToChinese.put(f, c); chineseToForeign.put(c, f);
             cacheResult("draft_" + f.hashCode(), f, c); saveDrafts();
@@ -574,8 +668,9 @@ public class AITranslator {
                 JSONObject msg = fullHistory.getJSONObject(i);
                 String role = msg.optString("role", "");
                 String content = msg.optString("content", "");
-                if ("user".equals(role)) { scriptBuilder.append(scriptLine("\u5bf9\u65b9", content, "\u4e2d\u6587\u610f\u601d")); hasContext = true; }
-                else if ("assistant".equals(role)) { scriptBuilder.append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f")); hasContext = true; }
+                String prefix = msg.optBoolean("oneTime", false) ? "[一次性上下文] " : "";
+                if ("user".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("\u5bf9\u65b9", content, "\u4e2d\u6587\u610f\u601d")); hasContext = true; }
+                else if ("assistant".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f")); hasContext = true; }
             }
             if (!hasContext) scriptBuilder.append("\uff08\u6682\u65e0\u6709\u6548\u4e0a\u4e0b\u6587\uff09\n");
             scriptBuilder.append("\n\u3010\u5bf9\u65b9\u521a\u53d1\u7684\u7eaf\u8868\u60c5/\u6807\u70b9\u7b26\u53f7\u3011\n").append(symbolText);
@@ -583,7 +678,10 @@ public class AITranslator {
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
             JSONObject body = new JSONObject();
-            body.put("model", model); body.put("max_tokens", 120); body.put("messages", messages);
+            body.put("model", model);
+            body.put("max_tokens", 120);
+            body.put("temperature", 0.2);
+            body.put("messages", messages);
 
             String result = executeRequestWith(getReverseTranslateClient(), body);
             if (result != null && !result.trim().isEmpty()) {
@@ -632,7 +730,10 @@ public class AITranslator {
             messages.put(createRawMessage("user", foreignText));
 
             JSONObject body = new JSONObject();
-            body.put("model", model); body.put("max_tokens", 300); body.put("messages", messages);
+            body.put("model", model);
+            body.put("max_tokens", 300);
+            body.put("temperature", 0.2);
+            body.put("messages", messages);
 
             String result = executeRequestWith(getReverseTranslateClient(), body);
             if (result != null && !result.trim().isEmpty() && !result.trim().equals(foreignText)) {
@@ -949,14 +1050,25 @@ public class AITranslator {
         List<String[]> items = new ArrayList<>();
         if (result == null || result.trim().isEmpty()) return items;
 
-        String optionsText = result;
-        String[] splitData = result.split("={3,}");
+        String normalized = result.replace("\r\n", "\n").replace("\r", "\n").replace("```", "");
+        String optionsText = normalized;
+
+        String[] splitData = normalized.split("={3,}");
         if (splitData.length >= 2) {
-            optionsText = splitData[splitData.length - 1]; // 取最后一部分（下半部分）
+            int bestIdx = -1;
+            int bestScore = -1;
+            for (int i = 0; i < splitData.length; i++) {
+                int score = countPipeOptionLines(splitData[i]);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+            if (bestIdx >= 0 && bestScore > 0) optionsText = splitData[bestIdx];
         } else {
             StringBuilder sb = new StringBuilder();
             boolean inOptions = false;
-            for (String line : result.split("\n")) {
+            for (String line : normalized.split("\n")) {
                 String t = line.trim();
                 if (!inOptions) {
                     boolean isSep = t.matches("^[=+\\-*\u2500]{3,}.*$")
@@ -974,9 +1086,9 @@ public class AITranslator {
         for (String rawLine : optionsText.split("\n")) {
             if (items.size() >= 4) break;
 
-            String line = rawLine.trim().replace("*", "").replace("\uff5c", "|").replace("｜", "|");
+            String line = rawLine.trim().replace("*", "").replace("`", "").replace("\uff5c", "|").replace("｜", "|");
             if (line.isEmpty()) continue;
-            
+            if (line.matches("^[|\\s:\\-]+$")) continue;
             if (!line.contains("|")) continue;
 
             if (line.startsWith("|")) line = line.substring(1).trim();
@@ -984,38 +1096,48 @@ public class AITranslator {
             line = line.replaceFirst("^[\u2022\u00b7\u25e6\u25cb\u25aa]\\s*", "");
             line = NUMBER_PREFIX.matcher(line).replaceFirst("").trim();
 
-            String foreign = null, chinese = "", label = "";
-
             String[] parts = line.split("\\|");
             List<String> cells = new ArrayList<>();
-            for (String p : parts) { String c2 = p.trim(); if (!c2.isEmpty()) cells.add(c2); }
+            for (String p : parts) { String c = p.trim(); if (!c.isEmpty()) cells.add(c); }
             if (cells.isEmpty()) continue;
-            foreign = cells.get(0);
-            if (cells.size() > 1) chinese = cells.get(1);
-            if (cells.size() > 2) label = cells.get(2);
 
-            if (foreign == null) continue;
-            
+            String foreign = cells.get(0);
+            String chinese = cells.size() > 1 ? cells.get(1) : "";
+            String label = cells.size() > 2 ? cells.get(2) : "";
+
             foreign = foreign.replaceAll("^[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+|[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+$", "").trim();
+            foreign = foreign.replaceFirst("^(英文|英语|俄语|乌克兰语|韩语|西班牙语|外语|译文|目标语言|原文|中文)\\s*[:：]?\\s*", "").trim();
             chinese = chinese.replaceFirst("^(\u4e2d\u6587)?(\u5927\u610f|\u610f\u601d|\u542b\u4e49|\u7ffb\u8bd1)?\\s*[:\uff1a]?\\s*", "").trim();
             label = label.replaceFirst("^(\u8bed\u6c14|\u98ce\u683c|\u6807\u7b7e)?\\s*[:\uff1a]?\\s*", "").trim();
             foreign = sanitizeForeignText(foreign);
 
             if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
-            
-            if (isChineseOnly(foreign)) continue;
-
             if (!seen.add(foreign.toLowerCase())) continue;
             items.add(new String[]{foreign, chinese, label});
         }
         return items;
     }
 
+    private static int countPipeOptionLines(String segment) {
+        if (segment == null || segment.trim().isEmpty()) return 0;
+        int score = 0;
+        for (String rawLine : segment.split("\n")) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) continue;
+            if (line.matches("^[|\\s:\\-]+$")) continue;
+            String norm = line.replace("｜", "|");
+            if (!norm.contains("|")) continue;
+            String[] parts = norm.split("\\|");
+            if (parts.length >= 1 && containsForeignLetters(parts[0].trim())) score++;
+        }
+        return score;
+    }
+
     public static String extractAnalysis(String result) {
         if (result == null) return "";
         String[] splitData = result.split("={3,}");
         if (splitData.length >= 2) return splitData[0].trim().replace("*", "");
-        
+
         String[] lines = result.split("\n");
         int firstOptionLine = -1;
         for (int i = 0; i < lines.length; i++) {
@@ -1055,8 +1177,9 @@ public class AITranslator {
                 String role = msg.optString("role", "");
                 String content = msg.optString("content", "");
                 if (content != null && content.equals(text)) continue;
-                if ("user".equals(role)) { scriptBuilder.append(scriptLine("\u5bf9\u65b9", content, "\u4e2d\u6587\u610f\u601d")); hasContext = true; }
-                else if ("assistant".equals(role)) { scriptBuilder.append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f")); hasContext = true; }
+                String prefix = msg.optBoolean("oneTime", false) ? "[一次性上下文] " : "";
+                if ("user".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("\u5bf9\u65b9", content, "\u4e2d\u6587\u610f\u601d")); hasContext = true; }
+                else if ("assistant".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f")); hasContext = true; }
             }
             if (!hasContext) scriptBuilder.append("\uff08\u6682\u65e0\u6709\u6548\u4e0a\u4e0b\u6587\uff09\n");
             scriptBuilder.append("\n\u3010\u7cfb\u7edf\u6307\u4ee4\u3011\u4e0b\u65b9\u53ea\u6709<<<\u548c>>>\u6807\u8bb0\u5185\u7684\u539f\u6587\u624d\u662f\u8981\u7ffb\u8bd1\u7684\u5185\u5bb9\uff0c\u4e0a\u9762\u5bf9\u8bdd\u5267\u672c\u4ec5\u4f9b\u7406\u89e3\u8bed\u5883\u53c2\u8003\uff0c\u4e25\u7981\u7ffb\u8bd1\u6216\u590d\u8ff0\u5267\u672c\u91cc\u5df2\u6709\u7684\u5185\u5bb9\uff1a\n<<<\n").append(text).append("\n>>>");
@@ -1135,10 +1258,20 @@ public class AITranslator {
             String spanishDirective = "";
             if ("es".equals(langCode)) spanishDirective = getSpanishRegionDirective(null, 0, chatId);
 
-            String fullProtocol = sysPrompt + profileBlock(chatId) + spanishDirective +
-                    "\n\n\u3010\u7cfb\u7edf\u8865\u5145\u6307\u4ee4\u3011\uff1a" +
-                    "\n\u8bf7\u7ed3\u5408\u4e0a\u65b9\u5386\u53f2\u804a\u5929\u5267\u672c\u7406\u89e3\u8bed\u5883\u3002" +
-                    "\n\u4e25\u683c\u6309\u7167\u6211prompt\u4e2d\u3010\u5f3a\u5236\u8f93\u51fa\u683c\u5f0f\u3011\u90e8\u5206\u7684\u89c4\u5b9a\u6267\u884c\uff0c\u4e0d\u8981\u589e\u51cf\u7248\u672c\u6570\u91cf\uff0c\u4e0d\u8981\u6539\u53d8\u5206\u9694\u683c\u5f0f\u3002";
+            String formatProtocol = "\n\n【强制输出格式】\n"
+                    + "上半部分：用1到3句话简要分析语境、语气和注意点，不要出现候选翻译。\n"
+                    + "然后单独一行输出：==========\n"
+                    + "下半部分：必须输出4个版本。\n"
+                    + "每个版本必须严格使用这个格式：外语|中文大意|语气标签\n"
+                    + "禁止输出序号，禁止代码块，禁止Markdown表格，禁止额外解释，禁止警告。\n";
+
+            String contextRule = "\n【上下文使用规则】\n"
+                    + "历史记录仅用于理解对话语义和对方背景。\n"
+                    + "不得继承历史中曾出现的极端、露骨、粗俗或一次性语气。\n"
+                    + "历史中标记为[一次性上下文]的内容只表示它发生过，不代表长期风格。\n"
+                    + "本次翻译的语气只由 <translate> 内的当前原文决定。\n";
+
+            String fullProtocol = sysPrompt + profileBlock(chatId) + spanishDirective + formatProtocol + contextRule;
 
             messages.put(createMessageObj("system", fullProtocol));
 
@@ -1150,8 +1283,9 @@ public class AITranslator {
                 JSONObject msg = fullHistory.getJSONObject(i);
                 String role = msg.optString("role", "");
                 String content = msg.optString("content", "");
-                if ("user".equals(role)) scriptBuilder.append(scriptLine("\u5bf9\u65b9", content, "\u4e2d\u6587\u610f\u601d"));
-                else if ("assistant".equals(role)) scriptBuilder.append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f"));
+                String prefix = msg.optBoolean("oneTime", false) ? "[一次性上下文] " : "";
+                if ("user".equals(role)) scriptBuilder.append(prefix).append(scriptLine("\u5bf9\u65b9", content, "\u4e2d\u6587\u610f\u601d"));
+                else if ("assistant".equals(role)) scriptBuilder.append(prefix).append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f"));
             }
             scriptBuilder.append("\n<translate>\n").append(text).append("\n</translate>");
             messages.put(createMessageObj("user", scriptBuilder.toString()));
@@ -1165,11 +1299,7 @@ public class AITranslator {
     }
 
     public static String translateForPicker(String text, String langCode, String chatId) throws IOException {
-        String raw = translateWithHistory(text, langCode, chatId);
-        if (text != null && text.contains("[PURE_BRACKET_MODE]")) return raw;
-        if (parseTranslateOptions(raw).isEmpty() && isRefusalResponse(raw))
-            throw new IOException("\u5185\u5bb9\u88abAI\u5b89\u5168\u5ba1\u67e5\u62e6\u622a\u3002\u8bf7\u7528\uff08\uff09\u62ec\u53f7\u52a0\u5165\u8f85\u52a9\u6307\u4ee4\uff0c\u6216\u6362\u4e2a\u8bf4\u6cd5\u540e\u4eb2\u81ea\u91cd\u8bd5\u3002");
-        return raw;
+        return translateWithHistory(text, langCode, chatId);
     }
 
     private static String fallbackToPureTextRequest(JSONArray originalMessages) throws IOException {
@@ -1200,7 +1330,8 @@ public class AITranslator {
         if (client == null) throw new IOException("\u672a\u521d\u59cb\u5316");
         try {
             JSONObject body = new JSONObject();
-            body.put("model", model); body.put("max_tokens", 2000);
+            body.put("model", model);
+            body.put("max_tokens", 2000);
             body.put("temperature", getTemperature());
             JSONArray msgs = new JSONArray();
             JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
@@ -1214,7 +1345,8 @@ public class AITranslator {
         if (client == null) throw new IOException("\u672a\u521d\u59cb\u5316");
         try {
             JSONObject body = new JSONObject();
-            body.put("model", model); body.put("max_tokens", 2000);
+            body.put("model", model);
+            body.put("max_tokens", 2000);
             body.put("temperature", getTemperature());
             body.put("messages", messages);
             return executeRequest(body);
@@ -1408,10 +1540,14 @@ public class AITranslator {
     }
 
     public static void appendHistory(String chatId, String msgId, String role, String content) {
-        appendHistory(chatId, msgId, role, content, System.currentTimeMillis(), null);
+        appendHistory(chatId, msgId, role, content, System.currentTimeMillis(), null, false);
     }
 
     public static void appendHistory(String chatId, String msgId, String role, String content, long timestamp, String quotedText) {
+        appendHistory(chatId, msgId, role, content, timestamp, quotedText, false);
+    }
+
+    public static void appendHistory(String chatId, String msgId, String role, String content, long timestamp, String quotedText, boolean oneTime) {
         if (content == null || content.isEmpty()) return;
         maybeRecheckMode();
         if (quotedText != null && !quotedText.isEmpty()) {
@@ -1429,7 +1565,9 @@ public class AITranslator {
                 }
                 JSONObject entry = new JSONObject();
                 if (msgId != null) entry.put("msgId", msgId);
-                entry.put("role", role); entry.put("timestamp", timestamp);
+                entry.put("role", role);
+                entry.put("timestamp", timestamp);
+                entry.put("oneTime", oneTime);
                 entry.put("content", content.length() > 1000 ? content.substring(0, 1000) : content);
                 history.put(entry);
 
