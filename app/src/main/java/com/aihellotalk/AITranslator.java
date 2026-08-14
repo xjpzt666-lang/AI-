@@ -1331,7 +1331,6 @@ public class AITranslator {
                         + "JSON格式如下：\n"
                         + "{\"analysis\":\"\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n"
                         + "必须输出4个选项。\n"
-                        + "analysis字段可以为空字符串。\n"
                         + "foreign、meaning、tone字段名不能改。\n";
             } else {
                 formatProtocol = "\n\n【最高优先级输出格式】\n"
@@ -1340,9 +1339,20 @@ public class AITranslator {
                         + "JSON格式如下：\n"
                         + "{\"analysis\":\"这里写上半部分分析\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n"
                         + "必须输出4个选项。\n"
-                        + "analysis字段写你的上半部分分析。\n"
                         + "foreign、meaning、tone字段名不能改，内容按你的指令填写。\n";
             }
+
+            String targetRule = "\n【回复目标识别规则，必须遵守】\n"
+                    + "1. 如果用户输入中包含【我要回复的对方原话】，说明用户是在回复对方这条消息。"
+                    + "你必须在analysis字段中第一句写明：\"你正在回复对方这句话：<原话>\"，然后再写其他分析。\n"
+                    + "2. 如果用户输入中包含【我对我自己之前这条外语消息的补充】，说明用户是在补充自己这条历史消息。"
+                    + "你必须在analysis字段中第一句写明：\"你是在补充自己这条历史消息：<原话>\"，然后再写其他分析。\n"
+                    + "3. 如果用户输入中既没有【我要回复的对方原话】，也没有【我对我自己之前这条外语消息的补充】，"
+                    + "说明用户没有显式选择回复目标。你必须根据下面的对话历史，推断用户最可能是在回复对方哪一句话，"
+                    + "还是在补充自己之前哪一条外语消息。然后在analysis字段中第一句写明："
+                    + "\"我推断你是在回复对方这句话：<推断原话>\" 或 \"我推断你是在补充自己这条历史消息：<推断原话>\"。"
+                    + "如果无法判断，就写\"我推断你是接着最近对话继续回复\"。\n"
+                    + "4. analysis字段不能为空，必须先用中文完成上述第一句目标说明，再进行语气、语义等分析。\n";
 
             String contextRule = "\n【上下文使用规则】\n"
                     + "历史记录仅用于理解对话语义和对方背景。\n"
@@ -1350,31 +1360,51 @@ public class AITranslator {
                     + "历史中标记为[一次性上下文]的内容只表示它发生过，不代表长期风格。\n"
                     + "本次翻译的语气只由 <translate> 内的当前原文决定。\n";
 
-            String fullProtocol = sysPrompt + profileBlock(chatId) + spanishDirective + formatProtocol + contextRule;
+            String fullProtocol = sysPrompt + profileBlock(chatId) + spanishDirective + formatProtocol + targetRule + contextRule;
 
             messages.put(createMessageObj("system", fullProtocol));
 
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
+
             int maxChatMessages = 60;
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
+
+            int visibleIndex = 0;
             for (int i = startIdx; i < fullHistory.length(); i++) {
                 JSONObject msg = fullHistory.getJSONObject(i);
                 String role = msg.optString("role", "");
                 String content = msg.optString("content", "");
+
                 String prefix = msg.optBoolean("oneTime", false) ? "[一次性上下文] " : "";
-                if ("user".equals(role)) scriptBuilder.append(prefix).append(scriptLine("\u5bf9\u65b9", content, "\u4e2d\u6587\u610f\u601d"));
-                else if ("assistant".equals(role)) scriptBuilder.append(prefix).append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f"));
+                visibleIndex++;
+
+                if ("user".equals(role)) {
+                    scriptBuilder.append("[").append(visibleIndex).append("] ")
+                            .append(prefix)
+                            .append(scriptLine("对方", content, "中文意思"));
+                } else if ("assistant".equals(role)) {
+                    scriptBuilder.append("[").append(visibleIndex).append("] ")
+                            .append(prefix)
+                            .append(scriptLine("我", content, "中文原意"));
+                }
             }
+
             scriptBuilder.append("\n<translate>\n").append(text).append("\n</translate>");
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
-            try { return callChatMessages(messages); }
-            catch (IOException e) {
-                if (e.getMessage() != null && e.getMessage().contains("400")) return fallbackToPureTextRequest(messages);
-                else throw e;
+            try {
+                return callChatMessages(messages);
+            } catch (IOException e) {
+                if (e.getMessage() != null && e.getMessage().contains("400")) {
+                    return fallbackToPureTextRequest(messages);
+                } else {
+                    throw e;
+                }
             }
-        } catch (JSONException e) { throw new IOException("\u6784\u5efaMessages\u5931\u8d25"); }
+        } catch (JSONException e) {
+            throw new IOException("构建Messages失败");
+        }
     }
 
     public static String translateForPicker(String text, String langCode, String chatId) throws IOException {
@@ -1405,12 +1435,12 @@ public class AITranslator {
                 cleanMessages.put(cleanMsg);
             }
             return callChatMessages(cleanMessages);
-        } catch (JSONException e) { throw new IOException("\u964d\u7ea7\u89e3\u6790\u5931\u8d25"); }
+        } catch (JSONException e) { throw new IOException("降级解析失败"); }
     }
 
     private static String callChatSimple(String prompt) throws IOException {
-        if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key\u672a\u914d\u7f6e");
-        if (client == null) throw new IOException("\u672a\u521d\u59cb\u5316");
+        if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
+        if (client == null) throw new IOException("未初始化");
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
@@ -1420,12 +1450,12 @@ public class AITranslator {
             JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
             msgs.put(m); body.put("messages", msgs);
             return executeRequest(body);
-        } catch (JSONException e) { throw new IOException("\u6784\u5efa\u5931\u8d25"); }
+        } catch (JSONException e) { throw new IOException("构建失败"); }
     }
 
     private static String callChatMessages(JSONArray messages) throws IOException {
-        if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key\u672a\u914d\u7f6e");
-        if (client == null) throw new IOException("\u672a\u521d\u59cb\u5316");
+        if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
+        if (client == null) throw new IOException("未初始化");
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
@@ -1433,7 +1463,7 @@ public class AITranslator {
             body.put("temperature", getTemperature());
             body.put("messages", messages);
             return executeRequest(body);
-        } catch (JSONException e) { throw new IOException("\u6784\u5efa\u5931\u8d25"); }
+        } catch (JSONException e) { throw new IOException("构建失败"); }
     }
 
     private static String executeRequest(JSONObject body) throws IOException { return executeRequestWith(client, body); }
@@ -1448,15 +1478,15 @@ public class AITranslator {
 
         try (Response resp = useClient.newCall(req).execute()) {
             String responseBody = resp.body() != null ? resp.body().string() : "";
-            if (!resp.isSuccessful()) throw new IOException("HTTP\u72b6\u6001\u7801 " + resp.code() + "\n" + responseBody);
+            if (!resp.isSuccessful()) throw new IOException("HTTP状态码 " + resp.code() + "\n" + responseBody);
             try {
                 JSONObject json = new JSONObject(responseBody);
                 JSONObject choice = json.getJSONArray("choices").getJSONObject(0);
                 String content = choice.getJSONObject("message").optString("content", "").trim();
-                if (content.isEmpty()) throw new IOException("\u5927\u6a21\u578b\u8fd4\u56de\u4e86\u7a7a\u6570\u636e\u3002");
+                if (content.isEmpty()) throw new IOException("大模型返回了空数据。");
                 return content;
             } catch (IOException e) { throw e; }
-            catch (Exception e) { throw new IOException("JSON\u89e3\u6790\u5931\u8d25\uff1a" + responseBody); }
+            catch (Exception e) { throw new IOException("JSON解析失败：" + responseBody); }
         }
     }
 
@@ -1482,7 +1512,7 @@ public class AITranslator {
             if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code());
             JSONArray data = new JSONObject(resp.body().string()).getJSONArray("data");
             for (int i = 0; i < data.length(); i++) result.add(data.getJSONObject(i).getString("id"));
-        } catch (JSONException e) { throw new IOException("\u89e3\u6790\u5931\u8d25"); }
+        } catch (JSONException e) { throw new IOException("解析失败"); }
         return result;
     }
 
