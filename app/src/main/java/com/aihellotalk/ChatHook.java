@@ -47,9 +47,6 @@ public class ChatHook {
     private static volatile String latestPartnerName = "";
 
     private static volatile boolean isTranslatingAPI = false;
-    private static volatile boolean streamGenerating = false;
-    private static volatile int lastStreamOptionCount = -1;
-    private static volatile android.app.AlertDialog activePickerDialog = null;
 
     private static final Set<String> translating = ConcurrentHashMap.newKeySet();
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
@@ -540,8 +537,6 @@ public class ChatHook {
                     if (isMine && pendingSelectedForeign != null && pendingSelectedForeign.equals(text)) {
                         pendingSelectedForeign = null;
                         lastPickerResult = null;
-                        AITranslator.cancelPickerStream();
-                        streamGenerating = false;
                         uiHandler.post(() -> {
                             if (versionButton != null) versionButton.setVisibility(View.GONE);
                         });
@@ -810,8 +805,6 @@ public class ChatHook {
                 if (pendingSelectedForeign != null && now.trim().isEmpty()) {
                     pendingSelectedForeign = null;
                     lastPickerResult = null;
-                    AITranslator.cancelPickerStream();
-                    streamGenerating = false;
                     uiHandler.post(() -> {
                         if (versionButton != null) {
                             versionButton.setVisibility(View.GONE);
@@ -840,7 +833,6 @@ public class ChatHook {
             }
             pendingSelectedForeign = null;
             lastPickerResult = null;
-            lastStreamOptionCount = -1;
 
             boolean oneTime = text.startsWith("一次性：")
                     || text.startsWith("一次性:")
@@ -872,7 +864,6 @@ public class ChatHook {
                 return;
             }
             isTranslatingAPI = true;
-            streamGenerating = true;
             btn.setEnabled(false);
             btn.setText("...");
             btn.setAlpha(1.0f);
@@ -923,52 +914,21 @@ public class ChatHook {
                         chatRetryCountMap.put(cs, 0);
                     }
 
-                    AITranslator.translateForPickerStream(ftt, tl, cs, retry, new AITranslator.PickerStreamCallback() {
-                        @Override
-                        public void onPartial(String fullTextSoFar) {
-                            int count = AITranslator.parseTranslateOptions(fullTextSoFar).size();
-                            if (count > 0 && count != lastStreamOptionCount) {
-                                lastStreamOptionCount = count;
-                                lastPickerResult = fullTextSoFar;
-                                lastPickerOrig = rci;
-                                lastPickerPns = pns;
-                                lastPickerOneTime = oneTimeFinal;
-                                uiHandler.post(() -> showPicker(edit, btn, fullTextSoFar, rci, pns, oneTimeFinal));
-                            }
-                        }
+                    String result = AITranslator.translateForPicker(ftt, tl, cs, retry);
+                    isTranslatingAPI = false;
+                    String fr = result;
 
-                        @Override
-                        public void onDone(String fullText) {
-                            isTranslatingAPI = false;
-                            streamGenerating = false;
-                            uiHandler.post(() -> {
-                                btn.setEnabled(true);
-                                btn.setText("\u8bd1");
-                                btn.setAlpha(0.92f);
-                                showPicker(edit, btn, fullText, rci, pns, oneTimeFinal);
-                            });
-                        }
-
-                        @Override
-                        public void onError(String error) {
-                            isTranslatingAPI = false;
-                            streamGenerating = false;
-                            uiHandler.post(() -> {
-                                btn.setEnabled(true);
-                                btn.setText("\u8bd1");
-                                btn.setAlpha(0.88f);
-                                Toast.makeText(edit.getContext(),
-                                        "\u26a0\ufe0f \u7ffb\u8bd1\u5931\u8d25: " + error,
-                                        Toast.LENGTH_LONG).show();
-                            });
-                        }
+                    edit.post(() -> {
+                        btn.setEnabled(true);
+                        btn.setText("\u8bd1");
+                        btn.setAlpha(0.92f);
+                        showPicker(edit, btn, fr, rci, pns, oneTimeFinal);
                     });
                 } catch (Exception e) {
                     isTranslatingAPI = false;
-                    streamGenerating = false;
                     chatRequestMap.remove(cs);
                     chatRetryCountMap.put(cs, 0);
-                    uiHandler.post(() -> {
+                    edit.post(() -> {
                         btn.setEnabled(true);
                         btn.setText("\u8bd1");
                         btn.setAlpha(0.88f);
@@ -1026,10 +986,6 @@ public class ChatHook {
         String at = AITranslator.extractAnalysis(result);
         List<String[]> items = AITranslator.parseTranslateOptions(result);
 
-        if (activePickerDialog != null) {
-            try { activePickerDialog.dismiss(); } catch (Throwable ignored) {}
-        }
-
         if (items.isEmpty()) {
             AITranslator.dumpDebug("picker_fail", result);
 
@@ -1062,7 +1018,6 @@ public class ChatHook {
                     .setNegativeButton("取消", null)
                     .create();
 
-            activePickerDialog = dialog;
             dialog.show();
             if (dialog.getWindow() != null) {
                 android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
@@ -1123,23 +1078,12 @@ public class ChatHook {
 
         String dn = (pn != null && !pn.isEmpty()) ? pn : currentPartnerName;
         String title = (dn != null && !dn.isEmpty()) ? ("\u9009\u7248\u672c - " + dn) : "\u9009\u7248\u672c";
-
-        android.app.AlertDialog.Builder builder = new android.app.AlertDialog.Builder(ctx)
+        final android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
                 .setTitle(title)
                 .setView(root)
-                .setNegativeButton("\u53d6\u6d88", (d, w) -> {});
-
-        if (streamGenerating) {
-            builder.setNeutralButton("停止生成", (d, w) -> {
-                AITranslator.cancelPickerStream();
-                streamGenerating = false;
-            });
-        }
-
-        builder.setPositiveButton("\uD83D\uDD04 \u6362\u4e00\u6279", (d, w) -> edit.post(() -> btn.performClick()));
-
-        final android.app.AlertDialog dialog = builder.create();
-        activePickerDialog = dialog;
+                .setNegativeButton("\u53d6\u6d88", (d, w) -> {})
+                .setPositiveButton("\uD83D\uDD04 \u6362\u4e00\u6279", (d, w) -> edit.post(() -> btn.performClick()))
+                .create();
 
         for (int idx = 0; idx < items.size(); idx++) {
             String[] item = items.get(idx);
@@ -1223,10 +1167,6 @@ public class ChatHook {
 
             cont.addView(card);
         }
-
-        dialog.setOnDismissListener(d -> {
-            if (activePickerDialog == dialog) activePickerDialog = null;
-        });
 
         dialog.show();
         if (dialog.getWindow() != null) {
