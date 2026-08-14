@@ -23,7 +23,6 @@ import java.lang.reflect.Method;
 import java.net.URLDecoder;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -68,6 +67,17 @@ public class ChatHook {
     private static volatile String currentQuotedImagePath = null;
     private static volatile boolean currentQuotedImageMissing = false;
 
+    // ===== 新增：当前回复条选中的消息 =====
+    private static volatile String selectedReplyText = null;
+    private static volatile String selectedReplyMsgType = null;
+    private static volatile boolean selectedReplyIsMine = false;
+    private static volatile boolean selectedReplyValid = false;
+    private static volatile String selectedReplyMsgId = null;
+    private static volatile long selectedReplySendTime = 0;
+    private static volatile String selectedReplySenderName = null;
+    private static volatile String selectedReplyChatId = null;
+    private static volatile ClassLoader hostClassLoader = null;
+
     private static final String HT_TEXT_VIEW_CLASS = "com.hellotalk.lib.ui.text.view.HTCompatTextView";
     private static Class<?> htTextViewClass = null;
 
@@ -82,8 +92,15 @@ public class ChatHook {
     private static volatile EditText versionEdit = null;
 
     private static class RenderedImageInfo {
-        final String path, url, compressedUrl; final long ts;
-        RenderedImageInfo(String p, String u, String c, long t) { path = p; url = u; compressedUrl = c; ts = t; }
+        final String path, url, compressedUrl;
+        final long ts;
+
+        RenderedImageInfo(String p, String u, String c, long t) {
+            path = p;
+            url = u;
+            compressedUrl = c;
+            ts = t;
+        }
     }
 
     private static volatile boolean msgMethodsReady = false;
@@ -95,9 +112,12 @@ public class ChatHook {
         if (msgMethodsReady || msg == null) return;
         try {
             Class<?> c = msg.getClass();
-            mIsSender = c.getMethod("isSender"); mGetChatId = c.getMethod("getChatId");
-            mGetSenderName = c.getMethod("getSenderName"); mGetMsgType = c.getMethod("getMsgType");
-            mGetMsgId = c.getMethod("getMsgId"); mGetSendTime = c.getMethod("getSendTime");
+            mIsSender = c.getMethod("isSender");
+            mGetChatId = c.getMethod("getChatId");
+            mGetSenderName = c.getMethod("getSenderName");
+            mGetMsgType = c.getMethod("getMsgType");
+            mGetMsgId = c.getMethod("getMsgId");
+            mGetSendTime = c.getMethod("getSendTime");
             mGetReplyInfo = c.getMethod("getReplyInfo");
             mGetMsgContentTyped = c.getMethod("getMessageContent", Class.class, boolean.class);
             msgMethodsReady = true;
@@ -105,31 +125,54 @@ public class ChatHook {
     }
 
     private static Method ensureBeanGetText(Object bean) {
-        Method m = mBeanGetText; if (m != null) return m;
+        Method m = mBeanGetText;
+        if (m != null) return m;
         if (bean == null) return null;
-        try { m = bean.getClass().getMethod("getText"); mBeanGetText = m; return m; } catch (Throwable t) { return null; }
+        try {
+            m = bean.getClass().getMethod("getText");
+            mBeanGetText = m;
+            return m;
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     private static Object invokeQuiet(Method m, Object target, Object... args) {
         if (m == null || target == null) return null;
-        try { return (args == null || args.length == 0) ? m.invoke(target) : m.invoke(target, args); }
-        catch (Throwable t) { return null; }
+        try {
+            return (args == null || args.length == 0) ? m.invoke(target) : m.invoke(target, args);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     private static final java.util.concurrent.ExecutorService historyExecutor =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "HT_AI_HistWriter"); t.setPriority(Thread.MIN_PRIORITY + 1); return t;
+                Thread t = new Thread(r, "HT_AI_HistWriter");
+                t.setPriority(Thread.MIN_PRIORITY + 1);
+                return t;
             });
 
     private static final java.util.concurrent.ExecutorService reverseTranslateExecutor =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "HT_AI_ReverseTL"); t.setPriority(Thread.MIN_PRIORITY); return t;
+                Thread t = new Thread(r, "HT_AI_ReverseTL");
+                t.setPriority(Thread.MIN_PRIORITY);
+                return t;
             });
 
     public static void install(ClassLoader cl) {
-        log("=== Hook v5.4 \u4fee\u590d\u7248 ===");
-        try { htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl); } catch (Throwable ignored) {}
-        try { Class<?> avClass = XposedHelpers.findClass("av.a", cl); langCodeMethod = avClass.getMethod("a", int.class); } catch (Throwable ignored) {}
+        hostClassLoader = cl;
+        log("=== Hook v5.5 精准回复修复版 ===");
+
+        try {
+            htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl);
+        } catch (Throwable ignored) {}
+
+        try {
+            Class<?> avClass = XposedHelpers.findClass("av.a", cl);
+            langCodeMethod = avClass.getMethod("a", int.class);
+        } catch (Throwable ignored) {}
+
         try { hookTextViewRender(cl); } catch (Throwable t) { log("render hook fail"); }
         try { hookClipboard(cl); } catch (Throwable ignored) {}
         try { hookBubbleFlip(cl); } catch (Throwable ignored) {}
@@ -140,44 +183,65 @@ public class ChatHook {
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         try { hookUltimateStealth(cl); } catch (Throwable ignored) {}
         try { hookImageRenderLayer(cl); } catch (Throwable ignored) {}
-        try { hookReplyMessageView(cl); } catch (Throwable ignored) {}
+
+        // 关键：hook HelloTalk 输入框上方的“回复条”
+        try { hookInputReplyBar(cl); } catch (Throwable ignored) {}
     }
 
-    private static void log(String msg) { XposedBridge.log("HT_AI " + msg); }
+    private static void log(String msg) {
+        XposedBridge.log("HT_AI " + msg);
+    }
 
     private static boolean isPureBracketQuery(String text) {
         if (text == null) return false;
         String s = text.trim();
-        return (s.startsWith("(") && s.endsWith(")")) || (s.startsWith("\uff08") && s.endsWith("\uff09"));
+        return (s.startsWith("(") && s.endsWith(")")) || (s.startsWith("（") && s.endsWith("）"));
     }
 
     private static String safeCallString(Object obj, String methodName) {
         if (obj == null) return null;
-        try { Object r = XposedHelpers.callMethod(obj, methodName); return r == null ? null : String.valueOf(r); }
-        catch (Throwable ignored) { return null; }
+        try {
+            Object r = XposedHelpers.callMethod(obj, methodName);
+            return r == null ? null : String.valueOf(r);
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private static String safeNormalize(String s) {
         if (s == null) return null;
         try {
-            String x = s.trim(); if (x.isEmpty()) return null;
-            int q = x.indexOf('?'); if (q >= 0) x = x.substring(0, q);
-            int h = x.indexOf('#'); if (h >= 0) x = x.substring(0, h);
+            String x = s.trim();
+            if (x.isEmpty()) return null;
+            int q = x.indexOf('?');
+            if (q >= 0) x = x.substring(0, q);
+            int h = x.indexOf('#');
+            if (h >= 0) x = x.substring(0, h);
             try { x = URLDecoder.decode(x, "UTF-8"); } catch (Throwable ignored) {}
             return x.trim();
-        } catch (Throwable e) { return s; }
+        } catch (Throwable e) {
+            return s;
+        }
     }
 
     private static String fileNameFromUrl(String url) {
         try {
-            String s = safeNormalize(url); if (s == null || s.isEmpty()) return null;
-            int idx = s.lastIndexOf('/'); if (idx >= 0 && idx < s.length() - 1) return s.substring(idx + 1); return s;
-        } catch (Throwable ignored) { return null; }
+            String s = safeNormalize(url);
+            if (s == null || s.isEmpty()) return null;
+            int idx = s.lastIndexOf('/');
+            if (idx >= 0 && idx < s.length() - 1) return s.substring(idx + 1);
+            return s;
+        } catch (Throwable ignored) {
+            return null;
+        }
     }
 
     private static File getHelloTalkImageCacheDir() {
-        try { return new File("/storage/emulated/0/Android/data/com.hellotalk/cache/hellotalk/images_/"); }
-        catch (Throwable e) { return null; }
+        try {
+            return new File("/storage/emulated/0/Android/data/com.hellotalk/cache/hellotalk/images_/");
+        } catch (Throwable e) {
+            return null;
+        }
     }
 
     private static void putImageMapping(String key, String path) {
@@ -187,7 +251,10 @@ public class ChatHook {
 
     private static void addRenderedImageRecord(String path, String url, String compressedUrl) {
         if (path == null || path.isEmpty()) return;
-        long now = System.currentTimeMillis(); latestRenderedImagePath = path; latestRenderedImageTime = now;
+        long now = System.currentTimeMillis();
+        latestRenderedImagePath = path;
+        latestRenderedImageTime = now;
+
         synchronized (recentRenderedImages) {
             recentRenderedImages.add(0, new RenderedImageInfo(path, url, compressedUrl, now));
             Set<String> seen = ConcurrentHashMap.newKeySet();
@@ -195,33 +262,57 @@ public class ChatHook {
             for (RenderedImageInfo info : recentRenderedImages) {
                 if (info != null && info.path != null && seen.add(info.path)) dedup.add(info);
             }
-            recentRenderedImages.clear(); recentRenderedImages.addAll(dedup);
-            while (recentRenderedImages.size() > RECENT_IMAGE_LIMIT) recentRenderedImages.remove(recentRenderedImages.size() - 1);
+            recentRenderedImages.clear();
+            recentRenderedImages.addAll(dedup);
+            while (recentRenderedImages.size() > RECENT_IMAGE_LIMIT) {
+                recentRenderedImages.remove(recentRenderedImages.size() - 1);
+            }
         }
     }
 
     private static String bruteFindLocalImagePathFromBean(Object imageBean) {
         if (imageBean == null) return null;
-        String url = safeCallString(imageBean, "getUrl"), compressedUrl = safeCallString(imageBean, "getCompressedUrl");
-        String urlNorm = safeNormalize(url), compressedNorm = safeNormalize(compressedUrl);
-        String urlName = fileNameFromUrl(url), compressedName = fileNameFromUrl(compressedUrl);
+
+        String url = safeCallString(imageBean, "getUrl");
+        String compressedUrl = safeCallString(imageBean, "getCompressedUrl");
+        String urlNorm = safeNormalize(url);
+        String compressedNorm = safeNormalize(compressedUrl);
+        String urlName = fileNameFromUrl(url);
+        String compressedName = fileNameFromUrl(compressedUrl);
+
+        String cachedByUrl = imageUrlToPathMap.get(url);
+        if (cachedByUrl != null && new File(cachedByUrl).exists()) return cachedByUrl;
+        String cachedByCompressed = imageUrlToPathMap.get(compressedUrl);
+        if (cachedByCompressed != null && new File(cachedByCompressed).exists()) return cachedByCompressed;
+
         File dir = getHelloTalkImageCacheDir();
-        if (dir == null || !dir.exists() || !dir.isDirectory()) return null;
-        File[] files = dir.listFiles();
-        if (files == null) return null;
-        for (File f : files) {
-            if (f == null || !f.exists() || f.length() <= 0) continue;
-            String name = f.getName();
-            if (urlName != null && !urlName.isEmpty() && name.contains(urlName)) return f.getAbsolutePath();
-            if (compressedName != null && !compressedName.isEmpty() && name.contains(compressedName)) return f.getAbsolutePath();
+        if (dir != null && dir.exists() && dir.isDirectory()) {
+            File[] files = dir.listFiles();
+            if (files != null) {
+                for (File f : files) {
+                    if (f == null || !f.exists() || f.length() <= 0) continue;
+                    String name = f.getName();
+                    if (urlName != null && !urlName.isEmpty() && name.contains(urlName)) return f.getAbsolutePath();
+                    if (compressedName != null && !compressedName.isEmpty() && name.contains(compressedName)) return f.getAbsolutePath();
+                }
+            }
         }
+
         synchronized (recentRenderedImages) {
             for (RenderedImageInfo info : recentRenderedImages) {
                 if (info == null || info.path == null) continue;
-                File f = new File(info.path); if (!f.exists() || f.length() <= 0) continue;
-                String infoUrl = safeNormalize(info.url), infoCompressed = safeNormalize(info.compressedUrl);
-                if (urlNorm != null && infoUrl != null && (urlNorm.equals(infoUrl) || infoUrl.contains(urlNorm) || urlNorm.contains(infoUrl))) return info.path;
-                if (compressedNorm != null && infoCompressed != null && (compressedNorm.equals(infoCompressed) || infoCompressed.contains(compressedNorm) || compressedNorm.contains(infoCompressed))) return info.path;
+                File f = new File(info.path);
+                if (!f.exists() || f.length() <= 0) continue;
+                String infoUrl = safeNormalize(info.url);
+                String infoCompressed = safeNormalize(info.compressedUrl);
+                if (urlNorm != null && infoUrl != null
+                        && (urlNorm.equals(infoUrl) || infoUrl.contains(urlNorm) || urlNorm.contains(infoUrl))) {
+                    return info.path;
+                }
+                if (compressedNorm != null && infoCompressed != null
+                        && (compressedNorm.equals(infoCompressed) || infoCompressed.contains(compressedNorm) || compressedNorm.contains(infoCompressed))) {
+                    return info.path;
+                }
                 String infoName = f.getName();
                 if (urlName != null && infoName.contains(urlName)) return info.path;
                 if (compressedName != null && infoName.contains(compressedName)) return info.path;
@@ -230,84 +321,332 @@ public class ChatHook {
         return null;
     }
 
+    // ===== 新增：hook 输入框上方回复条 =====
+    private static void hookInputReplyBar(ClassLoader cl) {
+        try {
+            Class<?> replyBar = XposedHelpers.findClassIfExists("kr0.d", cl);
+            if (replyBar != null) {
+                XposedBridge.hookAllMethods(replyBar, "b", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) {
+                        resetSelectedReply();
+                    }
+
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) {
+                        try {
+                            Object msg = (p.args != null && p.args.length > 0) ? p.args[0] : null;
+                            applySelectedReply(msg);
+                        } catch (Throwable t) {
+                            log("inputReplyBar.b hook error: " + t.getMessage());
+                        }
+                    }
+                });
+
+                XposedBridge.hookAllMethods(replyBar, "d", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) {
+                        try {
+                            if (p.args != null && p.args.length > 0
+                                    && p.args[0] instanceof Boolean
+                                    && !((Boolean) p.args[0])) {
+                                resetSelectedReply();
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            log("hookInputReplyBar kr0.d fail: " + t.getMessage());
+        }
+
+        try {
+            Class<?> replyHolder = XposedHelpers.findClassIfExists(
+                    "com.hellotalk.talk.detail.widget.reply.ReplyHolderView", cl);
+            if (replyHolder != null) {
+                XposedBridge.hookAllMethods(replyHolder, "setImageMessageImage", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) {
+                        try {
+                            if (p.args == null || p.args.length < 1) return;
+                            String lp = bruteFindLocalImagePathFromBean(p.args[0]);
+                            if (lp != null && new File(lp).exists()) {
+                                currentQuotedImagePath = lp;
+                                currentQuotedImageMissing = false;
+                            } else if ("image".equals(selectedReplyMsgType)
+                                    || "photo".equals(selectedReplyMsgType)) {
+                                currentQuotedImagePath = null;
+                                currentQuotedImageMissing = true;
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            log("hookInputReplyBar ReplyHolderView fail: " + t.getMessage());
+        }
+    }
+
+    private static void resetSelectedReply() {
+        selectedReplyValid = false;
+        selectedReplyText = null;
+        selectedReplyMsgType = null;
+        selectedReplyIsMine = false;
+        selectedReplyMsgId = null;
+        selectedReplySendTime = 0;
+        selectedReplySenderName = null;
+        selectedReplyChatId = null;
+        currentQuotedImagePath = null;
+        currentQuotedImageMissing = false;
+    }
+
+    private static void applySelectedReply(Object msg) {
+        if (msg == null) {
+            resetSelectedReply();
+            return;
+        }
+
+        try {
+            ensureMsgMethods(msg);
+
+            Object isMineObj = invokeQuiet(mIsSender, msg);
+            boolean isMine = (isMineObj instanceof Boolean) && ((Boolean) isMineObj);
+
+            Object mtObj = invokeQuiet(mGetMsgType, msg);
+            String mt = (mtObj != null) ? String.valueOf(mtObj) : "";
+
+            Object idObj = invokeQuiet(mGetMsgId, msg);
+            String id = (idObj != null) ? String.valueOf(idObj) : "";
+
+            Object stObj = invokeQuiet(mGetSendTime, msg);
+            long st = (stObj instanceof Long) ? ((Long) stObj) : System.currentTimeMillis();
+
+            Object snObj = invokeQuiet(mGetSenderName, msg);
+            String sn = (snObj != null) ? String.valueOf(snObj) : "";
+
+            Object cidObj = invokeQuiet(mGetChatId, msg);
+            String cid = (cidObj != null) ? String.valueOf(cidObj) : currentChatId;
+
+            String text = extractMessageTextByType(msg, mt);
+
+            selectedReplyMsgType = mt;
+            selectedReplyIsMine = isMine;
+            selectedReplyMsgId = id;
+            selectedReplySendTime = st;
+            selectedReplySenderName = sn;
+            selectedReplyChatId = cid;
+            selectedReplyText = (text != null && !text.isEmpty())
+                    ? text
+                    : describeNonTextMessage(mt, isMine);
+            selectedReplyValid = true;
+
+            if ("image".equals(mt) || "photo".equals(mt)) {
+                if (currentQuotedImagePath == null) {
+                    currentQuotedImageMissing = true;
+                }
+            } else {
+                currentQuotedImageMissing = false;
+            }
+
+            log("selectedReply: mine=" + isMine + " type=" + mt + " text=" + selectedReplyText);
+        } catch (Throwable t) {
+            resetSelectedReply();
+            log("applySelectedReply error: " + t.getMessage());
+        }
+    }
+
+    private static String extractMessageTextByType(Object msg, String msgType) {
+        if (msg == null) return null;
+        if (!"text".equals(msgType) && !"translate".equals(msgType)) return null;
+
+        try {
+            ensureMsgMethods(msg);
+
+            if ("text".equals(msgType)) {
+                Class<?> textBean = XposedHelpers.findClassIfExists(
+                        "com.hellotalk.talk.detail.delegate.text.IMTextBean",
+                        hostClassLoader);
+                if (textBean == null) return null;
+
+                Object bean = invokeQuiet(mGetMsgContentTyped, msg, textBean, false);
+                if (bean == null) return null;
+
+                Object t = invokeQuiet(ensureBeanGetText(bean), bean);
+                return (t != null) ? String.valueOf(t) : null;
+            }
+
+            if ("translate".equals(msgType)) {
+                Class<?> transBean = XposedHelpers.findClassIfExists(
+                        "com.hellotalk.talk.detail.delegate.translate.IMTranslateBean",
+                        hostClassLoader);
+                if (transBean == null) return null;
+
+                Object bean = invokeQuiet(mGetMsgContentTyped, msg, transBean, false);
+                if (bean == null) return null;
+
+                try {
+                    Object t = XposedHelpers.callMethod(bean, "getSrcText");
+                    return (t != null) ? String.valueOf(t) : null;
+                } catch (Throwable ignored) {
+                    return null;
+                }
+            }
+        } catch (Throwable ignored) {}
+
+        return null;
+    }
+
+    private static String describeNonTextMessage(String mt, boolean isMine) {
+        String who = isMine ? "我" : "对方";
+        if (mt == null) return "[" + who + "发送了一条消息]";
+
+        switch (mt) {
+            case "image":
+            case "photo":
+                return "[" + who + "发送了一张图片]";
+            case "voice":
+            case "audio":
+                return "[" + who + "发送了一条语音]";
+            case "video":
+                return "[" + who + "发送了一段视频]";
+            case "emoji":
+            case "sticker":
+                return "[" + who + "发送了一个表情包]";
+            case "location":
+                return "[" + who + "发送了一个位置]";
+            case "card":
+            case "introduction":
+                return "[" + who + "发送了一张名片]";
+            case "gift":
+                return "[" + who + "发送了一个礼物]";
+            default:
+                return "[" + who + "发送了一条" + mt + "消息]";
+        }
+    }
+
     private static void hookUltimateStealth(ClassLoader cl) {
         try {
-            Class<?> tc = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
-            if (tc != null) XposedBridge.hookAllMethods(tc, "s0", new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) { p.setResult(null); }
-            });
+            Class<?> tc = XposedHelpers.findClassIfExists(
+                    "com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
+            if (tc != null) {
+                XposedBridge.hookAllMethods(tc, "s0", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) {
+                        p.setResult(null);
+                    }
+                });
+            }
         } catch (Throwable ignored) {}
+
         XC_MethodHook kill = new XC_MethodHook() {
-            @Override protected void beforeHookedMethod(MethodHookParam p) { p.setResult(null); }
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) {
+                p.setResult(null);
+            }
         };
+
         try {
             Class<?> za = XposedHelpers.findClassIfExists("z10.a", cl);
-            if (za != null) { XposedBridge.hookAllMethods(za, "m", kill); XposedBridge.hookAllMethods(za, "c0", kill); XposedBridge.hookAllMethods(za, "f0", kill); }
+            if (za != null) {
+                XposedBridge.hookAllMethods(za, "m", kill);
+                XposedBridge.hookAllMethods(za, "c0", kill);
+                XposedBridge.hookAllMethods(za, "f0", kill);
+            }
             Class<?> yb = XposedHelpers.findClassIfExists("y10.b", cl);
-            if (yb != null) { XposedBridge.hookAllMethods(yb, "m", kill); XposedBridge.hookAllMethods(yb, "c0", kill); XposedBridge.hookAllMethods(yb, "f0", kill); }
+            if (yb != null) {
+                XposedBridge.hookAllMethods(yb, "m", kill);
+                XposedBridge.hookAllMethods(yb, "c0", kill);
+                XposedBridge.hookAllMethods(yb, "f0", kill);
+            }
         } catch (Throwable ignored) {}
+
         try {
             Class<?> be = XposedHelpers.findClassIfExists("b20.e", cl);
-            if (be != null) XposedBridge.hookAllMethods(be, "z", new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (p.args != null && p.args.length > 0 && p.args[0] != null) {
-                        String n = p.args[0].getClass().getName();
-                        if ("tm.a".equals(n) || "e20.c".equals(n)) p.setResult(null);
+            if (be != null) {
+                XposedBridge.hookAllMethods(be, "z", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) {
+                        if (p.args != null && p.args.length > 0 && p.args[0] != null) {
+                            String n = p.args[0].getClass().getName();
+                            if ("tm.a".equals(n) || "e20.c".equals(n)) p.setResult(null);
+                        }
                     }
-                }
-            });
+                });
+            }
         } catch (Throwable ignored) {}
+
         try {
             Class<?> ec = XposedHelpers.findClassIfExists("e20.c", cl);
-            if (ec != null) XposedBridge.hookAllMethods(ec, "f", new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) { p.setResult(new byte[0]); }
-            });
+            if (ec != null) {
+                XposedBridge.hookAllMethods(ec, "f", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) {
+                        p.setResult(new byte[0]);
+                    }
+                });
+            }
         } catch (Throwable ignored) {}
     }
 
     private static void hookTextViewRender(ClassLoader cl) {
         if (htTextViewClass == null) return;
+
         XC_MethodHook renderLogic = new XC_MethodHook() {
-            @Override protected void beforeHookedMethod(MethodHookParam param) {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
                 try {
                     if (param.thisObject instanceof EditText) return;
                     if (!htTextViewClass.isInstance(param.thisObject)) return;
-                    CharSequence cs = (CharSequence) param.args[0]; if (cs == null) return;
-                    String s = cs.toString(); if (s.isEmpty() || s.length() > 5000) return;
-                    if (s.endsWith(" \uD83C\uDF10") || s.endsWith(" \uD83D\uDD04")) return;
+
+                    CharSequence cs = (CharSequence) param.args[0];
+                    if (cs == null) return;
+
+                    String s = cs.toString();
+                    if (s.isEmpty() || s.length() > 5000) return;
+                    if (s.endsWith(" 🌐") || s.endsWith(" 🔄")) return;
+
                     String d = AITranslator.getDraftFuzzy(s);
                     if (d == null) d = AITranslator.getChineseByForeign(s);
                     if (d != null && !d.equals(s)) {
                         SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
-                        ssb.append(" \uD83C\uDF10"); param.args[0] = ssb;
+                        ssb.append(" 🌐");
+                        param.args[0] = ssb;
                     }
                 } catch (Throwable ignored) {}
             }
         };
+
         try {
             XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText",
                     CharSequence.class, TextView.BufferType.class, renderLogic);
         } catch (Throwable t) {}
+
         try {
             XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText",
                     CharSequence.class, renderLogic);
         } catch (Throwable t) {}
+
         try {
             XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText",
                     char[].class, int.class, int.class, new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam param) {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam param) {
                             try {
                                 if (param.thisObject instanceof EditText) return;
                                 if (!htTextViewClass.isInstance(param.thisObject)) return;
+
                                 char[] chars = (char[]) param.args[0];
-                                int start = (int) param.args[1], len = (int) param.args[2];
+                                int start = (int) param.args[1];
+                                int len = (int) param.args[2];
                                 if (chars == null || len <= 0 || len > 5000) return;
+
                                 String s = new String(chars, start, len);
-                                if (s.endsWith(" \uD83C\uDF10") || s.endsWith(" \uD83D\uDD04")) return;
+                                if (s.endsWith(" 🌐") || s.endsWith(" 🔄")) return;
+
                                 String d = AITranslator.getDraftFuzzy(s);
                                 if (d == null) d = AITranslator.getChineseByForeign(s);
                                 if (d != null && !d.equals(s)) {
-                                    String ns = s + " \uD83C\uDF10";
+                                    String ns = s + " 🌐";
                                     param.args[0] = ns.toCharArray();
                                     param.args[1] = 0;
                                     param.args[2] = ns.length();
@@ -320,76 +659,110 @@ public class ChatHook {
 
     private static void hookClipboard(ClassLoader cl) {
         XC_MethodHook h = new XC_MethodHook() {
-            @Override protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
                 ClipData cd = (ClipData) p.args[0];
                 if (cd != null && cd.getItemCount() > 0) {
                     CharSequence t = cd.getItemAt(0).getText();
                     if (t != null) {
                         String ts = t.toString();
-                        if (cd.getDescription() != null && "HT_AI_Copy".equals(cd.getDescription().getLabel())) return;
-                        if (!ts.endsWith(" \uD83C\uDF10") && !ts.endsWith(" \uD83D\uDD04") && !ts.matches(".*[\\u4e00-\\u9fa5]+.*")) return;
+                        if (cd.getDescription() != null && "HT_AI_Copy".equals(cd.getDescription().getLabel())) {
+                            return;
+                        }
+                        if (!ts.endsWith(" 🌐") && !ts.endsWith(" 🔄") && !ts.matches(".*[\\u4e00-\\u9fa5]+.*")) {
+                            return;
+                        }
                         try {
                             String orig = AITranslator.getForeignFuzzy(ts);
-                            if (orig != null && !orig.trim().isEmpty() && !orig.equals(ts))
+                            if (orig != null && !orig.trim().isEmpty() && !orig.equals(ts)) {
                                 p.args[0] = ClipData.newPlainText("HT_AI", orig);
+                            }
                         } catch (Throwable ignored) {}
                     }
                 }
             }
         };
-        try { XposedHelpers.findAndHookMethod("android.content.ClipboardManager", cl, "setPrimaryClip", ClipData.class, h); }
-        catch (Throwable ignored) {}
+
+        try {
+            XposedHelpers.findAndHookMethod("android.content.ClipboardManager", cl,
+                    "setPrimaryClip", ClipData.class, h);
+        } catch (Throwable ignored) {}
     }
 
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
         XposedHelpers.findAndHookMethod(HT_TEXT_VIEW_CLASS, cl, "onTouchEvent", MotionEvent.class,
-            new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    TextView tv = (TextView) p.thisObject; MotionEvent ev = (MotionEvent) p.args[0];
-                    if (ev == null) return;
-                    CharSequence cs = tv.getText(); if (cs == null) return;
-                    String s = cs.toString();
-                    if (!s.endsWith(" \uD83D\uDD04") && !s.endsWith(" \uD83C\uDF10")) return;
-                    Layout lay = tv.getLayout(); if (lay == null) return;
-                    int line = lay.getLineForVertical((int) ev.getY());
-                    int off = lay.getOffsetForHorizontal(line, ev.getX());
-                    if (off < s.length() - 2) return;
-                    if (ev.getAction() == MotionEvent.ACTION_UP) {
-                        String clean = s.substring(0, s.length() - 2).trim();
-                        if (s.endsWith(" \uD83D\uDD04")) {
-                            String orig = AITranslator.getForeignByChinese(clean);
-                            if (orig == null) orig = AITranslator.getForeignByDraftChinese(clean);
-                            if (orig != null && !orig.equals(clean)) tv.setText(orig + " \uD83C\uDF10");
-                        } else {
-                            String zh = AITranslator.getChineseByForeign(clean);
-                            if (zh == null) zh = AITranslator.getDraftFuzzy(clean);
-                            if (zh != null && !zh.equals(clean)) tv.setText(zh + " \uD83D\uDD04");
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
+                        TextView tv = (TextView) p.thisObject;
+                        MotionEvent ev = (MotionEvent) p.args[0];
+                        if (ev == null) return;
+
+                        CharSequence cs = tv.getText();
+                        if (cs == null) return;
+
+                        String s = cs.toString();
+                        if (!s.endsWith(" 🔄") && !s.endsWith(" 🌐")) return;
+
+                        Layout lay = tv.getLayout();
+                        if (lay == null) return;
+
+                        int line = lay.getLineForVertical((int) ev.getY());
+                        int off = lay.getOffsetForHorizontal(line, ev.getX());
+                        if (off < s.length() - 2) return;
+
+                        if (ev.getAction() == MotionEvent.ACTION_UP) {
+                            String clean = s.substring(0, s.length() - 2).trim();
+                            if (s.endsWith(" 🔄")) {
+                                String orig = AITranslator.getForeignByChinese(clean);
+                                if (orig == null) orig = AITranslator.getForeignByDraftChinese(clean);
+                                if (orig != null && !orig.equals(clean)) tv.setText(orig + " 🌐");
+                            } else {
+                                String zh = AITranslator.getChineseByForeign(clean);
+                                if (zh == null) zh = AITranslator.getDraftFuzzy(clean);
+                                if (zh != null && !zh.equals(clean)) tv.setText(zh + " 🔄");
+                            }
+                            p.setResult(true);
+                        } else if (ev.getAction() == MotionEvent.ACTION_DOWN) {
+                            p.setResult(true);
                         }
-                        p.setResult(true);
-                    } else if (ev.getAction() == MotionEvent.ACTION_DOWN) p.setResult(true);
-                }
-            });
+                    }
+                });
     }
 
     private static void hookStartChat(ClassLoader cl) throws Exception {
-        XposedHelpers.findAndHookMethod("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl,
-            "startChat", int.class, int.class, new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam p) {
-                    currentChatId = String.valueOf(p.args[0]); currentChatType = (int) p.args[1];
-                    latestNationality = ""; latestNativeLang = 1; latestPartnerName = ""; currentPartnerName = "";
-                    currentQuotedImagePath = null; currentQuotedImageMissing = false;
-                    final Object vm = p.thisObject;
-                    new Thread(() -> {
-                        try {
-                            Field f = vm.getClass().getDeclaredField("chatUser"); f.setAccessible(true);
-                            for (int i = 0; i < 6; i++) {
-                                Object cu = f.get(vm); if (cu != null) { updateFromChatUser(cu); return; }
-                                Thread.sleep(500);
-                            }
-                        } catch (Exception ignored) {}
-                    }).start();
-                }
-            });
+        XposedHelpers.findAndHookMethod(
+                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl,
+                "startChat", int.class, int.class, new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) {
+                        currentChatId = String.valueOf(p.args[0]);
+                        currentChatType = (int) p.args[1];
+                        latestNationality = "";
+                        latestNativeLang = 1;
+                        latestPartnerName = "";
+                        currentPartnerName = "";
+                        currentQuotedImagePath = null;
+                        currentQuotedImageMissing = false;
+                        resetSelectedReply();
+
+                        final Object vm = p.thisObject;
+                        new Thread(() -> {
+                            try {
+                                Field f = vm.getClass().getDeclaredField("chatUser");
+                                f.setAccessible(true);
+                                for (int i = 0; i < 6; i++) {
+                                    Object cu = f.get(vm);
+                                    if (cu != null) {
+                                        updateFromChatUser(cu);
+                                        return;
+                                    }
+                                    Thread.sleep(500);
+                                }
+                            } catch (Exception ignored) {}
+                        }).start();
+                    }
+                });
     }
 
     private static void updateFromChatUser(Object chatUser) {
@@ -398,98 +771,75 @@ public class ChatHook {
             String nat = (String) XposedHelpers.callMethod(chatUser, "getNationality");
             String nn = (String) XposedHelpers.callMethod(chatUser, "getNickName");
             String un = (String) XposedHelpers.callMethod(chatUser, "getUserName");
-            latestNativeLang = nl; latestNationality = nat != null ? nat : "";
+
+            latestNativeLang = nl;
+            latestNationality = nat != null ? nat : "";
             latestPartnerName = (nn != null && !nn.isEmpty()) ? nn : (un != null ? un : "");
+
             if (!latestPartnerName.isEmpty()) currentPartnerName = latestPartnerName;
+
             if (!currentChatId.isEmpty() && !"0".equals(currentChatId)) {
                 AITranslator.updateFriendNationality(currentChatId, latestNationality);
             }
-            log("\u56fd\u7c4d\u539f\u6587: [" + latestNationality + "] \u6bcd\u8bed\u7801: " + nl);
+            log("国籍原文: [" + latestNationality + "] 母语码: " + nl);
         } catch (Throwable ignored) {}
     }
 
     private static void hookLang(ClassLoader cl) throws Exception {
         Class<?> vm = XposedHelpers.findClass("com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
-        Field uf = vm.getDeclaredField("chatUser"); uf.setAccessible(true);
+        Field uf = vm.getDeclaredField("chatUser");
+        uf.setAccessible(true);
+
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
-        XposedHelpers.findAndHookMethod(vm, "generateChatMessage", hm, boolean.class, new XC_MethodHook() {
-            @Override protected void afterHookedMethod(MethodHookParam p) {
-                try { Object u = uf.get(p.thisObject); if (u != null) partnerLang = (Integer) XposedHelpers.callMethod(u, "getNativeLang"); }
-                catch (Throwable ignored) {}
-            }
-        });
+
+        XposedHelpers.findAndHookMethod(vm, "generateChatMessage", hm, boolean.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) {
+                        try {
+                            Object u = uf.get(p.thisObject);
+                            if (u != null) {
+                                partnerLang = (Integer) XposedHelpers.callMethod(u, "getNativeLang");
+                            }
+                        } catch (Throwable ignored) {}
+                    }
+                });
     }
 
     private static void hookImageRenderLayer(ClassLoader cl) {
         try {
-            Class<?> imc = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.widget.msgcard.ImageMsgCard", cl);
-            if (imc != null) XposedBridge.hookAllMethods(imc, "c", new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                    if (p.args == null || p.args.length < 2) return;
-                    Object ib = p.args[0]; Object fpo = p.args[1];
-                    if (!(fpo instanceof String)) return;
-                    String fp = (String) fpo; File img = new File(fp);
-                    if (!img.exists() || img.length() <= 0) return;
-                    String url = null, cu = null;
-                    try { url = (String) XposedHelpers.callMethod(ib, "getUrl"); } catch (Throwable ignored) {}
-                    try { cu = (String) XposedHelpers.callMethod(ib, "getCompressedUrl"); } catch (Throwable ignored) {}
-                    putImageMapping(url, fp); putImageMapping(cu, fp);
-                    putImageMapping(safeNormalize(url), fp); putImageMapping(safeNormalize(cu), fp);
-                    String un = fileNameFromUrl(url), cn = fileNameFromUrl(cu);
-                    if (un != null) putImageMapping("fname:" + un, fp);
-                    if (cn != null) putImageMapping("fname:" + cn, fp);
-                    addRenderedImageRecord(fp, url, cu);
-                }
-            });
-        } catch (Throwable ignored) {}
-    }
+            Class<?> imc = XposedHelpers.findClassIfExists(
+                    "com.hellotalk.talk.detail.widget.msgcard.ImageMsgCard", cl);
+            if (imc != null) {
+                XposedBridge.hookAllMethods(imc, "c", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+                        if (p.args == null || p.args.length < 2) return;
 
-    private static void hookReplyMessageView(ClassLoader cl) {
-        try {
-            Class<?> rv = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.widget.ReplyMessageView", cl);
-            if (rv != null) {
-                XposedBridge.hookAllMethods(rv, "A", new XC_MethodHook() {
-                    @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                        Object msg = (p.args != null && p.args.length > 0) ? p.args[0] : null;
-                        currentQuotedImagePath = null; currentQuotedImageMissing = false;
-                        if (msg == null) return;
-                        try { String mt = (String) XposedHelpers.callMethod(msg, "getMsgType");
-                            if ("image".equals(mt) || "photo".equals(mt)) currentQuotedImageMissing = true; }
-                        catch (Throwable ignored) {}
-                    }
-                });
-                XposedBridge.hookAllMethods(rv, "B", new XC_MethodHook() {
-                    @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                        try { if (p.args != null && p.args.length >= 2 && p.args[1] != null &&
-                                "image".equals(XposedHelpers.callMethod(p.args[1], "getMsgType"))) currentQuotedImageMissing = true; }
-                        catch (Throwable ignored) {}
-                    }
-                });
-                XposedBridge.hookAllMethods(rv, "setImageMessageImage", new XC_MethodHook() {
-                    @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                        if (p.args == null || p.args.length < 1) return;
-                        String lp = bruteFindLocalImagePathFromBean(p.args[0]);
-                        if (lp != null && new File(lp).exists()) { currentQuotedImagePath = lp; currentQuotedImageMissing = false; }
-                        else { currentQuotedImagePath = null; currentQuotedImageMissing = true; }
-                    }
-                });
-            }
-        } catch (Throwable ignored) {}
-        try {
-            Class<?> rh = XposedHelpers.findClassIfExists("com.hellotalk.talk.detail.widget.reply.ReplyHolderView", cl);
-            if (rh != null) {
-                XposedBridge.hookAllMethods(rh, "f", new XC_MethodHook() {
-                    @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                        try { if (p.args != null && p.args.length >= 2 && p.args[1] != null &&
-                                "image".equals(XposedHelpers.callMethod(p.args[1], "getMsgType"))) currentQuotedImageMissing = true; }
-                        catch (Throwable ignored) {}
-                    }
-                });
-                XposedBridge.hookAllMethods(rh, "setImageMessageImage", new XC_MethodHook() {
-                    @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
-                        if (p.args == null || p.args.length < 1) return;
-                        String lp = bruteFindLocalImagePathFromBean(p.args[0]);
-                        if (lp != null && new File(lp).exists()) currentQuotedImagePath = lp;
+                        Object ib = p.args[0];
+                        Object fpo = p.args[1];
+                        if (!(fpo instanceof String)) return;
+
+                        String fp = (String) fpo;
+                        File img = new File(fp);
+                        if (!img.exists() || img.length() <= 0) return;
+
+                        String url = null;
+                        String cu = null;
+                        try { url = (String) XposedHelpers.callMethod(ib, "getUrl"); } catch (Throwable ignored) {}
+                        try { cu = (String) XposedHelpers.callMethod(ib, "getCompressedUrl"); } catch (Throwable ignored) {}
+
+                        putImageMapping(url, fp);
+                        putImageMapping(cu, fp);
+                        putImageMapping(safeNormalize(url), fp);
+                        putImageMapping(safeNormalize(cu), fp);
+
+                        String un = fileNameFromUrl(url);
+                        String cn = fileNameFromUrl(cu);
+                        if (un != null) putImageMapping("fname:" + un, fp);
+                        if (cn != null) putImageMapping("fname:" + cn, fp);
+
+                        addRenderedImageRecord(fp, url, cu);
                     }
                 });
             }
@@ -498,246 +848,312 @@ public class ChatHook {
 
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
-        XposedHelpers.findAndHookMethod(hm, "getMessageContent", Class.class, boolean.class, new XC_MethodHook() {
-            @Override protected void afterHookedMethod(MethodHookParam p) {
-                try {
-                    Object msg = p.thisObject; ensureMsgMethods(msg);
-                    Object iso = invokeQuiet(mIsSender, msg);
-                    if (!(iso instanceof Boolean)) return;
-                    boolean isMine = (Boolean) iso;
-                    Object bean = p.getResult(); if (bean == null) return;
 
-                    String eid = "0";
-                    Object cidO = invokeQuiet(mGetChatId, msg);
-                    if (cidO != null) eid = String.valueOf(cidO);
-                    if ("0".equals(eid) || "null".equals(eid)) eid = currentChatId;
-                    final String chatId = eid;
+        XposedHelpers.findAndHookMethod(hm, "getMessageContent", Class.class, boolean.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) {
+                        try {
+                            Object msg = p.thisObject;
+                            ensureMsgMethods(msg);
 
-                    String sn = null;
-                    Object sno = invokeQuiet(mGetSenderName, msg);
-                    if (sno != null) sn = String.valueOf(sno);
-                    if (sn != null && !sn.isEmpty() && !isMine) {
-                        AITranslator.registerFriend(chatId, sn, AITranslator.getFriendLang(chatId), latestNationality);
-                    }
+                            Object iso = invokeQuiet(mIsSender, msg);
+                            if (!(iso instanceof Boolean)) return;
+                            boolean isMine = (Boolean) iso;
 
-                    Method gtm = ensureBeanGetText(bean);
-                    Object to = invokeQuiet(gtm, bean);
-                    String text = (to != null) ? String.valueOf(to) : null;
-                    Object mto = invokeQuiet(mGetMsgType, msg);
-                    String mt = (mto != null) ? String.valueOf(mto) : null;
+                            Object bean = p.getResult();
+                            if (bean == null) return;
 
-                    if (text == null || text.isEmpty()) {
-                        if ("image".equals(mt) || "photo".equals(mt)) text = "[\u5bf9\u65b9\u53d1\u9001\u4e86\u4e00\u5f20\u56fe\u7247]";
-                        else if ("voice".equals(mt) || "audio".equals(mt)) text = "[\u5bf9\u65b9\u53d1\u9001\u4e86\u4e00\u6761\u8bed\u97f3]";
-                        else if ("video".equals(mt)) text = "[\u5bf9\u65b9\u53d1\u9001\u4e86\u4e00\u6bb5\u89c6\u9891]";
-                        else if ("emoji".equals(mt) || "sticker".equals(mt)) text = "[\u5bf9\u65b9\u53d1\u9001\u4e86\u4e00\u4e2a\u8868\u60c5\u5305]";
-                        else return;
-                    }
+                            String eid = "0";
+                            Object cidO = invokeQuiet(mGetChatId, msg);
+                            if (cidO != null) eid = String.valueOf(cidO);
+                            if ("0".equals(eid) || "null".equals(eid)) eid = currentChatId;
+                            final String chatId = eid;
 
-                    if (isMine && pendingSelectedForeign != null && pendingSelectedForeign.equals(text)) {
-                        pendingSelectedForeign = null;
-                        lastPickerResult = null;
-                        uiHandler.post(() -> {
-                            if (versionButton != null) versionButton.setVisibility(View.GONE);
-                        });
-                    }
+                            String sn = null;
+                            Object sno = invokeQuiet(mGetSenderName, msg);
+                            if (sno != null) sn = String.valueOf(sno);
+                            if (sn != null && !sn.isEmpty() && !isMine) {
+                                AITranslator.registerFriend(chatId, sn, AITranslator.getFriendLang(chatId), latestNationality);
+                            }
 
-                    Object mio = invokeQuiet(mGetMsgId, msg);
-                    String mid = (mio != null) ? String.valueOf(mio) : null;
-                    if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
-                    long st = System.currentTimeMillis();
-                    Object sto = invokeQuiet(mGetSendTime, msg);
-                    if (sto instanceof Long) st = (Long) sto;
+                            Method gtm = ensureBeanGetText(bean);
+                            Object to = invokeQuiet(gtm, bean);
+                            String text = (to != null) ? String.valueOf(to) : null;
 
-                    String quotedText = null;
-                    try {
-                        Object ri = invokeQuiet(mGetReplyInfo, msg);
-                        if (ri != null) {
-                            Object rIs = invokeQuiet(mIsSender, ri);
-                            boolean rIm = (rIs instanceof Boolean) && (Boolean) rIs;
-                            Object rmt = invokeQuiet(mGetMsgType, ri);
-                            String rmtS = (rmt != null) ? String.valueOf(rmt) : null;
-                            if ("text".equals(rmtS)) {
-                                Class<?> jbc = XposedHelpers.findClass("com.hellotalk.lib.im.entity.base.HTIMJsonBean", cl);
-                                Object cb = invokeQuiet(mGetMsgContentTyped, ri, jbc, true);
-                                if (cb != null) {
-                                    Method cgt = ensureBeanGetText(cb);
-                                    Object qt = invokeQuiet(cgt, cb);
-                                    if (qt != null) {
-                                        String rq = String.valueOf(qt);
-                                        if (rIm) {
-                                            String mc = AITranslator.getChineseByForeign(rq);
-                                            if (mc == null) mc = AITranslator.getDraftFuzzy(rq);
-                                            quotedText = (mc != null) ? mc : rq;
-                                        } else quotedText = rq;
+                            Object mto = invokeQuiet(mGetMsgType, msg);
+                            String mt = (mto != null) ? String.valueOf(mto) : null;
+
+                            if (text == null || text.isEmpty()) {
+                                if ("image".equals(mt) || "photo".equals(mt)) {
+                                    text = "[对方发送了一张图片]";
+                                } else if ("voice".equals(mt) || "audio".equals(mt)) {
+                                    text = "[对方发送了一条语音]";
+                                } else if ("video".equals(mt)) {
+                                    text = "[对方发送了一段视频]";
+                                } else if ("emoji".equals(mt) || "sticker".equals(mt)) {
+                                    text = "[对方发送了一个表情包]";
+                                } else {
+                                    return;
+                                }
+                            }
+
+                            if (isMine && pendingSelectedForeign != null && pendingSelectedForeign.equals(text)) {
+                                pendingSelectedForeign = null;
+                                lastPickerResult = null;
+                                uiHandler.post(() -> {
+                                    if (versionButton != null) versionButton.setVisibility(View.GONE);
+                                });
+                            }
+
+                            Object mio = invokeQuiet(mGetMsgId, msg);
+                            String mid = (mio != null) ? String.valueOf(mio) : null;
+                            if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
+
+                            long st = System.currentTimeMillis();
+                            Object sto = invokeQuiet(mGetSendTime, msg);
+                            if (sto instanceof Long) st = (Long) sto;
+
+                            String quotedText = null;
+                            try {
+                                Object ri = invokeQuiet(mGetReplyInfo, msg);
+                                if (ri != null) {
+                                    Object rIs = invokeQuiet(mIsSender, ri);
+                                    boolean rIm = (rIs instanceof Boolean) && ((Boolean) rIs);
+
+                                    Object rmt = invokeQuiet(mGetMsgType, ri);
+                                    String rmtS = (rmt != null) ? String.valueOf(rmt) : null;
+
+                                    if ("text".equals(rmtS) || "translate".equals(rmtS)) {
+                                        String rq = extractMessageTextByType(ri, rmtS);
+                                        if (rq != null && !rq.isEmpty()) {
+                                            if (rIm) {
+                                                String mc = AITranslator.getChineseByForeign(rq);
+                                                if (mc == null) mc = AITranslator.getDraftFuzzy(rq);
+                                                quotedText = (mc != null) ? mc : rq;
+                                            } else {
+                                                quotedText = rq;
+                                            }
+                                        }
+                                    } else if (rmtS != null) {
+                                        quotedText = "[" + rmtS + "]";
                                     }
                                 }
-                            } else if (rmtS != null) quotedText = "[" + rmtS + "]";
-                        }
-                    } catch (Exception ignored) {}
-
-                    final boolean oneTime = isMine && text != null && AITranslator.consumeSuppressSent(text);
-
-                    final boolean isPureSymbol = !AITranslator.hasAnyLetterOrDigit(text);
-                    boolean isNew = recordedMsgIds.add(chatId + "_" + mid);
-                    if (isNew) {
-                        final String fm = mid, ft = text, fq = quotedText; final long fst = st; final boolean fmn = isMine;
-                        historyExecutor.execute(() -> {
-                            if (fmn) AITranslator.appendHistory(chatId, fm, "assistant", ft, fst, fq, oneTime);
-                            else AITranslator.appendHistory(chatId, fm, "user", ft, fst, fq, false);
-                        });
-                    }
-
-                    if (isPureSymbol && !isMine) {
-                        final String ft3 = text; final Object fb3 = bean; final String fc3 = chatId;
-                        new Thread(() -> {
-                            try {
-                                String display = AITranslator.analyzePureSymbol(ft3, fc3);
-                                if (display != null && !display.isEmpty() && !display.equals(ft3))
-                                    try { XposedHelpers.callMethod(fb3, "setText", display); } catch (Exception ignored) {}
                             } catch (Exception ignored) {}
-                        }).start();
-                        return;
-                    }
 
-                    if (text.startsWith("[")) return;
-                    if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
+                            final boolean oneTime = isMine && text != null && AITranslator.consumeSuppressSent(text);
 
-                    if (isMine) {
-                        String d = AITranslator.getDraftFuzzy(text);
-                        if (d == null) d = AITranslator.getChineseByForeign(text);
-                        if (d != null) {
-                            AITranslator.cacheResult(mid, text, d);
-                            final Object fbk = bean; final String ftk = text;
-                            new Thread(() -> {
-                                try { Thread.sleep(150); } catch (InterruptedException ignored) {}
-                                try { XposedHelpers.callMethod(fbk, "setText", ftk); } catch (Exception ignored) {}
-                            }).start();
-                        } else {
-                            final String ft2 = text, fc2 = chatId, fm2 = mid;
-                            final Object fb2 = bean;
-                            if (reverseTranslatedMsgIds.add(fm2)) reverseTranslateExecutor.execute(() -> {
-                                try {
-                                    String zh = AITranslator.reverseTranslateMyForeign(ft2, fc2);
-                                    if (zh != null && !zh.isEmpty()) {
-                                        AITranslator.cacheResult(fm2, ft2, zh);
-                                        AITranslator.rememberDraft(ft2, zh);
-                                        reverseRetryMap.remove(fm2);
-                                        try { XposedHelpers.callMethod(fb2, "setText", ft2); } catch (Exception ignored) {}
+                            final boolean isPureSymbol = !AITranslator.hasAnyLetterOrDigit(text);
+                            boolean isNew = recordedMsgIds.add(chatId + "_" + mid);
+                            if (isNew) {
+                                final String fm = mid;
+                                final String ft = text;
+                                final String fq = quotedText;
+                                final long fst = st;
+                                final boolean fmn = isMine;
+                                historyExecutor.execute(() -> {
+                                    if (fmn) {
+                                        AITranslator.appendHistory(chatId, fm, "assistant", ft, fst, fq, oneTime);
                                     } else {
-                                        int rc = reverseRetryMap.getOrDefault(fm2, 0);
-                                        if (rc < 2) { reverseRetryMap.put(fm2, rc + 1); reverseTranslatedMsgIds.remove(fm2); }
+                                        AITranslator.appendHistory(chatId, fm, "user", ft, fst, fq, false);
+                                    }
+                                });
+                            }
+
+                            if (isPureSymbol && !isMine) {
+                                final String ft3 = text;
+                                final Object fb3 = bean;
+                                final String fc3 = chatId;
+                                new Thread(() -> {
+                                    try {
+                                        String display = AITranslator.analyzePureSymbol(ft3, fc3);
+                                        if (display != null && !display.isEmpty() && !display.equals(ft3)) {
+                                            try { XposedHelpers.callMethod(fb3, "setText", display); } catch (Exception ignored) {}
+                                        }
+                                    } catch (Exception ignored) {}
+                                }).start();
+                                return;
+                            }
+
+                            if (text.startsWith("[")) return;
+                            if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
+
+                            if (isMine) {
+                                String d = AITranslator.getDraftFuzzy(text);
+                                if (d == null) d = AITranslator.getChineseByForeign(text);
+                                if (d != null) {
+                                    AITranslator.cacheResult(mid, text, d);
+                                    final Object fbk = bean;
+                                    final String ftk = text;
+                                    new Thread(() -> {
+                                        try { Thread.sleep(150); } catch (InterruptedException ignored) {}
+                                        try { XposedHelpers.callMethod(fbk, "setText", ftk); } catch (Exception ignored) {}
+                                    }).start();
+                                } else {
+                                    final String ft2 = text;
+                                    final String fc2 = chatId;
+                                    final String fm2 = mid;
+                                    final Object fb2 = bean;
+                                    if (reverseTranslatedMsgIds.add(fm2)) {
+                                        reverseTranslateExecutor.execute(() -> {
+                                            try {
+                                                String zh = AITranslator.reverseTranslateMyForeign(ft2, fc2);
+                                                if (zh != null && !zh.isEmpty()) {
+                                                    AITranslator.cacheResult(fm2, ft2, zh);
+                                                    AITranslator.rememberDraft(ft2, zh);
+                                                    reverseRetryMap.remove(fm2);
+                                                    try { XposedHelpers.callMethod(fb2, "setText", ft2); } catch (Exception ignored) {}
+                                                } else {
+                                                    int rc = reverseRetryMap.getOrDefault(fm2, 0);
+                                                    if (rc < 2) {
+                                                        reverseRetryMap.put(fm2, rc + 1);
+                                                        reverseTranslatedMsgIds.remove(fm2);
+                                                    }
+                                                }
+                                            } catch (Exception ignored) {
+                                                int rc = reverseRetryMap.getOrDefault(fm2, 0);
+                                                if (rc < 2) {
+                                                    reverseRetryMap.put(fm2, rc + 1);
+                                                    reverseTranslatedMsgIds.remove(fm2);
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
+                                return;
+                            }
+
+                            String[] cached = AITranslator.getCached(mid);
+                            if (cached != null) {
+                                try {
+                                    XposedHelpers.callMethod(bean, "setText",
+                                            cached[1].replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
+                                } catch (Exception ignored) {}
+                                return;
+                            }
+
+                            if (!translating.add(mid)) return;
+
+                            final String ft = text;
+                            final String fm = mid;
+                            final Object fb = bean;
+
+                            new Thread(() -> {
+                                try {
+                                    String t = null;
+                                    try {
+                                        t = AITranslator.toChinese(ft, chatId);
+                                    } catch (Exception fe) {
+                                        String m = fe.getMessage() == null ? "" : fe.getMessage();
+                                        if (!m.contains("Key未配置") && !m.contains("未初始化")) {
+                                            try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
+                                            t = AITranslator.toChinese(ft, chatId);
+                                        }
+                                    }
+
+                                    if (t != null && !t.trim().isEmpty() && !t.equals(ft)) {
+                                        AITranslator.cacheResult(fm, ft, t);
+                                        try {
+                                            XposedHelpers.callMethod(fb, "setText",
+                                                    t.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
+                                        } catch (Exception ignored) {}
                                     }
                                 } catch (Exception ignored) {
-                                    int rc = reverseRetryMap.getOrDefault(fm2, 0);
-                                    if (rc < 2) { reverseRetryMap.put(fm2, rc + 1); reverseTranslatedMsgIds.remove(fm2); }
+                                } finally {
+                                    translating.remove(fm);
                                 }
-                            });
-                        }
-                        return;
+                            }).start();
+
+                        } catch (Throwable ignored) {}
                     }
-
-                    String[] cached = AITranslator.getCached(mid);
-                    if (cached != null) {
-                        try { XposedHelpers.callMethod(bean, "setText", cached[1].replaceAll("[\\s\uD83C\uDF10\uD83D\uDD04]+$", "") + " \uD83D\uDD04"); }
-                        catch (Exception ignored) {}
-                        return;
-                    }
-
-                    if (!translating.add(mid)) return;
-                    final String ft = text, fm = mid; final Object fb = bean;
-                    new Thread(() -> {
-                        try {
-                            String t = null;
-                            try { t = AITranslator.toChinese(ft, chatId); }
-                            catch (Exception fe) {
-                                String m = fe.getMessage() == null ? "" : fe.getMessage();
-                                if (!m.contains("Key未配置") && !m.contains("未初始化")) {
-                                    try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
-                                    t = AITranslator.toChinese(ft, chatId);
-                                }
-                            }
-                            if (t != null && !t.trim().isEmpty() && !t.equals(ft)) {
-                                AITranslator.cacheResult(fm, ft, t);
-                                try { XposedHelpers.callMethod(fb, "setText", t.replaceAll("[\\s\uD83C\uDF10\uD83D\uDD04]+$", "") + " \uD83D\uDD04"); }
-                                catch (Exception ignored) {}
-                            }
-                        } catch (Exception ignored) {} finally { translating.remove(fm); }
-                    }).start();
-
-                } catch (Throwable ignored) {}
-            }
-        });
+                });
     }
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
         Class<?> bc = XposedHelpers.findClass("com.hellotalk.chat.ui.ChatInputBoxView", cl);
         XposedBridge.hookAllConstructors(bc, new XC_MethodHook() {
-            @Override protected void afterHookedMethod(MethodHookParam p) { ((View) p.thisObject).postDelayed(() -> tryAddBtn((View) p.thisObject), 2000); }
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                ((View) p.thisObject).postDelayed(() -> tryAddBtn((View) p.thisObject), 2000);
+            }
         });
     }
 
     private static void hookBtnNew(ClassLoader cl) throws Exception {
-        Class<?> oc = XposedHelpers.findClass("com.hellotalk.talk.detail.widget.input.ChatInputUIOperate", cl);
+        Class<?> oc = XposedHelpers.findClass(
+                "com.hellotalk.talk.detail.widget.input.ChatInputUIOperate", cl);
         XposedBridge.hookAllConstructors(oc, new XC_MethodHook() {
-            @Override protected void afterHookedMethod(MethodHookParam p) { ((View) p.thisObject).postDelayed(() -> tryAddBtn((View) p.thisObject), 2500); }
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                ((View) p.thisObject).postDelayed(() -> tryAddBtn((View) p.thisObject), 2500);
+            }
         });
     }
 
     private static void tryAddBtn(View box) {
-        EditText edit = findEditIn(box); if (edit != null) addTranslateBtn((ViewGroup) box, edit);
+        EditText edit = findEditIn(box);
+        if (edit != null) addTranslateBtn((ViewGroup) box, edit);
     }
 
     private static EditText findEditIn(View v) {
-        try { for (Field f : v.getClass().getDeclaredFields()) { f.setAccessible(true); Object val = f.get(v); if (val instanceof EditText) return (EditText) val; } }
-        catch (Exception ignored) {}
+        try {
+            for (Field f : v.getClass().getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(v);
+                if (val instanceof EditText) return (EditText) val;
+            }
+        } catch (Exception ignored) {}
+
         if (v instanceof ViewGroup) {
             ViewGroup g = (ViewGroup) v;
             for (int i = 0; i < g.getChildCount(); i++) {
                 View c = g.getChildAt(i);
                 if (c instanceof EditText) return (EditText) c;
-                EditText found = findEditIn(c); if (found != null) return found;
+                EditText found = findEditIn(c);
+                if (found != null) return found;
             }
-        }
-        return null;
-    }
-
-    private static String getQuoteReplyText(View root) {
-        if (root == null) return null;
-        if (root instanceof TextView) {
-            TextView tv = (TextView) root;
-            try { if ("tvReplyDesc".equalsIgnoreCase(tv.getResources().getResourceEntryName(tv.getId())) && tv.getVisibility() == View.VISIBLE) return tv.getText().toString(); }
-            catch (Exception ignored) {}
-        }
-        if (root instanceof ViewGroup) {
-            ViewGroup vg = (ViewGroup) root;
-            for (int i = 0; i < vg.getChildCount(); i++) { String r = getQuoteReplyText(vg.getChildAt(i)); if (r != null) return r; }
         }
         return null;
     }
 
     private static View findNativeSendBtn(ViewGroup root) {
         if (root == null) return null;
-        ArrayList<View> views = new ArrayList<>(); views.add(root);
+        ArrayList<View> views = new ArrayList<>();
+        views.add(root);
+
         for (int i = 0; i < views.size(); i++) {
             View cur = views.get(i);
-            try { if (cur.getId() != View.NO_ID && cur.getResources().getResourceEntryName(cur.getId()).toLowerCase().contains("send")) return cur; }
-            catch (Exception ignored) {}
-            if (cur instanceof ViewGroup) { ViewGroup vg = (ViewGroup) cur; for (int j = 0; j < vg.getChildCount(); j++) views.add(vg.getChildAt(j)); }
+            try {
+                if (cur.getId() != View.NO_ID
+                        && cur.getResources().getResourceEntryName(cur.getId()).toLowerCase().contains("send")) {
+                    return cur;
+                }
+            } catch (Exception ignored) {}
+
+            if (cur instanceof ViewGroup) {
+                ViewGroup vg = (ViewGroup) cur;
+                for (int j = 0; j < vg.getChildCount(); j++) views.add(vg.getChildAt(j));
+            }
         }
         return null;
     }
 
     private static void addTranslateBtn(ViewGroup layout, EditText edit) {
-        try { edit.setLongClickable(true); edit.setTextIsSelectable(true); edit.setFocusable(true); edit.setFocusableInTouchMode(true); }
-        catch (Throwable ignored) {}
+        try {
+            edit.setLongClickable(true);
+            edit.setTextIsSelectable(true);
+            edit.setFocusable(true);
+            edit.setFocusableInTouchMode(true);
+        } catch (Throwable ignored) {}
+
         if ("HT_AI_BTN".equals(String.valueOf(layout.getTag()))) return;
 
         Button btn = new Button(layout.getContext());
-        btn.setText("\u8bd1");
+        btn.setText("译");
         btn.setTextSize(12f);
         btn.setAllCaps(false);
         btn.setPadding(12, 4, 12, 4);
+
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(Color.parseColor("#CC333333"));
         bg.setCornerRadius(8f);
@@ -753,6 +1169,7 @@ public class ChatHook {
         verBtn.setTextSize(12f);
         verBtn.setAllCaps(false);
         verBtn.setPadding(12, 4, 12, 4);
+
         GradientDrawable vbg = new GradientDrawable();
         vbg.setColor(Color.parseColor("#0B5ED7"));
         vbg.setCornerRadius(8f);
@@ -774,15 +1191,18 @@ public class ChatHook {
         });
 
         final View[] nsb = new View[1];
+
         Runnable ev = new Runnable() {
-            @Override public void run() {
+            @Override
+            public void run() {
                 if (nsb[0] == null) nsb[0] = findNativeSendBtn(layout);
+
                 String ct = edit.getText().toString().replace("@", "");
                 if (!ct.trim().isEmpty() && AITranslator.isChineseOnly(ct)) {
                     if (!isTranslatingAPI) {
                         btn.setVisibility(View.VISIBLE);
                         btn.setEnabled(true);
-                        btn.setText("\u8bd1");
+                        btn.setText("译");
                         btn.setAlpha(0.93f);
                     }
                     if (nsb[0] != null) nsb[0].setVisibility(View.GONE);
@@ -794,33 +1214,36 @@ public class ChatHook {
         };
 
         edit.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+            @Override
+            public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
 
             @Override
             public void afterTextChanged(Editable s) {
                 edit.post(ev);
 
                 String now = s == null ? "" : s.toString();
-
                 if (pendingSelectedForeign != null && now.trim().isEmpty()) {
                     pendingSelectedForeign = null;
                     lastPickerResult = null;
                     uiHandler.post(() -> {
-                        if (versionButton != null) {
-                            versionButton.setVisibility(View.GONE);
-                        }
+                        if (versionButton != null) versionButton.setVisibility(View.GONE);
                     });
                 }
             }
 
-            @Override public void onTextChanged(CharSequence s, int st, int b, int c) {
+            @Override
+            public void onTextChanged(CharSequence s, int st, int b, int c) {
                 if (s != null && isTranslatingAPI && s.toString().contains("@")) {
                     AITranslator.cancelOngoingTranslation();
                     String cl = s.toString().replace("@", "");
-                    edit.removeTextChangedListener(this); edit.setText(cl); edit.setSelection(cl.length()); edit.addTextChangedListener(this);
+                    edit.removeTextChangedListener(this);
+                    edit.setText(cl);
+                    edit.setSelection(cl.length());
+                    edit.addTextChangedListener(this);
                 }
             }
         });
+
         edit.postDelayed(ev, 100);
         edit.postDelayed(ev, 500);
 
@@ -831,6 +1254,7 @@ public class ChatHook {
             if (verBtn.getVisibility() == View.VISIBLE) {
                 verBtn.setVisibility(View.GONE);
             }
+
             pendingSelectedForeign = null;
             lastPickerResult = null;
 
@@ -860,9 +1284,10 @@ public class ChatHook {
 
             String cid = currentChatId;
             if (cid == null || cid.isEmpty() || "0".equals(cid) || "null".equals(cid)) {
-                Toast.makeText(edit.getContext(), "\u26a0\ufe0f \u4f1a\u8bdd\u5c1a\u672a\u5c31\u7eea\uff0c\u8bf7\u9000\u51fa\u804a\u5929\u91cd\u65b0\u8fdb\u5165\u540e\u518d\u8bd5", Toast.LENGTH_SHORT).show();
+                Toast.makeText(edit.getContext(), "⚠️ 会话尚未就绪，请退出聊天重新进入后再试", Toast.LENGTH_SHORT).show();
                 return;
             }
+
             isTranslatingAPI = true;
             btn.setEnabled(false);
             btn.setText("...");
@@ -874,25 +1299,36 @@ public class ChatHook {
             final String nats = latestNationality;
             final int nls = latestNativeLang;
 
-            String quote = null;
-            try { quote = getQuoteReplyText(edit.getRootView()); } catch (Exception ignored) {}
+            boolean hasSelectedReply = selectedReplyValid;
+            boolean selectedReplyMine = selectedReplyIsMine;
+            String quote = selectedReplyText;
             final String qis = currentQuotedImagePath;
             final boolean qms = currentQuotedImageMissing;
-            currentQuotedImagePath = null;
-            currentQuotedImageMissing = false;
 
             boolean pbm = isPureBracketQuery(text);
             String ttt = text;
-            if (!pbm && quote != null && !quote.trim().isEmpty()) {
+
+            if (!pbm && hasSelectedReply && !selectedReplyMine
+                    && quote != null && !quote.trim().isEmpty()) {
                 String orig = AITranslator.getForeignFuzzy(quote);
                 if (orig != null) quote = orig;
-                ttt = "\u3010\u6211\u8981\u56de\u590d\u7684\u5bf9\u65b9\u539f\u8bdd\u3011\uff1a" + quote.trim()
-                        + "\n\u3010\u6211\u7684\u56de\u590d\u3011\uff1a" + text;
+                ttt = "【我要回复的对方原话】：" + quote.trim()
+                        + "\n【我的回复】：" + text;
+            } else if (!pbm && hasSelectedReply && selectedReplyMine
+                    && quote != null && !quote.trim().isEmpty()) {
+                String orig = AITranslator.getForeignFuzzy(quote);
+                if (orig != null) quote = orig;
+                ttt = "【我对我自己之前这条外语消息的补充】：" + quote.trim()
+                        + "\n【补充内容】：" + text;
             }
+
             if (pbm) ttt = "[PURE_BRACKET_MODE]\n" + ttt;
+
             if (qis != null) {
                 File qf = new File(qis);
-                if (qf.exists() && qf.length() > 0) ttt += "\n[QUOTED_LOCAL_IMAGE:" + qis + "]";
+                if (qf.exists() && qf.length() > 0) {
+                    ttt += "\n[QUOTED_LOCAL_IMAGE:" + qis + "]";
+                }
             } else if (qms) {
                 ttt += "\n[QUOTED_IMAGE_BUT_PATH_MISSING]";
             }
@@ -920,7 +1356,7 @@ public class ChatHook {
 
                     edit.post(() -> {
                         btn.setEnabled(true);
-                        btn.setText("\u8bd1");
+                        btn.setText("译");
                         btn.setAlpha(0.92f);
                         showPicker(edit, btn, fr, rci, pns, oneTimeFinal);
                     });
@@ -928,12 +1364,13 @@ public class ChatHook {
                     isTranslatingAPI = false;
                     chatRequestMap.remove(cs);
                     chatRetryCountMap.put(cs, 0);
+
                     edit.post(() -> {
                         btn.setEnabled(true);
-                        btn.setText("\u8bd1");
+                        btn.setText("译");
                         btn.setAlpha(0.88f);
                         Toast.makeText(edit.getContext(),
-                                "\u26a0\ufe0f \u7ffb\u8bd1\u5931\u8d25: " + (e.getMessage() != null ? e.getMessage() : "\u672a\u77e5\u9519\u8bef"),
+                                "⚠️ 翻译失败: " + (e.getMessage() != null ? e.getMessage() : "未知错误"),
                                 Toast.LENGTH_LONG).show();
                     });
                 }
@@ -943,16 +1380,29 @@ public class ChatHook {
 
     private static String determineSmartTargetLang(String nat, int nl, String cid) {
         String n = nat == null ? "" : nat.toLowerCase();
-        if (!n.isEmpty()) { String ml = mapNationalityToLang(n); if (ml != null) return ml; }
+        if (!n.isEmpty()) {
+            String ml = mapNationalityToLang(n);
+            if (ml != null) return ml;
+        }
+
         String lc = getDynamicLangCode(nl);
         if (lc != null && !lc.isEmpty() && !"en".equals(lc)) return lc;
+
         String fl = AITranslator.getFriendLang(cid);
-        if (fl != null && !fl.isEmpty()) { if (fl.equalsIgnoreCase("zh") || fl.startsWith("zh")) return DEFAULT_REPLY_LANG; return fl; }
+        if (fl != null && !fl.isEmpty()) {
+            if (fl.equalsIgnoreCase("zh") || fl.startsWith("zh")) return DEFAULT_REPLY_LANG;
+            return fl;
+        }
         return DEFAULT_REPLY_LANG;
     }
 
     private static String getDynamicLangCode(int nl) {
-        if (langCodeMethod != null) try { String r = (String) langCodeMethod.invoke(null, nl); return r != null ? r.toLowerCase() : null; } catch (Exception ignored) {}
+        if (langCodeMethod != null) {
+            try {
+                String r = (String) langCodeMethod.invoke(null, nl);
+                return r != null ? r.toLowerCase() : null;
+            } catch (Exception ignored) {}
+        }
         return null;
     }
 
@@ -974,15 +1424,21 @@ public class ChatHook {
             case "arabia": case "egypt": case "saudi arabia": case "united arab emirates":
             case "morocco": case "algeria": case "tunisia": case "jordan": case "lebanon":
             case "iraq": case "kuwait": case "qatar": case "oman": case "bahrain": return "ar";
-            case "turkey": return "tr"; case "netherlands": return "nl"; case "poland": return "pl";
-            case "vietnam": return "vi"; case "thailand": return "th"; case "indonesia": return "id";
-            case "india": return "hi"; case "ukraine": return "uk";
+            case "turkey": return "tr";
+            case "netherlands": return "nl";
+            case "poland": return "pl";
+            case "vietnam": return "vi";
+            case "thailand": return "th";
+            case "indonesia": return "id";
+            case "india": return "hi";
+            case "ukraine": return "uk";
             default: return null;
         }
     }
 
     private static void showPicker(EditText edit, Button btn, String result, String origChinese, String pn, boolean oneTime) {
         android.content.Context ctx = edit.getContext();
+
         String at = AITranslator.extractAnalysis(result);
         List<String[]> items = AITranslator.parseTranslateOptions(result);
 
@@ -1030,12 +1486,14 @@ public class ChatHook {
 
         android.widget.LinearLayout root = new android.widget.LinearLayout(ctx);
         root.setOrientation(android.widget.LinearLayout.VERTICAL);
-        root.setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
         root.setPadding(0, 12, 0, 12);
 
         if (at != null && !at.isEmpty()) {
             TextView header = new TextView(ctx);
-            header.setText("\ud83d\udccb \u5206\u6790");
+            header.setText("📋 分析");
             header.setTextSize(12f);
             header.setTextColor(Color.parseColor("#999999"));
             header.setPadding(48, 12, 48, 4);
@@ -1046,6 +1504,7 @@ public class ChatHook {
                     ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
             tsLp.setMargins(0, 0, 0, 16);
             ts.setLayoutParams(tsLp);
+
             TextView ta = new TextView(ctx);
             ta.setText(at);
             ta.setTextColor(Color.parseColor("#555555"));
@@ -1058,7 +1517,7 @@ public class ChatHook {
         }
 
         TextView optHeader = new TextView(ctx);
-        optHeader.setText("\ud83d\udcac \u9009\u4e00\u4e2a\u53d1\u9001\uff08\u5171" + items.size() + "\u4e2a\u7248\u672c\uff09");
+        optHeader.setText("💬 选一个发送（共" + items.size() + "个版本）");
         optHeader.setTextSize(12f);
         optHeader.setTextColor(Color.parseColor("#999999"));
         optHeader.setPadding(48, 0, 48, 8);
@@ -1066,7 +1525,9 @@ public class ChatHook {
 
         android.widget.ScrollView bs = new android.widget.ScrollView(ctx);
         android.widget.LinearLayout.LayoutParams bsLp = new android.widget.LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, (at != null && !at.isEmpty()) ? 2.5f : 1.0f);
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                (at != null && !at.isEmpty()) ? 2.5f : 1.0f);
         bs.setLayoutParams(bsLp);
         bs.setFillViewport(true);
 
@@ -1077,12 +1538,13 @@ public class ChatHook {
         root.addView(bs);
 
         String dn = (pn != null && !pn.isEmpty()) ? pn : currentPartnerName;
-        String title = (dn != null && !dn.isEmpty()) ? ("\u9009\u7248\u672c - " + dn) : "\u9009\u7248\u672c";
+        String title = (dn != null && !dn.isEmpty()) ? ("选版本 - " + dn) : "选版本";
+
         final android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
                 .setTitle(title)
                 .setView(root)
-                .setNegativeButton("\u53d6\u6d88", (d, w) -> {})
-                .setPositiveButton("\uD83D\uDD04 \u6362\u4e00\u6279", (d, w) -> edit.post(() -> btn.performClick()))
+                .setNegativeButton("取消", (d, w) -> {})
+                .setPositiveButton("🔄 换一批", (d, w) -> edit.post(() -> btn.performClick()))
                 .create();
 
         for (int idx = 0; idx < items.size(); idx++) {
@@ -1094,8 +1556,10 @@ public class ChatHook {
             android.widget.LinearLayout card = new android.widget.LinearLayout(ctx);
             card.setOrientation(android.widget.LinearLayout.VERTICAL);
             card.setPadding(32, 24, 32, 24);
+
             android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.setMargins(0, 8, 0, 12);
             card.setLayoutParams(lp);
 
@@ -1135,6 +1599,7 @@ public class ChatHook {
 
                 edit.setText(foreign);
                 edit.setSelection(foreign.length());
+
                 try {
                     ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
                             .setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", foreign));
@@ -1160,7 +1625,7 @@ public class ChatHook {
                 try {
                     ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
                             .setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", foreign));
-                    Toast.makeText(ctx, "\u2705 \u5df2\u590d\u5236\u5230\u526a\u8d34\u677f", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(ctx, "✅ 已复制到剪贴板", Toast.LENGTH_SHORT).show();
                 } catch (Exception ignored) {}
                 return true;
             });
