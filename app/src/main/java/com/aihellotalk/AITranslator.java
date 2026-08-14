@@ -1046,9 +1046,64 @@ public class AITranslator {
         return t.trim();
     }
 
+    private static JSONObject tryParseJsonResult(String result) {
+        if (result == null) return null;
+        String s = result.trim();
+
+        try {
+            s = s.replaceFirst("^```json\\s*", "");
+        } catch (Throwable ignored) {}
+
+        try {
+            s = s.replaceFirst("^```\\s*", "");
+        } catch (Throwable ignored) {}
+
+        try {
+            s = s.replaceFirst("```$", "");
+        } catch (Throwable ignored) {}
+
+        s = s.trim();
+
+        int start = s.indexOf('{');
+        int end = s.lastIndexOf('}');
+        if (start < 0 || end <= start) return null;
+
+        String jsonStr = s.substring(start, end + 1);
+        try {
+            return new JSONObject(jsonStr);
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
     public static List<String[]> parseTranslateOptions(String result) {
         List<String[]> items = new ArrayList<>();
         if (result == null || result.trim().isEmpty()) return items;
+
+        JSONObject json = tryParseJsonResult(result);
+        if (json != null) {
+            JSONArray opts = json.optJSONArray("options");
+            if (opts != null) {
+                Set<String> seen = new HashSet<>();
+                for (int i = 0; i < opts.length(); i++) {
+                    if (items.size() >= 4) break;
+                    JSONObject o = opts.optJSONObject(i);
+                    if (o == null) continue;
+
+                    String foreign = o.optString("foreign", "").trim();
+                    String chinese = o.optString("meaning", "").trim();
+                    String label = o.optString("tone", "").trim();
+
+                    foreign = sanitizeForeignText(foreign);
+
+                    if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
+                    if (!seen.add(foreign.toLowerCase())) continue;
+                    items.add(new String[]{foreign, chinese, label});
+                }
+
+                if (!items.isEmpty()) return items;
+            }
+        }
 
         String normalized = result.replace("\r\n", "\n").replace("\r", "\n").replace("```", "");
         String optionsText = normalized;
@@ -1135,6 +1190,12 @@ public class AITranslator {
 
     public static String extractAnalysis(String result) {
         if (result == null) return "";
+
+        JSONObject json = tryParseJsonResult(result);
+        if (json != null) {
+            return json.optString("analysis", "").trim().replace("*", "");
+        }
+
         String[] splitData = result.split("={3,}");
         if (splitData.length >= 2) return splitData[0].trim().replace("*", "");
 
@@ -1264,20 +1325,23 @@ public class AITranslator {
 
             String formatProtocol;
             if (retry) {
-                formatProtocol = "\n\n【重新生成模式】\n"
-                        + "用户点击了“换一批”。这次不要输出上半部分分析。\n"
-                        + "直接输出一行==========，然后严格输出4个新版本。\n"
-                        + "每个版本必须严格使用这个格式：外语|中文大意|语气标签\n"
-                        + "禁止输出序号，禁止代码块，禁止Markdown表格，禁止额外解释，禁止警告。\n"
-                        + "选项优先：必须完整输出4个版本。\n";
+                formatProtocol = "\n\n【最高优先级输出格式】\n"
+                        + "忽略你之前提到的 ========== 和 | 格式。\n"
+                        + "必须只输出一个JSON对象，不要输出任何额外文字。\n"
+                        + "JSON格式如下：\n"
+                        + "{\"analysis\":\"\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n"
+                        + "必须输出4个选项。\n"
+                        + "analysis字段可以为空字符串。\n"
+                        + "foreign、meaning、tone字段名不能改。\n";
             } else {
-                formatProtocol = "\n\n【强制输出格式】\n"
-                        + "上半部分：按照你的prompt中的要求进行自由分析，不限制字数。\n"
-                        + "然后单独一行输出：==========\n"
-                        + "下半部分：必须输出4个版本。\n"
-                        + "每个版本必须严格使用这个格式：外语|中文大意|语气标签\n"
-                        + "禁止输出序号，禁止代码块，禁止Markdown表格，禁止额外解释，禁止警告。\n"
-                        + "选项优先：如果发现输出空间不足，压缩分析，必须保证4个选项完整输出。\n";
+                formatProtocol = "\n\n【最高优先级输出格式】\n"
+                        + "忽略你之前提到的 ========== 和 | 格式。\n"
+                        + "必须只输出一个JSON对象，不要输出任何额外文字。\n"
+                        + "JSON格式如下：\n"
+                        + "{\"analysis\":\"这里写上半部分分析\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n"
+                        + "必须输出4个选项。\n"
+                        + "analysis字段写你的上半部分分析。\n"
+                        + "foreign、meaning、tone字段名不能改，内容按你的指令填写。\n";
             }
 
             String contextRule = "\n【上下文使用规则】\n"
@@ -1350,7 +1414,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 4000);
+            body.put("max_tokens", 8000);
             body.put("temperature", getTemperature());
             JSONArray msgs = new JSONArray();
             JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
@@ -1365,7 +1429,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 4000);
+            body.put("max_tokens", 8000);
             body.put("temperature", getTemperature());
             body.put("messages", messages);
             return executeRequest(body);
