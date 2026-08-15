@@ -1074,35 +1074,36 @@ public class ChatHook {
                             final String fm = mid;
                             final Object fb = bean;
 
-                            new Thread(() -> {
+                                                    new Thread(() -> {
+                            try {
+                                String t = null;
                                 try {
-                                    String t = null;
-                                    try {
+                                    t = AITranslator.toChinese(ft, chatId);
+                                } catch (Exception fe) {
+                                    String m = fe.getMessage() == null ? "" : fe.getMessage();
+                                    if (!m.contains("Key未配置") && !m.contains("未初始化")) {
+                                        try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
                                         t = AITranslator.toChinese(ft, chatId);
-                                    } catch (Exception fe) {
-                                        String m = fe.getMessage() == null ? "" : fe.getMessage();
-                                        if (!m.contains("Key未配置") && !m.contains("未初始化")) {
-                                            try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
-                                            t = AITranslator.toChinese(ft, chatId);
-                                        }
                                     }
-
-                                    if (t != null && !t.trim().isEmpty() && !t.equals(ft)) {
-                                        AITranslator.cacheResult(fm, ft, t);
-                                        try {
-                                            XposedHelpers.callMethod(fb, "setText",
-                                                    t.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
-                                        } catch (Exception ignored) {}
-                                    }
-                                } catch (Exception ignored) {
-                                } finally {
-                                    translating.remove(fm);
                                 }
-                            }).start();
 
-                        } catch (Throwable ignored) {}
-                    }
-                });
+                                if (t != null && !t.trim().isEmpty() && !t.equals(ft)) {
+                                    AITranslator.cacheResult(fm, ft, t);
+                                    try {
+                                        XposedHelpers.callMethod(fb, "setText",
+                                                t.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
+                                    } catch (Exception ignored) {}
+                                }
+                            } catch (Exception ignored) {
+                            } finally {
+                                translating.remove(fm);
+                            }
+                        }).start();
+
+                    } catch (Throwable ignored) {}
+                }
+            });
+}
     }
 
     private static void hookOutgoingSetMsg(ClassLoader cl) {
