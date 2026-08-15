@@ -32,7 +32,15 @@ public class SettingsActivity extends Activity {
 
     private EditText etKey, etUrl, etModel, etTemperature;
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
+    private EditText etPromptAR, etPromptPT, etPromptFR, etPromptDE, etPromptIT;
+    private EditText etPromptTR, etPromptNL, etPromptPL, etPromptKK, etPromptCS;
+
+    private EditText etSearchPrompt;
     private Button btnFetch, btnSave, btnTest;
+    private Button btnSearchPrompt;
+
+    private ScrollView settingsScroll;
+    private LinearLayout settingsContent;
 
     private SharedPreferences prefs;
 
@@ -47,7 +55,24 @@ public class SettingsActivity extends Activity {
         ll.setOrientation(LinearLayout.VERTICAL);
         ll.setPadding(40, 40, 40, 40);
 
+        settingsScroll = sv;
+        settingsContent = ll;
+
         ll.addView(tip("HT AI翻译 v5.0\n接收自动翻译 + 点[文A]按钮选版本"));
+
+        etSearchPrompt = edit("");
+        etSearchPrompt.setHint("🔍 搜索语言跳转，例如：阿拉伯、葡萄牙、法语、捷克");
+        etSearchPrompt.setSingleLine(true);
+        ll.addView(etSearchPrompt);
+
+        btnSearchPrompt = btn("跳转到语言");
+        btnSearchPrompt.setOnClickListener(v -> {
+            String q = etSearchPrompt.getText().toString().trim();
+            jumpToLanguage(q);
+        });
+        ll.addView(btnSearchPrompt);
+
+        ll.addView(div());
 
         ll.addView(lab("API Key:"));
         etKey = edit(prefs.getString("api_key", ""));
@@ -97,6 +122,48 @@ public class SettingsActivity extends Activity {
         ll.addView(lab("西班牙语 Prompt (发送):"));
         etPromptES = bigEdit(prefs.getString("prompt_es", ""));
         ll.addView(etPromptES);
+
+        ll.addView(div());
+
+        ll.addView(lab("阿拉伯语 Prompt (发送):"));
+        etPromptAR = bigEdit(prefs.getString("prompt_ar", ""));
+        ll.addView(etPromptAR);
+
+        ll.addView(lab("葡萄牙语 Prompt (发送):"));
+        etPromptPT = bigEdit(prefs.getString("prompt_pt", ""));
+        ll.addView(etPromptPT);
+
+        ll.addView(lab("法语 Prompt (发送):"));
+        etPromptFR = bigEdit(prefs.getString("prompt_fr", ""));
+        ll.addView(etPromptFR);
+
+        ll.addView(lab("德语 Prompt (发送):"));
+        etPromptDE = bigEdit(prefs.getString("prompt_de", ""));
+        ll.addView(etPromptDE);
+
+        ll.addView(lab("意大利语 Prompt (发送):"));
+        etPromptIT = bigEdit(prefs.getString("prompt_it", ""));
+        ll.addView(etPromptIT);
+
+        ll.addView(lab("土耳其语 Prompt (发送):"));
+        etPromptTR = bigEdit(prefs.getString("prompt_tr", ""));
+        ll.addView(etPromptTR);
+
+        ll.addView(lab("荷兰语 Prompt (发送):"));
+        etPromptNL = bigEdit(prefs.getString("prompt_nl", ""));
+        ll.addView(etPromptNL);
+
+        ll.addView(lab("波兰语 Prompt (发送):"));
+        etPromptPL = bigEdit(prefs.getString("prompt_pl", ""));
+        ll.addView(etPromptPL);
+
+        ll.addView(lab("哈萨克语 Prompt (发送):"));
+        etPromptKK = bigEdit(prefs.getString("prompt_kk", ""));
+        ll.addView(etPromptKK);
+
+        ll.addView(lab("捷克语 Prompt (发送):"));
+        etPromptCS = bigEdit(prefs.getString("prompt_cs", ""));
+        ll.addView(etPromptCS);
 
         btnSave = btn("保存全部配置");
         btnSave.setOnClickListener(v -> saveAll());
@@ -159,6 +226,90 @@ public class SettingsActivity extends Activity {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
     }
 
+    private void jumpToLanguage(String q) {
+        if (q == null || q.trim().isEmpty()) {
+            toast("请先输入语言名");
+            return;
+        }
+
+        String s = q.trim().toLowerCase();
+
+        if (s.contains("接收") || s.contains("中文")) {
+            scrollToView(etPromptZH);
+            return;
+        }
+        if (s.contains("英语") || s.contains("英文") || s.contains("en")) {
+            scrollToView(etPromptEN);
+            return;
+        }
+        if (s.contains("俄语") || s.contains("俄罗斯") || s.contains("ru")) {
+            scrollToView(etPromptRU);
+            return;
+        }
+        if (s.contains("乌克兰") || s.contains("uk")) {
+            scrollToView(etPromptUK);
+            return;
+        }
+        if (s.contains("韩语") || s.contains("韩国") || s.contains("ko")) {
+            scrollToView(etPromptKO);
+            return;
+        }
+        if (s.contains("西班牙") || s.contains("es")) {
+            scrollToView(etPromptES);
+            return;
+        }
+        if (s.contains("阿拉伯") || s.contains("ar")) {
+            scrollToView(etPromptAR);
+            return;
+        }
+        if (s.contains("葡萄牙") || s.contains("pt")) {
+            scrollToView(etPromptPT);
+            return;
+        }
+        if (s.contains("法语") || s.contains("法国") || s.contains("fr")) {
+            scrollToView(etPromptFR);
+            return;
+        }
+        if (s.contains("德语") || s.contains("德国") || s.contains("de")) {
+            scrollToView(etPromptDE);
+            return;
+        }
+        if (s.contains("意大利") || s.contains("it")) {
+            scrollToView(etPromptIT);
+            return;
+        }
+        if (s.contains("土耳其") || s.contains("tr")) {
+            scrollToView(etPromptTR);
+            return;
+        }
+        if (s.contains("荷兰") || s.contains("nl")) {
+            scrollToView(etPromptNL);
+            return;
+        }
+        if (s.contains("波兰") || s.contains("pl")) {
+            scrollToView(etPromptPL);
+            return;
+        }
+        if (s.contains("哈萨克") || s.contains("kk")) {
+            scrollToView(etPromptKK);
+            return;
+        }
+        if (s.contains("捷克") || s.contains("cs")) {
+            scrollToView(etPromptCS);
+            return;
+        }
+
+        toast("没找到匹配语言");
+    }
+
+    private void scrollToView(View target) {
+        if (target == null || settingsScroll == null) return;
+        target.post(() -> {
+            int y = target.getTop();
+            settingsScroll.smoothScrollTo(0, Math.max(0, y - 40));
+        });
+    }
+
     private String runRoot(String cmd) {
         try {
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
@@ -200,7 +351,12 @@ public class SettingsActivity extends Activity {
             if (inSection) {
                 if (part.startsWith("EN###") || part.startsWith("RU###")
                         || part.startsWith("UK###") || part.startsWith("ZH###")
-                        || part.startsWith("KO###") || part.startsWith("ES###")) {
+                        || part.startsWith("KO###") || part.startsWith("ES###")
+                        || part.startsWith("AR###") || part.startsWith("PT###")
+                        || part.startsWith("FR###") || part.startsWith("DE###")
+                        || part.startsWith("IT###") || part.startsWith("TR###")
+                        || part.startsWith("NL###") || part.startsWith("PL###")
+                        || part.startsWith("KK###") || part.startsWith("CS###")) {
                     break;
                 }
                 sb.append(part);
@@ -374,12 +530,24 @@ public class SettingsActivity extends Activity {
         String key = etKey.getText().toString().trim();
         String url = etUrl.getText().toString().trim();
         String mdl = etModel.getText().toString().trim();
+
         String zh = etPromptZH.getText().toString().trim();
         String en = etPromptEN.getText().toString().trim();
         String ru = etPromptRU.getText().toString().trim();
         String uk = etPromptUK.getText().toString().trim();
         String ko = etPromptKO.getText().toString().trim();
         String es = etPromptES.getText().toString().trim();
+
+        String ar = etPromptAR.getText().toString().trim();
+        String pt = etPromptPT.getText().toString().trim();
+        String fr = etPromptFR.getText().toString().trim();
+        String de = etPromptDE.getText().toString().trim();
+        String it = etPromptIT.getText().toString().trim();
+        String tr = etPromptTR.getText().toString().trim();
+        String nl = etPromptNL.getText().toString().trim();
+        String pl = etPromptPL.getText().toString().trim();
+        String kk = etPromptKK.getText().toString().trim();
+        String cs = etPromptCS.getText().toString().trim();
 
         String tempStr = etTemperature.getText().toString().trim();
         if (tempStr.isEmpty()) {
@@ -402,6 +570,16 @@ public class SettingsActivity extends Activity {
         editor.putString("prompt_uk", uk);
         editor.putString("prompt_ko", ko);
         editor.putString("prompt_es", es);
+        editor.putString("prompt_ar", ar);
+        editor.putString("prompt_pt", pt);
+        editor.putString("prompt_fr", fr);
+        editor.putString("prompt_de", de);
+        editor.putString("prompt_it", it);
+        editor.putString("prompt_tr", tr);
+        editor.putString("prompt_nl", nl);
+        editor.putString("prompt_pl", pl);
+        editor.putString("prompt_kk", kk);
+        editor.putString("prompt_cs", cs);
         editor.apply();
 
         String finalTempStr = tempStr;
@@ -424,16 +602,31 @@ public class SettingsActivity extends Activity {
                         + "###UK###\n" + uk + "\n"
                         + "###KO###\n" + ko + "\n"
                         + "###ES###\n" + es + "\n"
+                        + "###AR###\n" + ar + "\n"
+                        + "###PT###\n" + pt + "\n"
+                        + "###FR###\n" + fr + "\n"
+                        + "###DE###\n" + de + "\n"
+                        + "###IT###\n" + it + "\n"
+                        + "###TR###\n" + tr + "\n"
+                        + "###NL###\n" + nl + "\n"
+                        + "###PL###\n" + pl + "\n"
+                        + "###KK###\n" + kk + "\n"
+                        + "###CS###\n" + cs + "\n"
                         + "EOF\n";
                 runRoot(prompts);
 
                 runRoot("chmod 644 /data/local/tmp/htai_config.txt /data/local/tmp/htai_prompts.txt");
 
                 try {
-                    java.lang.reflect.Method m = AITranslator.class.getMethod("savePrompts", String.class, String.class, String.class, String.class, String.class, String.class);
-                    m.invoke(null, zh, en, ru, uk, ko, es);
-                } catch (NoSuchMethodException e) {
-                    AITranslator.savePrompts(zh, en, ru, uk);
+                    java.lang.reflect.Method m = AITranslator.class.getMethod(
+                            "savePrompts",
+                            String.class, String.class, String.class, String.class,
+                            String.class, String.class, String.class, String.class,
+                            String.class, String.class, String.class, String.class,
+                            String.class, String.class, String.class, String.class);
+                    m.invoke(null, zh, en, ru, uk, ko, es, ar, pt, fr, de, it, tr, nl, pl, kk, cs);
+                } catch (NoSuchMethodException ignored) {
+                    // AITranslator 还没更新时先忽略，等更新后保存会生效
                 }
 
                 runOnUiThread(() -> {
