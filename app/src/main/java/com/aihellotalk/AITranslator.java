@@ -78,6 +78,16 @@ public class AITranslator {
     public static String promptUK = "";
     public static String promptKO = "";
     public static String promptES = "";
+    public static String promptAR = "";
+    public static String promptPT = "";
+    public static String promptFR = "";
+    public static String promptDE = "";
+    public static String promptIT = "";
+    public static String promptTR = "";
+    public static String promptNL = "";
+    public static String promptPL = "";
+    public static String promptKK = "";
+    public static String promptCS = "";
 
     private static JSONObject friendsData = new JSONObject();
 
@@ -1332,6 +1342,16 @@ public class AITranslator {
                 case "uk": sysPrompt = promptUK; break;
                 case "ko": sysPrompt = promptKO; break;
                 case "es": sysPrompt = promptES; break;
+                case "ar": sysPrompt = promptAR; break;
+                case "pt": sysPrompt = promptPT; break;
+                case "fr": sysPrompt = promptFR; break;
+                case "de": sysPrompt = promptDE; break;
+                case "it": sysPrompt = promptIT; break;
+                case "tr": sysPrompt = promptTR; break;
+                case "nl": sysPrompt = promptNL; break;
+                case "pl": sysPrompt = promptPL; break;
+                case "kk": sysPrompt = promptKK; break;
+                case "cs": sysPrompt = promptCS; break;
                 default: sysPrompt = promptEN; break;
             }
 
@@ -1643,6 +1663,16 @@ public class AITranslator {
                     else if (line.startsWith("###UK###")) { if (cur.equals("RU")) promptRU = sb.toString().trim(); cur = "UK"; sb.setLength(0); }
                     else if (line.startsWith("###KO###")) { if (cur.equals("UK")) promptUK = sb.toString().trim(); cur = "KO"; sb.setLength(0); }
                     else if (line.startsWith("###ES###")) { if (cur.equals("KO")) promptKO = sb.toString().trim(); cur = "ES"; sb.setLength(0); }
+                    else if (line.startsWith("###AR###")) { if (cur.equals("ES")) promptES = sb.toString().trim(); cur = "AR"; sb.setLength(0); }
+                    else if (line.startsWith("###PT###")) { if (cur.equals("AR")) promptAR = sb.toString().trim(); cur = "PT"; sb.setLength(0); }
+                    else if (line.startsWith("###FR###")) { if (cur.equals("PT")) promptPT = sb.toString().trim(); cur = "FR"; sb.setLength(0); }
+                    else if (line.startsWith("###DE###")) { if (cur.equals("FR")) promptFR = sb.toString().trim(); cur = "DE"; sb.setLength(0); }
+                    else if (line.startsWith("###IT###")) { if (cur.equals("DE")) promptDE = sb.toString().trim(); cur = "IT"; sb.setLength(0); }
+                    else if (line.startsWith("###TR###")) { if (cur.equals("IT")) promptIT = sb.toString().trim(); cur = "TR"; sb.setLength(0); }
+                    else if (line.startsWith("###NL###")) { if (cur.equals("TR")) promptTR = sb.toString().trim(); cur = "NL"; sb.setLength(0); }
+                    else if (line.startsWith("###PL###")) { if (cur.equals("NL")) promptNL = sb.toString().trim(); cur = "PL"; sb.setLength(0); }
+                    else if (line.startsWith("###KK###")) { if (cur.equals("PL")) promptPL = sb.toString().trim(); cur = "KK"; sb.setLength(0); }
+                    else if (line.startsWith("###CS###")) { if (cur.equals("KK")) promptKK = sb.toString().trim(); cur = "CS"; sb.setLength(0); }
                     else { sb.append(line).append("\n"); }
                 }
                 if (cur.equals("EN")) promptEN = sb.toString().trim();
@@ -1650,22 +1680,52 @@ public class AITranslator {
                 else if (cur.equals("UK")) promptUK = sb.toString().trim();
                 else if (cur.equals("KO")) promptKO = sb.toString().trim();
                 else if (cur.equals("ES")) promptES = sb.toString().trim();
+                else if (cur.equals("AR")) promptAR = sb.toString().trim();
+                else if (cur.equals("PT")) promptPT = sb.toString().trim();
+                else if (cur.equals("FR")) promptFR = sb.toString().trim();
+                else if (cur.equals("DE")) promptDE = sb.toString().trim();
+                else if (cur.equals("IT")) promptIT = sb.toString().trim();
+                else if (cur.equals("TR")) promptTR = sb.toString().trim();
+                else if (cur.equals("NL")) promptNL = sb.toString().trim();
+                else if (cur.equals("PL")) promptPL = sb.toString().trim();
+                else if (cur.equals("KK")) promptKK = sb.toString().trim();
+                else if (cur.equals("CS")) promptCS = sb.toString().trim();
                 r.close();
             }
         } catch (Exception ignored) {}
+
         if (receivePrompt.isEmpty()) receivePrompt = "\u4f60\u662f\u6211\u7684\u4e13\u5c5e\u793e\u4ea4\u60c5\u62a5\u4f20\u8bd1\u5458\u3002\u8981\u6c42\uff1a1. \u514b\u9686\u5bf9\u65b9\u7684\u8bed\u6c14\u98ce\u683c\u30022. \u53ea\u7ed91\u4e2a\u4e2d\u6587\u7ffb\u8bd1\uff0c\u4e0d\u8981\u9009\u9879\u30023. \u4e0d\u8981\u52a0\u524d\u8a00\u540e\u8bed\u30024. \u6f5c\u53f0\u8bcd\u653e\u672b\u5c3e\u62ec\u53f7\uff08\u4e0d\u8d85\u8fc720\u5b57\uff09\u3002";
         if (promptEN.isEmpty()) promptEN = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u82f1\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
         if (promptRU.isEmpty()) promptRU = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u4fc4\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
         if (promptUK.isEmpty()) promptUK = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u4e4c\u514b\u5170\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
         if (promptKO.isEmpty()) promptKO = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u97e9\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
         if (promptES.isEmpty()) promptES = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u897f\u73ed\u7259\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
+        if (promptAR.isEmpty()) promptAR = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u963f\u62c9\u4f2f\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
+        if (promptPT.isEmpty()) promptPT = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u8461\u8404\u7259\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
+        if (promptFR.isEmpty()) promptFR = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u6cd5\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
+        if (promptDE.isEmpty()) promptDE = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u5fb7\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
+        if (promptIT.isEmpty()) promptIT = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u610f\u5927\u5229\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
+        if (promptTR.isEmpty()) promptTR = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u571f\u8033\u5176\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
+        if (promptNL.isEmpty()) promptNL = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u8377\u5170\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
+        if (promptPL.isEmpty()) promptPL = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u6ce2\u5170\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
+        if (promptKK.isEmpty()) promptKK = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u54c8\u8428\u514b\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
+        if (promptCS.isEmpty()) promptCS = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u6377\u514b\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
     }
 
     public static void savePrompts(String zh, String en, String ru, String uk) {
         receivePrompt = zh; promptEN = en; promptRU = ru; promptUK = uk;
     }
+
     public static void savePrompts(String zh, String en, String ru, String uk, String ko, String es) {
         receivePrompt = zh; promptEN = en; promptRU = ru; promptUK = uk; promptKO = ko; promptES = es;
+    }
+
+    public static void savePrompts(String zh, String en, String ru, String uk, String ko, String es,
+                                   String ar, String pt, String fr, String de, String it,
+                                   String tr, String nl, String pl, String kk, String cs) {
+        receivePrompt = zh; promptEN = en; promptRU = ru; promptUK = uk; promptKO = ko; promptES = es;
+        promptAR = ar; promptPT = pt; promptFR = fr; promptDE = de; promptIT = it;
+        promptTR = tr; promptNL = nl; promptPL = pl; promptKK = kk; promptCS = cs;
     }
 
     private static File historyFile(String chatId) {
