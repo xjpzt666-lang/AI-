@@ -1103,7 +1103,7 @@ public class ChatHook {
                     } catch (Throwable ignored) {}
                 }
             });
-}
+
     }
 
     private static void hookOutgoingSetMsg(ClassLoader cl) {
