@@ -67,7 +67,6 @@ public class ChatHook {
     private static volatile String currentQuotedImagePath = null;
     private static volatile boolean currentQuotedImageMissing = false;
 
-    // ===== 新增：当前回复条选中的消息 =====
     private static volatile String selectedReplyText = null;
     private static volatile String selectedReplyMsgType = null;
     private static volatile boolean selectedReplyIsMine = false;
@@ -184,8 +183,6 @@ public class ChatHook {
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
         try { hookUltimateStealth(cl); } catch (Throwable ignored) {}
         try { hookImageRenderLayer(cl); } catch (Throwable ignored) {}
-
-        // 关键：hook HelloTalk 输入框上方的“回复条”
         try { hookInputReplyBar(cl); } catch (Throwable ignored) {}
     }
 
@@ -322,7 +319,6 @@ public class ChatHook {
         return null;
     }
 
-    // ===== 新增：hook 输入框上方回复条 =====
     private static void hookInputReplyBar(ClassLoader cl) {
         try {
             Class<?> replyBar = XposedHelpers.findClassIfExists("kr0.d", cl);
@@ -714,15 +710,34 @@ public class ChatHook {
 
                         if (ev.getAction() == MotionEvent.ACTION_UP) {
                             String clean = s.substring(0, s.length() - 2).trim();
+
                             if (s.endsWith(" 🔄")) {
                                 String orig = AITranslator.getForeignByChinese(clean);
                                 if (orig == null) orig = AITranslator.getForeignByDraftChinese(clean);
-                                if (orig != null && !orig.equals(clean)) tv.setText(orig + " 🌐");
+
+                                if (orig != null && !orig.equals(clean)) {
+                                    tv.setText(orig + " 🌐");
+                                } else {
+                                    final String needTrans = clean;
+                                    new Thread(() -> {
+                                        try {
+                                            String zh = AITranslator.toChinese(needTrans, currentChatId);
+                                            if (zh != null && !zh.trim().isEmpty() && !zh.equals(needTrans)) {
+                                                AITranslator.cacheResult(
+                                                        "flip_" + needTrans.hashCode(),
+                                                        needTrans,
+                                                        zh);
+                                                uiHandler.post(() -> tv.setText(zh + " 🔄"));
+                                            }
+                                        } catch (Exception ignored) {}
+                                    }).start();
+                                }
                             } else {
                                 String zh = AITranslator.getChineseByForeign(clean);
                                 if (zh == null) zh = AITranslator.getDraftFuzzy(clean);
                                 if (zh != null && !zh.equals(clean)) tv.setText(zh + " 🔄");
                             }
+
                             p.setResult(true);
                         } else if (ev.getAction() == MotionEvent.ACTION_DOWN) {
                             p.setResult(true);
