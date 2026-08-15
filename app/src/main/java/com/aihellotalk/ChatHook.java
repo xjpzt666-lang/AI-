@@ -49,6 +49,7 @@ public class ChatHook {
 
     private static final Set<String> translating = ConcurrentHashMap.newKeySet();
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
+    private static final ConcurrentHashMap<String, String> senderChatMap = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, String> chatRequestMap = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
 
@@ -709,33 +710,31 @@ public class ChatHook {
                         if (off < s.length() - 2) return;
 
                         if (ev.getAction() == MotionEvent.ACTION_UP) {
-                            String clean = s.substring(0, s.length() - 2).trim();
+                            final String clean = s.substring(0, s.length() - 2).trim();
 
                             if (s.endsWith(" 🔄")) {
-                                String orig = AITranslator.getForeignByChinese(clean);
-                                if (orig == null) orig = AITranslator.getForeignByDraftChinese(clean);
-
+                                String orig = AITranslator.chineseToForeign.get(clean);
                                 if (orig != null && !orig.equals(clean)) {
                                     tv.setText(orig + " 🌐");
+                                }
+                            } else {
+                                String zh = AITranslator.mySentDrafts.get(clean);
+                                if (zh == null) zh = AITranslator.foreignToChinese.get(clean);
+
+                                if (zh != null && !zh.equals(clean)) {
+                                    tv.setText(zh + " 🔄");
                                 } else {
                                     final String needTrans = clean;
                                     new Thread(() -> {
                                         try {
-                                            String zh = AITranslator.toChinese(needTrans, currentChatId);
-                                            if (zh != null && !zh.trim().isEmpty() && !zh.equals(needTrans)) {
-                                                AITranslator.cacheResult(
-                                                        "flip_" + needTrans.hashCode(),
-                                                        needTrans,
-                                                        zh);
-                                                uiHandler.post(() -> tv.setText(zh + " 🔄"));
+                                            String newZh = AITranslator.toChinese(needTrans, currentChatId);
+                                            if (newZh != null && !newZh.trim().isEmpty() && !newZh.equals(needTrans)) {
+                                                AITranslator.rememberDraft(needTrans, newZh);
+                                                uiHandler.post(() -> tv.setText(newZh + " 🔄"));
                                             }
                                         } catch (Exception ignored) {}
                                     }).start();
                                 }
-                            } else {
-                                String zh = AITranslator.getChineseByForeign(clean);
-                                if (zh == null) zh = AITranslator.getDraftFuzzy(clean);
-                                if (zh != null && !zh.equals(clean)) tv.setText(zh + " 🔄");
                             }
 
                             p.setResult(true);
@@ -883,12 +882,32 @@ public class ChatHook {
                             String eid = "0";
                             Object cidO = invokeQuiet(mGetChatId, msg);
                             if (cidO != null) eid = String.valueOf(cidO);
-                            if ("0".equals(eid) || "null".equals(eid)) eid = currentChatId;
-                            final String chatId = eid;
+
+                            boolean chatIdValid = !("0".equals(eid)
+                                    || "null".equals(eid)
+                                    || eid.trim().isEmpty());
 
                             String sn = null;
                             Object sno = invokeQuiet(mGetSenderName, msg);
                             if (sno != null) sn = String.valueOf(sno);
+
+                            String chatId;
+
+                            if (chatIdValid) {
+                                chatId = eid;
+                                if (sn != null && !sn.isEmpty() && !isMine) {
+                                    senderChatMap.put(sn, chatId);
+                                }
+                            } else if (sn != null && !sn.isEmpty() && sn.equals(currentPartnerName)) {
+                                chatId = currentChatId;
+                            } else if (sn != null && !sn.isEmpty() && senderChatMap.containsKey(sn)) {
+                                chatId = senderChatMap.get(sn);
+                            } else {
+                                log("chatId unresolved skip. current=" + currentChatId
+                                        + " sender=" + sn + " rawId=" + eid);
+                                return;
+                            }
+
                             if (sn != null && !sn.isEmpty() && !isMine) {
                                 AITranslator.registerFriend(chatId, sn, AITranslator.getFriendLang(chatId), latestNationality);
                             }
