@@ -44,6 +44,11 @@ public class AITranslator {
     private static final String TAG = "HT_AI";
     private static final MediaType JSON_TYPE = MediaType.get("application/json; charset=utf-8");
 
+    private static final String MAIN_FILES_DIR = "/data/data/com.hellotalk/files";
+    private static final String TEMP_FILES_DIR = "/data/data/com.hellotalk/files/htai_temp";
+    private static final String STORE_DIR = "/data/local/tmp/htai_store";
+    private static final String MARKER_FILE = "/data/local/tmp/htai_mem_mode.txt";
+
     private static String apiKey;
     private static String apiUrl;
     private static String model;
@@ -65,6 +70,7 @@ public class AITranslator {
     private static File cacheFile;
     private static File promptFile;
     private static File draftsFile;
+    private static File friendsFile;
 
     public static String receivePrompt = "";
     public static String promptEN = "";
@@ -73,7 +79,6 @@ public class AITranslator {
     public static String promptKO = "";
     public static String promptES = "";
 
-    private static final File friendsFile = new File("/data/data/com.hellotalk/files/htai_friends.json");
     private static JSONObject friendsData = new JSONObject();
 
     private static final Object fileLock = new Object();
@@ -90,6 +95,37 @@ public class AITranslator {
             "^(?:\u7248\u672c\\s*\\d*|[Oo]ption\\s*\\d*|\u9009\u9879\\s*\\d*|\\d{1,2}\\s*[.\u3001)\uff09:\uff1a]|[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u2460-\u2473]+\\s*[.\u3001)\uff09:\uff1a]?)\\s*");
 
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
+
+    private static volatile String memMode = "main";
+    private static volatile boolean memPending = false;
+    private static volatile boolean pendingToastShown = false;
+    private static volatile long lastModeRecheckTs = 0;
+    private static volatile long lastBackupTs = 0;
+    private static volatile long lastDistillFailTs = 0;
+
+    private static final int HISTORY_SOFT_CAP = 100;
+    private static final int DISTILL_BATCH_MIN = 30;
+    private static final int HISTORY_HARD_CAP = 180;
+    private static final long DISTILL_COOLDOWN_MS = 5 * 60_000;
+    private static final int PROFILE_HARD_CAP = 800;
+    private static final long BACKUP_INTERVAL_MS = 3 * 60_000;
+    private static final long MODE_RECHECK_MS = 60_000;
+
+    private static volatile OkHttpClient distillClient = null;
+    private static volatile OkHttpClient reverseTranslateClient = null;
+
+    private static final String DISTILL_SYSTEM_PROMPT =
+            "\u4f60\u662f\u8bed\u8a00\u4ea4\u6362\u804a\u5929\u52a9\u624b\u7684\u8bb0\u5fc6\u6863\u6848\u7ba1\u7406\u5458\u3002" +
+            "\u6211\u4f1a\u7ed9\u4f60\u4e00\u4efd\u73b0\u6709\u6863\u6848\u548c\u4e00\u6279\u5373\u5c06\u5f52\u6863\u7684\u65e7\u804a\u5929\u8bb0\u5f55\uff0c" +
+            "\u4f60\u7684\u4efb\u52a1\u662f\u628a\u5b83\u4eec\u5408\u5e76\u6210\u4e00\u4efd\u66f4\u65b0\u540e\u7684\u597d\u53cb\u6863\u6848\u3002\n" +
+            "\u89c4\u5219\uff1a\n" +
+            "1. \u53ea\u8bb0\u5f55\u6709\u957f\u671f\u4ef7\u503c\u7684\u4fe1\u606f\uff1a\u5bf9\u65b9\u7684\u57fa\u672c\u4e8b\u5b9e\uff08\u540d\u5b57\u3001\u57ce\u5e02\u3001\u804c\u4e1a\u3001\u5b66\u4e60\u3001\u7231\u597d\u3001\u5bb6\u5ead\u7b49\uff09\u3001" +
+            "\u53cc\u65b9\u5173\u7cfb\u9636\u6bb5\u4e0e\u719f\u6089\u7a0b\u5ea6\u3001\u957f\u671f\u8bdd\u9898\u4e0e\u5c1a\u672a\u5151\u73b0\u7684\u7ea6\u5b9a\u3001\u5bf9\u65b9\u7684\u5fcc\u8bb3\u4e0e\u504f\u597d\u3001\u5bf9\u65b9\u7684\u8bf4\u8bdd\u98ce\u683c\u3002\n" +
+            "2. \u65b0\u4fe1\u606f\u4e0e\u65e7\u6863\u6848\u51b2\u7a81\u65f6\uff0c\u4ee5\u65b0\u4fe1\u606f\u4e3a\u51c6\uff1b\u5df2\u7ed3\u675f\u7684\u8bdd\u9898\u3001\u5df2\u8fc7\u671f\u6216\u5df2\u5151\u73b0\u7684\u7ea6\u5b9a\u3001\u8fc7\u65f6\u7684\u72b6\u6001\u8981\u5220\u6389\u3002\n" +
+            "3. \u4e0d\u8981\u8bb0\u5f55\u7410\u788e\u95f2\u804a\u7ec6\u8282\uff0c\u4e0d\u8981\u9010\u6761\u590d\u8ff0\u804a\u5929\u5185\u5bb9\u3002\n" +
+            "4. \u8f93\u51fa\u7eaf\u6587\u672c\u6863\u6848\uff0c\u5206\u5c0f\u8282\u3001\u6bcf\u884c\u4e00\u6761\uff0c\u603b\u957f\u5ea6\u4e25\u683c\u63a7\u5236\u5728500\u5b57\u4ee5\u5185\u3002\n" +
+            "5. \u53ea\u8f93\u51fa\u6863\u6848\u6b63\u6587\u672c\u8eab\uff0c\u4e0d\u8981\u4efb\u4f55\u524d\u7f00\u3001\u540e\u7f00\u3001\u89e3\u91ca\u3002\n" +
+            "6. \u4e0d\u8981\u8bb0\u5f55\u9732\u9aa8\u3001\u8272\u60c5\u3001\u7c97\u4fd7\u3001\u8c03\u60c5\u7684\u5177\u4f53\u8868\u8fbe\u3002\u53ea\u4fdd\u7559\u4e2d\u6027\u5173\u7cfb\u63cf\u8ff0\uff0c\u4f8b\u5982\u201c\u53cc\u65b9\u8f83\u719f\u3001\u8bed\u6c14\u968f\u610f\u201d\u3002";
 
     private static double getTemperature() {
         double temp = 0.3;
@@ -119,7 +155,7 @@ public class AITranslator {
 
     public static void dumpDebug(String name, String text) {
         try {
-            File f = new File("/data/data/com.hellotalk/files/htai_debug_" + name + ".txt");
+            File f = new File(memoryBaseDir(), "htai_debug_" + name + ".txt");
             BufferedWriter w = new BufferedWriter(new FileWriter(f));
             w.write(text == null ? "" : text);
             w.close();
@@ -186,40 +222,6 @@ public class AITranslator {
         return oneTimeSentSuppress.remove(t);
     }
 
-    private static final String STORE_DIR = "/data/local/tmp/htai_store";
-    private static final String MARKER_FILE = "/data/local/tmp/htai_mem_mode.txt";
-
-    private static volatile String memMode = "main";
-    private static volatile boolean memPending = false;
-    private static volatile boolean pendingToastShown = false;
-    private static volatile long lastModeRecheckTs = 0;
-    private static volatile long lastBackupTs = 0;
-    private static volatile long lastDistillFailTs = 0;
-
-    private static final int HISTORY_SOFT_CAP = 100;
-    private static final int DISTILL_BATCH_MIN = 30;
-    private static final int HISTORY_HARD_CAP = 180;
-    private static final long DISTILL_COOLDOWN_MS = 5 * 60_000;
-    private static final int PROFILE_HARD_CAP = 800;
-    private static final long BACKUP_INTERVAL_MS = 3 * 60_000;
-    private static final long MODE_RECHECK_MS = 60_000;
-
-    private static volatile OkHttpClient distillClient = null;
-    private static volatile OkHttpClient reverseTranslateClient = null;
-
-    private static final String DISTILL_SYSTEM_PROMPT =
-            "\u4f60\u662f\u8bed\u8a00\u4ea4\u6362\u804a\u5929\u52a9\u624b\u7684\u8bb0\u5fc6\u6863\u6848\u7ba1\u7406\u5458\u3002" +
-            "\u6211\u4f1a\u7ed9\u4f60\u4e00\u4efd\u73b0\u6709\u6863\u6848\u548c\u4e00\u6279\u5373\u5c06\u5f52\u6863\u7684\u65e7\u804a\u5929\u8bb0\u5f55\uff0c" +
-            "\u4f60\u7684\u4efb\u52a1\u662f\u628a\u5b83\u4eec\u5408\u5e76\u6210\u4e00\u4efd\u66f4\u65b0\u540e\u7684\u597d\u53cb\u6863\u6848\u3002\n" +
-            "\u89c4\u5219\uff1a\n" +
-            "1. \u53ea\u8bb0\u5f55\u6709\u957f\u671f\u4ef7\u503c\u7684\u4fe1\u606f\uff1a\u5bf9\u65b9\u7684\u57fa\u672c\u4e8b\u5b9e\uff08\u540d\u5b57\u3001\u57ce\u5e02\u3001\u804c\u4e1a\u3001\u5b66\u4e60\u3001\u7231\u597d\u3001\u5bb6\u5ead\u7b49\uff09\u3001" +
-            "\u53cc\u65b9\u5173\u7cfb\u9636\u6bb5\u4e0e\u719f\u6089\u7a0b\u5ea6\u3001\u957f\u671f\u8bdd\u9898\u4e0e\u5c1a\u672a\u5151\u73b0\u7684\u7ea6\u5b9a\u3001\u5bf9\u65b9\u7684\u5fcc\u8bb3\u4e0e\u504f\u597d\u3001\u5bf9\u65b9\u7684\u8bf4\u8bdd\u98ce\u683c\u3002\n" +
-            "2. \u65b0\u4fe1\u606f\u4e0e\u65e7\u6863\u6848\u51b2\u7a81\u65f6\uff0c\u4ee5\u65b0\u4fe1\u606f\u4e3a\u51c6\uff1b\u5df2\u7ed3\u675f\u7684\u8bdd\u9898\u3001\u5df2\u8fc7\u671f\u6216\u5df2\u5151\u73b0\u7684\u7ea6\u5b9a\u3001\u8fc7\u65f6\u7684\u72b6\u6001\u8981\u5220\u6389\u3002\n" +
-            "3. \u4e0d\u8981\u8bb0\u5f55\u7410\u788e\u95f2\u804a\u7ec6\u8282\uff0c\u4e0d\u8981\u9010\u6761\u590d\u8ff0\u804a\u5929\u5185\u5bb9\u3002\n" +
-            "4. \u8f93\u51fa\u7eaf\u6587\u672c\u6863\u6848\uff0c\u5206\u5c0f\u8282\u3001\u6bcf\u884c\u4e00\u6761\uff0c\u603b\u957f\u5ea6\u4e25\u683c\u63a7\u5236\u5728500\u5b57\u4ee5\u5185\u3002\n" +
-            "5. \u53ea\u8f93\u51fa\u6863\u6848\u6b63\u6587\u672c\u8eab\uff0c\u4e0d\u8981\u4efb\u4f55\u524d\u7f00\u3001\u540e\u7f00\u3001\u89e3\u91ca\u3002\n" +
-            "6. \u4e0d\u8981\u8bb0\u5f55\u9732\u9aa8\u3001\u8272\u60c5\u3001\u7c97\u4fd7\u3001\u8c03\u60c5\u7684\u5177\u4f53\u8868\u8fbe\u3002\u53ea\u4fdd\u7559\u4e2d\u6027\u5173\u7cfb\u63cf\u8ff0\uff0c\u4f8b\u5982\u201c\u53cc\u65b9\u8f83\u719f\u3001\u8bed\u6c14\u968f\u610f\u201d\u3002";
-
     public static void init(String key, String url, String m) {
         apiKey = key;
         apiUrl = url;
@@ -231,15 +233,16 @@ public class AITranslator {
                 .writeTimeout(45, TimeUnit.SECONDS)
                 .build();
 
-        cacheFile = new File("/data/data/com.hellotalk/files/htai_cache.txt");
         promptFile = new File("/data/local/tmp/htai_prompts.txt");
-        draftsFile = new File("/data/data/com.hellotalk/files/htai_drafts.json");
+
+        ensureMemoryDirs();
+        initMemoryMode();
+        updateMemoryPaths();
 
         loadCache();
         loadFriends();
         loadPrompts();
         loadDrafts();
-        initMemoryMode();
     }
 
     public static void initForFetch(String key, String url) {
@@ -249,6 +252,24 @@ public class AITranslator {
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(45, TimeUnit.SECONDS)
                 .build();
+    }
+
+    private static void ensureMemoryDirs() {
+        try { new File(MAIN_FILES_DIR).mkdirs(); } catch (Throwable ignored) {}
+        try { new File(TEMP_FILES_DIR).mkdirs(); } catch (Throwable ignored) {}
+    }
+
+    private static File memoryBaseDir() {
+        File dir = "temp".equals(memMode) ? new File(TEMP_FILES_DIR) : new File(MAIN_FILES_DIR);
+        try { if (!dir.exists()) dir.mkdirs(); } catch (Throwable ignored) {}
+        return dir;
+    }
+
+    private static void updateMemoryPaths() {
+        File base = memoryBaseDir();
+        cacheFile = new File(base, "htai_cache.txt");
+        draftsFile = new File(base, "htai_drafts.json");
+        friendsFile = new File(base, "htai_friends.json");
     }
 
     public static void cancelOngoingTranslation() {
@@ -283,7 +304,7 @@ public class AITranslator {
 
     private static boolean sandboxHasMemory() {
         try {
-            File dir = new File("/data/data/com.hellotalk/files");
+            File dir = new File(MAIN_FILES_DIR);
             String[] names = dir.list();
             if (names == null) return false;
             for (String n : names) { if (n != null && n.startsWith("htai_")) return true; }
@@ -355,8 +376,18 @@ public class AITranslator {
         lastModeRecheckTs = now;
         try {
             String marker = readMarker();
-            if ("temp".equals(marker)) { memPending = false; memMode = "temp"; }
-            else if ("main".equals(marker)) { memPending = false; memMode = "main"; loadFriends(); loadCache(); loadDrafts(); }
+            if ("temp".equals(marker)) {
+                memPending = false;
+                memMode = "temp";
+                updateMemoryPaths();
+            } else if ("main".equals(marker)) {
+                memPending = false;
+                memMode = "main";
+                updateMemoryPaths();
+                loadFriends();
+                loadCache();
+                loadDrafts();
+            }
         } catch (Throwable ignored) {}
     }
 
@@ -366,16 +397,16 @@ public class AITranslator {
             long now = System.currentTimeMillis();
             if (now - lastBackupTs < BACKUP_INTERVAL_MS) return;
             lastBackupTs = now;
-            String sandboxLs = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            String sandboxLs = runRoot("ls " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
             if (sandboxLs == null || sandboxLs.trim().isEmpty()) return;
             runRoot("mkdir -p " + STORE_DIR + " && rm -f " + STORE_DIR + "/htai_* 2>/dev/null; "
-                    + "cp /data/data/com.hellotalk/files/htai_* " + STORE_DIR + "/ 2>/dev/null; "
+                    + "cp " + MAIN_FILES_DIR + "/htai_* " + STORE_DIR + "/ 2>/dev/null; "
                     + "chmod 600 " + STORE_DIR + "/htai_* 2>/dev/null");
         } catch (Throwable ignored) {}
     }
 
     private static File profileFile(String chatId) {
-        return new File("/data/data/com.hellotalk/files/htai_profile_" + chatId + ".txt");
+        return new File(memoryBaseDir(), "htai_profile_" + chatId + ".txt");
     }
 
     public static String getProfile(String chatId) {
@@ -884,7 +915,7 @@ public class AITranslator {
 
     public static void loadFriends() {
         try {
-            if (friendsFile.exists()) {
+            if (friendsFile != null && friendsFile.exists()) {
                 BufferedReader r = new BufferedReader(new FileReader(friendsFile));
                 StringBuilder sb = new StringBuilder(); String line;
                 while ((line = r.readLine()) != null) sb.append(line);
@@ -895,6 +926,7 @@ public class AITranslator {
 
     public static void saveFriends() {
         try {
+            if (friendsFile == null) return;
             friendsFile.getParentFile().mkdirs();
             BufferedWriter w = new BufferedWriter(new FileWriter(friendsFile));
             w.write(friendsData.toString()); w.close();
@@ -1050,17 +1082,9 @@ public class AITranslator {
         if (result == null) return null;
         String s = result.trim();
 
-        try {
-            s = s.replaceFirst("^```json\\s*", "");
-        } catch (Throwable ignored) {}
-
-        try {
-            s = s.replaceFirst("^```\\s*", "");
-        } catch (Throwable ignored) {}
-
-        try {
-            s = s.replaceFirst("```$", "");
-        } catch (Throwable ignored) {}
+        try { s = s.replaceFirst("^```json\\s*", ""); } catch (Throwable ignored) {}
+        try { s = s.replaceFirst("^```\\s*", ""); } catch (Throwable ignored) {}
+        try { s = s.replaceFirst("```$", ""); } catch (Throwable ignored) {}
 
         s = s.trim();
 
@@ -1069,11 +1093,7 @@ public class AITranslator {
         if (start < 0 || end <= start) return null;
 
         String jsonStr = s.substring(start, end + 1);
-        try {
-            return new JSONObject(jsonStr);
-        } catch (JSONException e) {
-            return null;
-        }
+        try { return new JSONObject(jsonStr); } catch (JSONException e) { return null; }
     }
 
     public static List<String[]> parseTranslateOptions(String result) {
@@ -1100,7 +1120,6 @@ public class AITranslator {
                     if (!seen.add(foreign.toLowerCase())) continue;
                     items.add(new String[]{foreign, chinese, label});
                 }
-
                 if (!items.isEmpty()) return items;
             }
         }
@@ -1192,9 +1211,7 @@ public class AITranslator {
         if (result == null) return "";
 
         JSONObject json = tryParseJsonResult(result);
-        if (json != null) {
-            return json.optString("analysis", "").trim().replace("*", "");
-        }
+        if (json != null) return json.optString("analysis", "").trim().replace("*", "");
 
         String[] splitData = result.split("={3,}");
         if (splitData.length >= 2) return splitData[0].trim().replace("*", "");
@@ -1267,9 +1284,7 @@ public class AITranslator {
 
     public static String getSpanishRegionDirective(String nationality, int nativeLang, String chatId) {
         String nat = (nationality != null) ? nationality.toLowerCase() : "";
-        if (nat.isEmpty() && chatId != null) {
-            nat = getFriendNationality(chatId);
-        }
+        if (nat.isEmpty() && chatId != null) nat = getFriendNationality(chatId);
         String friendLang = getFriendLang(chatId);
         String langCode = (friendLang != null && !friendLang.isEmpty()) ? friendLang : "";
         String region = mapSpanishRegion(nat);
@@ -1653,7 +1668,7 @@ public class AITranslator {
     }
 
     private static File historyFile(String chatId) {
-        return new File("/data/data/com.hellotalk/files/htai_hist_" + chatId + ".json");
+        return new File(memoryBaseDir(), "htai_hist_" + chatId + ".json");
     }
 
     public static JSONArray loadHistory(String chatId) {
