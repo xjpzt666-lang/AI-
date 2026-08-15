@@ -405,15 +405,59 @@ public class MainActivity extends Activity {
                         "🕶 切换一次性模式（小号瞎聊用）",
                         "👑 切换主账号模式（恢复记忆）",
                         "🗑 清空一次性记忆",
+                        "🧨 清除主账号记忆",
+                        "☠️ 清除保险箱",
                         "🔍 查看记忆文件（诊断）"
                 }, (d, w) -> {
                     if (w == 0) backupNow();
                     else if (w == 1) confirmSwitchToTemp();
                     else if (w == 2) switchToMain();
                     else if (w == 3) deleteTempMemory();
-                    else if (w == 4) showMemoryFiles();
+                    else if (w == 4) confirmClearMainMemory();
+                    else if (w == 5) confirmClearVault();
+                    else if (w == 6) showMemoryFiles();
                 })
                 .show();
+    }
+
+    private void confirmClearMainMemory() {
+        new AlertDialog.Builder(this)
+                .setTitle("清除主账号记忆")
+                .setMessage("将删除主账号沙箱里的 htai_* 文件。\n\n保险箱不会被删除。\n\n确定清除吗？")
+                .setPositiveButton("清除", (d, w) -> clearMainMemory())
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void clearMainMemory() {
+        Toast.makeText(this, "正在清除主账号记忆...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            runRoot("rm -f " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
+            runOnUiThread(() -> {
+                refreshDrawerList();
+                Toast.makeText(MainActivity.this, "🧨 主账号记忆已清除", Toast.LENGTH_LONG).show();
+            });
+        }).start();
+    }
+
+    private void confirmClearVault() {
+        new AlertDialog.Builder(this)
+                .setTitle("清除保险箱")
+                .setMessage("保险箱是主账号的长期备份。\n清除后，主账号将无法从保险箱恢复。\n\n确定永久清除吗？")
+                .setPositiveButton("永久清除", (d, w) -> clearVault())
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void clearVault() {
+        Toast.makeText(this, "正在清除保险箱...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            runRoot("rm -rf " + STORE_DIR + " 2>/dev/null");
+            runRoot("mkdir -p " + STORE_DIR);
+            runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                    "☠️ 保险箱已清除",
+                    Toast.LENGTH_LONG).show());
+        }).start();
     }
 
     private void deleteTempMemory() {
