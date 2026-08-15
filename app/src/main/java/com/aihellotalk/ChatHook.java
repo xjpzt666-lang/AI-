@@ -50,6 +50,7 @@ public class ChatHook {
     private static final Set<String> translating = ConcurrentHashMap.newKeySet();
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
     private static final ConcurrentHashMap<String, String> senderChatMap = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, String> chatLangOverride = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, String> chatRequestMap = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
 
@@ -162,7 +163,7 @@ public class ChatHook {
 
     public static void install(ClassLoader cl) {
         hostClassLoader = cl;
-        log("=== Hook v5.5 精准回复修复版 ===");
+        log("=== Hook v5.6 多语言手动切换版 ===");
 
         try {
             htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl);
@@ -1083,6 +1084,739 @@ public class ChatHook {
                                         if (!m.contains("Key未配置") && !m.contains("未初始化")) {
                                             try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
                                             t = AITranslator.toChinese(ft, chatId);
+                                        }
+                                    }
+
+                                    if (t != null && !t.trim().isEmpty() && !t.equals(ft)) {
+                                        AITranslator.cacheResult(fm, ft, t);
+                                        try {
+                                            XposedHelpers.callMethod(fb, "setText",
+                                                    t.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
+                                        } catch (Exception ignored) {}
+                                    }
+                                } catch (Exception ignored) {
+                                } finally {
+                                    translating.remove(fm);
+                                }
+                            }).start();
+
+                        } catch (Throwable ignored) {}
+                    }
+                });
+    }
+
+    private static void hookOutgoingSetMsg(ClassLoader cl) {
+        try {
+            Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
+            XC_MethodHook h = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) {
+                    try {
+                        Object msg = p.thisObject;
+                        Object bean = (p.args != null && p.args.length > 0) ? p.args[0] : null;
+                        recordOutgoingIfNeeded(msg, bean);
+                    } catch (Throwable ignored) {}
+                }
+            };
+            XposedBridge.hookAllMethods(hm, "setMsgContent", h);
+        } catch (Throwable ignored) {}
+    }
+
+    private static void recordOutgoingIfNeeded(Object msg, Object bean) {
+        try {
+            if (msg == null || bean == null) return;
+            ensureMsgMethods(msg);
+
+            Object iso = invokeQuiet(mIsSender, msg);
+            if (!(iso instanceof Boolean) || !((Boolean) iso)) return;
+
+            Object cidO = invokeQuiet(mGetChatId, msg);
+            String chatId = (cidO != null) ? String.valueOf(cidO) : currentChatId;
+            if (chatId == null || chatId.isEmpty() || "0".equals(chatId) || "null".equals(chatId)) return;
+
+            Object mto = invokeQuiet(mGetMsgType, msg);
+            String mt = (mto != null) ? String.valueOf(mto) : null;
+
+            String text = null;
+            if (bean instanceof String) {
+                text = (String) bean;
+            } else {
+                Method gtm = ensureBeanGetText(bean);
+                Object to = invokeQuiet(gtm, bean);
+                if (to != null) text = String.valueOf(to);
+                if (text == null) text = extractMessageTextByType(msg, mt);
+            }
+
+            if (text == null || text.trim().isEmpty()) return;
+            text = text.trim();
+            if (text.startsWith("[") || AITranslator.isChineseOnly(text)) return;
+
+            Object mio = invokeQuiet(mGetMsgId, msg);
+            String mid = (mio != null) ? String.valueOf(mio) : null;
+            if (mid == null || mid.isEmpty()) return;
+
+            long st = System.currentTimeMillis();
+            Object sto = invokeQuiet(mGetSendTime, msg);
+            if (sto instanceof Long) st = (Long) sto;
+
+            final String fc = chatId;
+            final String fm = mid;
+            final String ft = text;
+            final long fst = st;
+
+            boolean isNew = recordedMsgIds.add(fc + "_" + fm);
+            if (isNew) {
+                historyExecutor.execute(() ->
+                        AITranslator.appendHistory(fc, fm, "assistant", ft, fst, null, false));
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    private static void hookBtnOld(ClassLoader cl) throws Exception {
+        Class<?> bc = XposedHelpers.findClass("com.hellotalk.chat.ui.ChatInputBoxView", cl);
+        XposedBridge.hookAllConstructors(bc, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                ((View) p.thisObject).postDelayed(() -> tryAddBtn((View) p.thisObject), 2000);
+            }
+        });
+    }
+
+    private static void hookBtnNew(ClassLoader cl) throws Exception {
+        Class<?> oc = XposedHelpers.findClass(
+                "com.hellotalk.talk.detail.widget.input.ChatInputUIOperate", cl);
+        XposedBridge.hookAllConstructors(oc, new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                ((View) p.thisObject).postDelayed(() -> tryAddBtn((View) p.thisObject), 2500);
+            }
+        });
+    }
+
+    private static void tryAddBtn(View box) {
+        EditText edit = findEditIn(box);
+        if (edit != null) addTranslateBtn((ViewGroup) box, edit);
+    }
+
+    private static EditText findEditIn(View v) {
+        try {
+            for (Field f : v.getClass().getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(v);
+                if (val instanceof EditText) return (EditText) val;
+            }
+        } catch (Exception ignored) {}
+
+        if (v instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) v;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                View c = g.getChildAt(i);
+                if (c instanceof EditText) return (EditText) c;
+                EditText found = findEditIn(c);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private static View findNativeSendBtn(ViewGroup root) {
+        if (root == null) return null;
+        ArrayList<View> views = new ArrayList<>();
+        views.add(root);
+
+        for (int i = 0; i < views.size(); i++) {
+            View cur = views.get(i);
+            try {
+                if (cur.getId() != View.NO_ID
+                        && cur.getResources().getResourceEntryName(cur.getId()).toLowerCase().contains("send")) {
+                    return cur;
+                }
+            } catch (Exception ignored) {}
+
+            if (cur instanceof ViewGroup) {
+                ViewGroup vg = (ViewGroup) cur;
+                for (int j = 0; j < vg.getChildCount(); j++) views.add(vg.getChildAt(j));
+            }
+        }
+        return null;
+    }
+
+    private static void updateTranslateBtnText(Button btn) {
+        if (btn == null) return;
+        String cid = currentChatId;
+        String ov = (cid == null) ? null : chatLangOverride.get(cid);
+        if (ov == null || ov.isEmpty()) {
+            btn.setText("译");
+        } else {
+            btn.setText("译·" + ov.toUpperCase());
+        }
+    }
+
+    private static void showLanguagePicker(Button btn, EditText edit) {
+        if (btn == null || edit == null) return;
+
+        final String cid = currentChatId;
+        if (cid == null || cid.isEmpty() || "0".equals(cid) || "null".equals(cid)) {
+            Toast.makeText(edit.getContext(), "⚠️ 会话尚未就绪，请退出聊天重新进入后再试", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        final String[] codes = {
+                "auto", "en", "es", "ru", "uk", "ko",
+                "ar", "pt", "fr", "de", "it",
+                "tr", "nl", "pl", "kk", "cs"
+        };
+        final String[] names = {
+                "🌐 自动判断",
+                "英语 English",
+                "西班牙语 Español",
+                "俄语 Русский",
+                "乌克兰语 Українська",
+                "韩语 한국어",
+                "阿拉伯语 العربية",
+                "葡萄牙语 Português",
+                "法语 Français",
+                "德语 Deutsch",
+                "意大利语 Italiano",
+                "土耳其语 Türkçe",
+                "荷兰语 Nederlands",
+                "波兰语 Polski",
+                "哈萨克语 Қазақша",
+                "捷克语 Čeština"
+        };
+
+        new android.app.AlertDialog.Builder(edit.getContext())
+                .setTitle("选择翻译语言（仅当前聊天）")
+                .setItems(names, (d, w) -> {
+                    String code = codes[w];
+                    if ("auto".equals(code)) {
+                        chatLangOverride.remove(cid);
+                    } else {
+                        chatLangOverride.put(cid, code);
+                    }
+                    updateTranslateBtnText(btn);
+                    Toast.makeText(edit.getContext(), "当前聊天语言已设为：" + names[w], Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private static void addTranslateBtn(ViewGroup layout, EditText edit) {
+        try {
+            edit.setLongClickable(true);
+            edit.setTextIsSelectable(true);
+            edit.setFocusable(true);
+            edit.setFocusableInTouchMode(true);
+        } catch (Throwable ignored) {}
+
+        if ("HT_AI_BTN".equals(String.valueOf(layout.getTag()))) return;
+
+        Button btn = new Button(layout.getContext());
+        btn.setText("译");
+        btn.setTextSize(12f);
+        btn.setAllCaps(false);
+        btn.setPadding(12, 4, 12, 4);
+
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.parseColor("#CC333333"));
+        bg.setCornerRadius(8f);
+        btn.setBackground(bg);
+        btn.setTextColor(Color.parseColor("#FFFFFFFF"));
+        btn.setAlpha(0.95f);
+        btn.setVisibility(View.GONE);
+        layout.addView(btn, 0);
+        layout.setTag("HT_AI_BTN");
+
+        Button verBtn = new Button(layout.getContext());
+        verBtn.setText("版本");
+        verBtn.setTextSize(12f);
+        verBtn.setAllCaps(false);
+        verBtn.setPadding(12, 4, 12, 4);
+
+        GradientDrawable vbg = new GradientDrawable();
+        vbg.setColor(Color.parseColor("#0B5ED7"));
+        vbg.setCornerRadius(8f);
+        verBtn.setBackground(vbg);
+        verBtn.setTextColor(Color.parseColor("#FFFFFFFF"));
+        verBtn.setAlpha(0.95f);
+        verBtn.setVisibility(View.GONE);
+        layout.addView(verBtn, 0);
+
+        versionButton = verBtn;
+        versionEdit = edit;
+
+        verBtn.setOnClickListener(v -> {
+            if (lastPickerResult != null) {
+                showPicker(edit, btn, lastPickerResult, lastPickerOrig, lastPickerPns, lastPickerOneTime);
+            } else {
+                Toast.makeText(edit.getContext(), "暂无可选版本", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        btn.setOnLongClickListener(v -> {
+            if (isTranslatingAPI) {
+                Toast.makeText(edit.getContext(), "翻译中，请稍候", Toast.LENGTH_SHORT).show();
+            } else {
+                showLanguagePicker(btn, edit);
+            }
+            return true;
+        });
+
+        final View[] nsb = new View[1];
+
+        Runnable ev = new Runnable() {
+            @Override
+            public void run() {
+                if (nsb[0] == null) nsb[0] = findNativeSendBtn(layout);
+
+                String ct = edit.getText().toString().replace("@", "");
+                if (!ct.trim().isEmpty() && AITranslator.isChineseOnly(ct)) {
+                    if (!isTranslatingAPI) {
+                        btn.setVisibility(View.VISIBLE);
+                        btn.setEnabled(true);
+                        updateTranslateBtnText(btn);
+                        btn.setAlpha(0.93f);
+                    }
+                    if (nsb[0] != null) nsb[0].setVisibility(View.GONE);
+                } else {
+                    if (!isTranslatingAPI) btn.setVisibility(View.GONE);
+                    if (nsb[0] != null && !ct.trim().isEmpty()) nsb[0].setVisibility(View.VISIBLE);
+                }
+            }
+        };
+
+        edit.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int st, int c, int a) {}
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                edit.post(ev);
+
+                String now = s == null ? "" : s.toString();
+                if (pendingSelectedForeign != null && now.trim().isEmpty()) {
+                    pendingSelectedForeign = null;
+                    lastPickerResult = null;
+                    uiHandler.post(() -> {
+                        if (versionButton != null) versionButton.setVisibility(View.GONE);
+                    });
+                }
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int st, int b, int c) {
+                if (s != null && isTranslatingAPI && s.toString().contains("@")) {
+                    AITranslator.cancelOngoingTranslation();
+                    String cl = s.toString().replace("@", "");
+                    edit.removeTextChangedListener(this);
+                    edit.setText(cl);
+                    edit.setSelection(cl.length());
+                    edit.addTextChangedListener(this);
+                }
+            }
+        });
+
+        edit.postDelayed(ev, 100);
+        edit.postDelayed(ev, 500);
+
+        btn.setOnClickListener(v -> {
+            String text = edit.getText().toString().trim();
+            if (text.isEmpty() || !AITranslator.isChineseOnly(text)) return;
+
+            if (verBtn.getVisibility() == View.VISIBLE) {
+                verBtn.setVisibility(View.GONE);
+            }
+
+            pendingSelectedForeign = null;
+            lastPickerResult = null;
+
+            boolean oneTime = text.startsWith("一次性：")
+                    || text.startsWith("一次性:")
+                    || text.startsWith("[一次性]");
+
+            if (text.startsWith("一次性：")) {
+                text = text.substring("一次性：".length()).trim();
+            } else if (text.startsWith("一次性:")) {
+                text = text.substring("一次性:".length()).trim();
+            } else if (text.startsWith("[一次性]")) {
+                text = text.substring("[一次性]".length()).trim();
+            }
+
+            if (text.isEmpty()) return;
+
+            if (!oneTime) {
+                int p1 = text.indexOf("（");
+                int p2 = text.indexOf("）");
+                if (p1 >= 0 && p2 > p1 && text.substring(p1, p2 + 1).contains("一次性")) {
+                    oneTime = true;
+                }
+            }
+
+            final boolean oneTimeFinal = oneTime;
+
+            String cid = currentChatId;
+            if (cid == null || cid.isEmpty() || "0".equals(cid) || "null".equals(cid)) {
+                Toast.makeText(edit.getContext(), "⚠️ 会话尚未就绪，请退出聊天重新进入后再试", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            isTranslatingAPI = true;
+            btn.setEnabled(false);
+            btn.setText("...");
+            btn.setAlpha(1.0f);
+
+            final String cs = cid;
+            final int cts = currentChatType;
+            final String pns = currentPartnerName;
+            final String nats = latestNationality;
+            final int nls = latestNativeLang;
+
+            boolean hasSelectedReply = selectedReplyValid;
+            boolean selectedReplyMine = selectedReplyIsMine;
+            String quote = selectedReplyText;
+            final String qis = currentQuotedImagePath;
+            final boolean qms = currentQuotedImageMissing;
+
+            boolean pbm = isPureBracketQuery(text);
+            String ttt = text;
+
+            if (!pbm && hasSelectedReply && !selectedReplyMine
+                    && quote != null && !quote.trim().isEmpty()) {
+                String orig = AITranslator.getForeignFuzzy(quote);
+                if (orig != null) quote = orig;
+                ttt = "【我要回复的对方原话】：" + quote.trim()
+                        + "\n【我的回复】：" + text;
+            } else if (!pbm && hasSelectedReply && selectedReplyMine
+                    && quote != null && !quote.trim().isEmpty()) {
+                String orig = AITranslator.getForeignFuzzy(quote);
+                if (orig != null) quote = orig;
+                ttt = "【我对我自己之前这条外语消息的补充】：" + quote.trim()
+                        + "\n【补充内容】：" + text;
+            }
+
+            if (pbm) ttt = "[PURE_BRACKET_MODE]\n" + ttt;
+
+            if (qis != null) {
+                File qf = new File(qis);
+                if (qf.exists() && qf.length() > 0) {
+                    ttt += "\n[QUOTED_LOCAL_IMAGE:" + qis + "]";
+                }
+            } else if (qms) {
+                ttt += "\n[QUOTED_IMAGE_BUT_PATH_MISSING]";
+            }
+
+            final String ftt = ttt;
+            final String rci = text;
+
+            new Thread(() -> {
+                try {
+                    String manualLang = chatLangOverride.get(cs);
+                    String tl = (manualLang != null && !manualLang.isEmpty())
+                            ? manualLang
+                            : determineSmartTargetLang(nats, nls, cs);
+
+                    if (cts == 1) AITranslator.registerFriend(cs, pns, tl, nats);
+
+                    String lr = chatRequestMap.get(cs);
+                    boolean retry = ftt.equals(lr);
+                    if (retry) {
+                        chatRetryCountMap.put(cs, chatRetryCountMap.getOrDefault(cs, 0) + 1);
+                    } else {
+                        chatRequestMap.put(cs, ftt);
+                        chatRetryCountMap.put(cs, 0);
+                    }
+
+                    String result = AITranslator.translateForPicker(ftt, tl, cs, retry);
+                    isTranslatingAPI = false;
+                    String fr = result;
+
+                    edit.post(() -> {
+                        btn.setEnabled(true);
+                        updateTranslateBtnText(btn);
+                        btn.setAlpha(0.92f);
+                        showPicker(edit, btn, fr, rci, pns, oneTimeFinal);
+                    });
+                } catch (Exception e) {
+                    isTranslatingAPI = false;
+                    chatRequestMap.remove(cs);
+                    chatRetryCountMap.put(cs, 0);
+
+                    edit.post(() -> {
+                        btn.setEnabled(true);
+                        updateTranslateBtnText(btn);
+                        btn.setAlpha(0.88f);
+                        Toast.makeText(edit.getContext(),
+                                "⚠️ 翻译失败: " + (e.getMessage() != null ? e.getMessage() : "未知错误"),
+                                Toast.LENGTH_LONG).show();
+                    });
+                }
+            }).start();
+        });
+    }
+
+    private static String determineSmartTargetLang(String nat, int nl, String cid) {
+        String n = nat == null ? "" : nat.toLowerCase();
+        if (!n.isEmpty()) {
+            String ml = mapNationalityToLang(n);
+            if (ml != null) return ml;
+        }
+
+        String lc = getDynamicLangCode(nl);
+        if (lc != null && !lc.isEmpty() && !"en".equals(lc)) return lc;
+
+        String fl = AITranslator.getFriendLang(cid);
+        if (fl != null && !fl.isEmpty()) {
+            if (fl.equalsIgnoreCase("zh") || fl.startsWith("zh")) return DEFAULT_REPLY_LANG;
+            return fl;
+        }
+        return DEFAULT_REPLY_LANG;
+    }
+
+    private static String getDynamicLangCode(int nl) {
+        if (langCodeMethod != null) {
+            try {
+                String r = (String) langCodeMethod.invoke(null, nl);
+                return r != null ? r.toLowerCase() : null;
+            } catch (Exception ignored) {}
+        }
+        return null;
+    }
+
+    private static String mapNationalityToLang(String nat) {
+        if (nat == null || nat.isEmpty()) return null;
+        switch (nat) {
+            case "china": case "taiwan": case "hong kong": case "macau": case "singapore": return "zh";
+            case "russia": case "belarus": case "kazakhstan": case "kyrgyzstan": return "ru";
+            case "japan": return "ja";
+            case "korea": case "south korea": return "ko";
+            case "france": case "belgium": case "switzerland": case "canada": return "fr";
+            case "germany": case "austria": return "de";
+            case "spain": case "mexico": case "argentina": case "colombia": case "peru":
+            case "chile": case "venezuela": case "ecuador": case "bolivia": case "paraguay":
+            case "uruguay": case "costa rica": case "panama": case "nicaragua": case "honduras":
+            case "el salvador": case "guatemala": case "cuba": case "dominican republic": case "puerto rico": return "es";
+            case "italy": return "it";
+            case "portugal": case "brazil": return "pt";
+            case "arabia": case "egypt": case "saudi arabia": case "united arab emirates":
+            case "morocco": case "algeria": case "tunisia": case "jordan": case "lebanon":
+            case "iraq": case "kuwait": case "qatar": case "oman": case "bahrain": return "ar";
+            case "turkey": return "tr";
+            case "netherlands": return "nl";
+            case "poland": return "pl";
+            case "vietnam": return "vi";
+            case "thailand": return "th";
+            case "indonesia": return "id";
+            case "india": return "hi";
+            case "ukraine": return "uk";
+            default: return null;
+        }
+    }
+
+    private static void showPicker(EditText edit, Button btn, String result, String origChinese, String pn, boolean oneTime) {
+        android.content.Context ctx = edit.getContext();
+
+        String at = AITranslator.extractAnalysis(result);
+        List<String[]> items = AITranslator.parseTranslateOptions(result);
+
+        if (items.isEmpty()) {
+            AITranslator.dumpDebug("picker_fail", result);
+
+            boolean refused = AITranslator.isRefusalResponse(result);
+            String showText = result == null ? "" : result.trim();
+
+            android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+            TextView rawTv = new TextView(ctx);
+            rawTv.setText(showText);
+            rawTv.setTextIsSelectable(true);
+            rawTv.setTextSize(13f);
+            rawTv.setTextColor(Color.BLACK);
+            rawTv.setPadding(32, 24, 32, 24);
+            rawTv.setLineSpacing(4f, 1.1f);
+            sv.addView(rawTv, new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
+
+            android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
+                    .setTitle(refused ? "AI 拒绝或触发安全策略" : "AI 未按格式返回")
+                    .setView(sv)
+                    .setPositiveButton("重试", (d, w) -> edit.post(() -> btn.performClick()))
+                    .setNeutralButton("复制原文", (d, w) -> {
+                        try {
+                            ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
+                                    .setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", showText));
+                            Toast.makeText(ctx, "已复制", Toast.LENGTH_SHORT).show();
+                        } catch (Exception ignored) {}
+                    })
+                    .setNegativeButton("取消", null)
+                    .create();
+
+            dialog.show();
+            if (dialog.getWindow() != null) {
+                android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+                dialog.getWindow().setLayout(
+                        (int) (dm.widthPixels * 0.92),
+                        (int) (dm.heightPixels * 0.75));
+            }
+            return;
+        }
+
+        android.widget.LinearLayout root = new android.widget.LinearLayout(ctx);
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.setLayoutParams(new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        root.setPadding(0, 12, 0, 12);
+
+        if (at != null && !at.isEmpty()) {
+            TextView header = new TextView(ctx);
+            header.setText("📋 分析");
+            header.setTextSize(12f);
+            header.setTextColor(Color.parseColor("#999999"));
+            header.setPadding(48, 12, 48, 4);
+            root.addView(header);
+
+            android.widget.ScrollView ts = new android.widget.ScrollView(ctx);
+            android.widget.LinearLayout.LayoutParams tsLp = new android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1.0f);
+            tsLp.setMargins(0, 0, 0, 16);
+            ts.setLayoutParams(tsLp);
+
+            TextView ta = new TextView(ctx);
+            ta.setText(at);
+            ta.setTextColor(Color.parseColor("#555555"));
+            ta.setTextSize(13f);
+            ta.setLineSpacing(4f, 1.1f);
+            ta.setTextIsSelectable(true);
+            ta.setPadding(48, 0, 48, 12);
+            ts.addView(ta);
+            root.addView(ts);
+        }
+
+        TextView optHeader = new TextView(ctx);
+        optHeader.setText("💬 选一个发送（共" + items.size() + "个版本）");
+        optHeader.setTextSize(12f);
+        optHeader.setTextColor(Color.parseColor("#999999"));
+        optHeader.setPadding(48, 0, 48, 8);
+        root.addView(optHeader);
+
+        android.widget.ScrollView bs = new android.widget.ScrollView(ctx);
+        android.widget.LinearLayout.LayoutParams bsLp = new android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                (at != null && !at.isEmpty()) ? 2.5f : 1.0f);
+        bs.setLayoutParams(bsLp);
+        bs.setFillViewport(true);
+
+        android.widget.LinearLayout cont = new android.widget.LinearLayout(ctx);
+        cont.setOrientation(android.widget.LinearLayout.VERTICAL);
+        cont.setPadding(36, 8, 36, 24);
+        bs.addView(cont);
+        root.addView(bs);
+
+        String dn = (pn != null && !pn.isEmpty()) ? pn : currentPartnerName;
+        String title = (dn != null && !dn.isEmpty()) ? ("选版本 - " + dn) : "选版本";
+
+        final android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
+                .setTitle(title)
+                .setView(root)
+                .setNegativeButton("取消", (d, w) -> {})
+                .setPositiveButton("🔄 换一批", (d, w) -> edit.post(() -> btn.performClick()))
+                .create();
+
+        for (int idx = 0; idx < items.size(); idx++) {
+            String[] item = items.get(idx);
+            final String foreign = item[0];
+            String ch = item[1];
+            String lb = item[2];
+
+            android.widget.LinearLayout card = new android.widget.LinearLayout(ctx);
+            card.setOrientation(android.widget.LinearLayout.VERTICAL);
+            card.setPadding(32, 24, 32, 24);
+
+            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.setMargins(0, 8, 0, 12);
+            card.setLayoutParams(lp);
+
+            GradientDrawable cbg = new GradientDrawable();
+            cbg.setColor(Color.parseColor("#F8F9FA"));
+            cbg.setCornerRadius(14f);
+            cbg.setStroke(2, Color.parseColor("#DEE2E6"));
+            card.setBackground(cbg);
+
+            TextView tf = new TextView(ctx);
+            tf.setText((idx + 1) + ". " + foreign);
+            tf.setTextColor(Color.parseColor("#212529"));
+            tf.setTextSize(15f);
+            tf.setTypeface(null, android.graphics.Typeface.BOLD);
+            tf.setLineSpacing(3f, 1.1f);
+            card.addView(tf);
+
+            if ((ch != null && !ch.isEmpty()) || (lb != null && !lb.isEmpty())) {
+                TextView tc = new TextView(ctx);
+                String st = (ch != null) ? ch : "";
+                if (lb != null && !lb.isEmpty()) st += "  [" + lb + "]";
+                tc.setText(st);
+                tc.setTextColor(Color.parseColor("#6C757D"));
+                tc.setTextSize(12f);
+                tc.setPadding(0, 8, 0, 0);
+                card.addView(tc);
+            }
+
+            card.setOnClickListener(v2 -> {
+                String cleanChinese = AITranslator.stripMetaInstructions(origChinese);
+
+                if (oneTime) {
+                    AITranslator.suppressSentForeign(foreign);
+                } else if (cleanChinese != null && !cleanChinese.isEmpty()) {
+                    AITranslator.rememberDraft(foreign, cleanChinese);
+                }
+
+                edit.setText(foreign);
+                edit.setSelection(foreign.length());
+
+                try {
+                    ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
+                            .setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", foreign));
+                } catch (Exception ignored) {}
+
+                pendingSelectedForeign = foreign;
+                lastPickerResult = result;
+                lastPickerOrig = origChinese;
+                lastPickerPns = pn;
+                lastPickerOneTime = oneTime;
+
+                uiHandler.post(() -> {
+                    if (versionButton != null) {
+                        versionButton.setVisibility(View.VISIBLE);
+                        versionButton.setText("版本");
+                    }
+                });
+
+                dialog.dismiss();
+            });
+
+            card.setOnLongClickListener(v2 -> {
+                try {
+                    ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
+                            .setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", foreign));
+                    Toast.makeText(ctx, "✅ 已复制到剪贴板", Toast.LENGTH_SHORT).show();
+                } catch (Exception ignored) {}
+                return true;
+            });
+
+            cont.addView(card);
+        }
+
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+            int h = (int) (dm.heightPixels * 0.88);
+            dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, h);
+        }
+    }
+}                                         t = AITranslator.toChinese(ft, chatId);
                                         }
                                     }
 
