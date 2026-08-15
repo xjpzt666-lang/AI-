@@ -1879,8 +1879,7 @@ public class ChatHook {
                 Object to = invokeQuiet(gtm, bean);
                 if (to != null) text = String.valueOf(to);
                 if (text == null) text = extractMessageTextByType(msg, mt);
-            }
-
+         
             if (text == null || text.trim().isEmpty()) return;
             text = text.trim();
             if (text.startsWith("[") || AITranslator.isChineseOnly(text)) return;
