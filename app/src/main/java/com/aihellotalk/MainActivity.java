@@ -29,12 +29,19 @@ import java.io.File;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 public class MainActivity extends Activity {
 
     private static final int REQUEST_CODE_PICK_IMAGE = 101;
     private static final int REQUEST_CODE_PICK_FILE = 102;
+
+    private static final String MARKER_FILE = "/data/local/tmp/htai_mem_mode.txt";
+    private static final String MAIN_FILES_DIR = "/data/data/com.hellotalk/files";
+    private static final String TEMP_FILES_DIR = "/data/data/com.hellotalk/files/htai_temp";
+    private static final String STORE_DIR = "/data/local/tmp/htai_store";
 
     private DrawerLayout drawerLayout;
     private LinearLayout messageContainer;
@@ -271,12 +278,23 @@ public class MainActivity extends Activity {
         checkMemoryClaim();
     }
 
+    private String readMarker() {
+        String m = runRoot("cat " + MARKER_FILE + " 2>/dev/null");
+        return (m == null) ? "" : m.trim();
+    }
+
+    private String currentMemoryRoot() {
+        String marker = readMarker();
+        return "temp".equals(marker) ? TEMP_FILES_DIR : MAIN_FILES_DIR;
+    }
+
     private void checkMemoryClaim() {
         new Thread(() -> {
             String out = runRoot(
-                    "cat /data/local/tmp/htai_mem_mode.txt 2>/dev/null; echo '<<<HTAI_SEP>>>';"
-                    + " ls /data/data/com.hellotalk/files/htai_* 2>/dev/null; echo '<<<HTAI_SEP>>>';"
-                    + " ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
+                    "cat " + MARKER_FILE + " 2>/dev/null; echo '<<<HTAI_SEP>>>';"
+                    + " ls " + MAIN_FILES_DIR + "/htai_* 2>/dev/null; echo '<<<HTAI_SEP>>>';"
+                    + " ls " + TEMP_FILES_DIR + "/htai_* 2>/dev/null; echo '<<<HTAI_SEP>>>';"
+                    + " ls " + STORE_DIR + "/htai_* 2>/dev/null");
 
             if (out == null) {
                 runOnUiThread(() -> updateMemStatus("noroot"));
@@ -285,8 +303,11 @@ public class MainActivity extends Activity {
 
             String[] parts = out.split("<<<HTAI_SEP>>>", -1);
             String marker = parts.length > 0 ? parts[0].trim() : "";
-            String sandboxLs = parts.length > 1 ? parts[1].trim() : "";
-            String storeLs = parts.length > 2 ? parts[2].trim() : "";
+            String mainLs = parts.length > 1 ? parts[1].trim() : "";
+            String tempLs = parts.length > 2 ? parts[2].trim() : "";
+            String storeLs = parts.length > 3 ? parts[3].trim() : "";
+
+            String sandboxLs = "temp".equals(marker) ? tempLs : mainLs;
             boolean sandboxHas = !sandboxLs.isEmpty();
             boolean storeHas = !storeLs.isEmpty();
 
@@ -300,7 +321,7 @@ public class MainActivity extends Activity {
                     showClaimDialog();
                 } else if ("pending".equals(fMarker)) {
                     new Thread(() ->
-                            runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt")
+                            runRoot("echo main > " + MARKER_FILE + " && chmod 644 " + MARKER_FILE)
                     ).start();
                     updateMemStatus("main");
                 } else {
@@ -318,7 +339,7 @@ public class MainActivity extends Activity {
             ms.setTextColor(Color.parseColor("#B02A37"));
             ms.setBackgroundColor(Color.parseColor("#FDECEE"));
         } else if ("temp".equals(marker)) {
-            ms.setText("🧠 记忆：一次性模式（功能照常，不备份，清数据即焚）");
+            ms.setText("🧠 记忆：一次性模式（不备份，可一键清空）");
             ms.setTextColor(Color.parseColor("#B45309"));
             ms.setBackgroundColor(Color.parseColor("#FFF7E6"));
         } else if ("pending".equals(marker)) {
@@ -350,11 +371,11 @@ public class MainActivity extends Activity {
     private void claimMain() {
         Toast.makeText(this, "正在恢复主账号记忆...", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
-            runRoot("mkdir -p /data/data/com.hellotalk/files");
-            runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
-            runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
-            runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
-            runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+            runRoot("mkdir -p " + MAIN_FILES_DIR);
+            runRoot("cp " + STORE_DIR + "/htai_* " + MAIN_FILES_DIR + "/ 2>/dev/null");
+            runRoot("chmod 666 " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
+            runRoot("chown $(stat -c %u:%g " + MAIN_FILES_DIR + ") " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
+            runRoot("echo main > " + MARKER_FILE + " && chmod 644 " + MARKER_FILE);
             runRoot("am force-stop com.hellotalk");
             runOnUiThread(() -> {
                 updateMemStatus("main");
@@ -366,9 +387,11 @@ public class MainActivity extends Activity {
 
     private void claimTemp() {
         new Thread(() -> {
-            runRoot("echo temp > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+            runRoot("mkdir -p " + TEMP_FILES_DIR);
+            runRoot("echo temp > " + MARKER_FILE + " && chmod 644 " + MARKER_FILE);
             runOnUiThread(() -> {
                 updateMemStatus("temp");
+                refreshDrawerList();
                 Toast.makeText(MainActivity.this, "已进入一次性模式", Toast.LENGTH_LONG).show();
             });
         }).start();
@@ -381,23 +404,41 @@ public class MainActivity extends Activity {
                         "📦 立即备份（沙箱 → 保险箱）",
                         "🕶 切换一次性模式（小号瞎聊用）",
                         "👑 切换主账号模式（恢复记忆）",
+                        "🗑 清空一次性记忆",
                         "🔍 查看记忆文件（诊断）"
                 }, (d, w) -> {
                     if (w == 0) backupNow();
                     else if (w == 1) confirmSwitchToTemp();
                     else if (w == 2) switchToMain();
-                    else if (w == 3) showMemoryFiles();
+                    else if (w == 3) deleteTempMemory();
+                    else if (w == 4) showMemoryFiles();
                 })
                 .show();
     }
 
+    private void deleteTempMemory() {
+        new Thread(() -> {
+            runRoot("rm -rf " + TEMP_FILES_DIR + " 2>/dev/null");
+            runRoot("mkdir -p " + TEMP_FILES_DIR);
+            runOnUiThread(() -> {
+                refreshDrawerList();
+                Toast.makeText(MainActivity.this, "🗑 一次性记忆已清空", Toast.LENGTH_LONG).show();
+            });
+        }).start();
+    }
+
     private void backupNow() {
+        String marker = readMarker();
+        if ("temp".equals(marker)) {
+            Toast.makeText(this, "一次性模式不备份", Toast.LENGTH_SHORT).show();
+            return;
+        }
         Toast.makeText(this, "备份中...", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
-            runRoot("mkdir -p /data/local/tmp/htai_store"
-                    + " && cp /data/data/com.hellotalk/files/htai_* /data/local/tmp/htai_store/ 2>/dev/null; "
-                    + "chmod 600 /data/local/tmp/htai_store/htai_* 2>/dev/null");
-            String storeLs = runRoot("ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
+            runRoot("mkdir -p " + STORE_DIR
+                    + " && cp " + MAIN_FILES_DIR + "/htai_* " + STORE_DIR + "/ 2>/dev/null; "
+                    + "chmod 600 " + STORE_DIR + "/htai_* 2>/dev/null");
+            String storeLs = runRoot("ls " + STORE_DIR + "/htai_* 2>/dev/null");
             boolean ok = storeLs != null && !storeLs.trim().isEmpty();
             runOnUiThread(() -> Toast.makeText(MainActivity.this,
                     ok ? "✅ 保险箱已有备份" : "❌ 备份失败",
@@ -408,7 +449,7 @@ public class MainActivity extends Activity {
     private void confirmSwitchToTemp() {
         new AlertDialog.Builder(this)
                 .setTitle("切换一次性模式")
-                .setMessage("将依次执行：\n1. 备份主账号记忆\n2. 清空沙箱\n3. 标记为一次性\n\n确定切换？")
+                .setMessage("将依次执行：\n1. 备份主账号记忆\n2. 清空主账号沙箱\n3. 标记为一次性\n\n确定切换？")
                 .setPositiveButton("切换", (d, w) -> switchToTemp())
                 .setNegativeButton("取消", null)
                 .show();
@@ -417,14 +458,14 @@ public class MainActivity extends Activity {
     private void switchToTemp() {
         Toast.makeText(this, "正在切换一次性模式...", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
-            String sandboxLs0 = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            String sandboxLs0 = runRoot("ls " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
             boolean sandboxHas0 = sandboxLs0 != null && !sandboxLs0.trim().isEmpty();
 
             if (sandboxHas0) {
-                runRoot("mkdir -p /data/local/tmp/htai_store"
-                        + " && cp /data/data/com.hellotalk/files/htai_* /data/local/tmp/htai_store/ 2>/dev/null; "
-                        + "chmod 600 /data/local/tmp/htai_store/htai_* 2>/dev/null");
-                String storeLs = runRoot("ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
+                runRoot("mkdir -p " + STORE_DIR
+                        + " && cp " + MAIN_FILES_DIR + "/htai_* " + STORE_DIR + "/ 2>/dev/null; "
+                        + "chmod 600 " + STORE_DIR + "/htai_* 2>/dev/null");
+                String storeLs = runRoot("ls " + STORE_DIR + "/htai_* 2>/dev/null");
                 boolean storeOk = storeLs != null && !storeLs.trim().isEmpty();
                 if (!storeOk) {
                     runOnUiThread(() -> Toast.makeText(MainActivity.this,
@@ -432,10 +473,11 @@ public class MainActivity extends Activity {
                             Toast.LENGTH_LONG).show());
                     return;
                 }
-                runRoot("rm -f /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+                runRoot("rm -f " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
             }
 
-            runRoot("echo temp > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+            runRoot("mkdir -p " + TEMP_FILES_DIR);
+            runRoot("echo temp > " + MARKER_FILE + " && chmod 644 " + MARKER_FILE);
             runRoot("am force-stop com.hellotalk");
             runOnUiThread(() -> {
                 updateMemStatus("temp");
@@ -448,20 +490,19 @@ public class MainActivity extends Activity {
     private void switchToMain() {
         Toast.makeText(this, "正在切换主账号模式...", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
-            String sandboxLs = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            String sandboxLs = runRoot("ls " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
             boolean sandboxHas = sandboxLs != null && !sandboxLs.trim().isEmpty();
 
             if (!sandboxHas) {
-                runRoot("mkdir -p /data/data/com.hellotalk/files");
-                runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
-                runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
-                runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+                runRoot("mkdir -p " + MAIN_FILES_DIR);
+                runRoot("cp " + STORE_DIR + "/htai_* " + MAIN_FILES_DIR + "/ 2>/dev/null");
+                runRoot("chmod 666 " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
+                runRoot("chown $(stat -c %u:%g " + MAIN_FILES_DIR + ") " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
             }
 
-            runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+            runRoot("echo main > " + MARKER_FILE + " && chmod 644 " + MARKER_FILE);
             runRoot("am force-stop com.hellotalk");
 
-            final boolean restored = !sandboxHas;
             runOnUiThread(() -> {
                 updateMemStatus("main");
                 refreshDrawerList();
@@ -472,13 +513,15 @@ public class MainActivity extends Activity {
 
     private void showMemoryFiles() {
         new Thread(() -> {
-            String marker = runRoot("cat /data/local/tmp/htai_mem_mode.txt 2>/dev/null");
-            String sandbox = runRoot("ls -la /data/data/com.hellotalk/files/ 2>/dev/null | grep htai");
-            String store = runRoot("ls -la /data/local/tmp/htai_store/ 2>/dev/null | grep htai");
+            String marker = runRoot("cat " + MARKER_FILE + " 2>/dev/null");
+            String mainBox = runRoot("ls -la " + MAIN_FILES_DIR + "/ 2>/dev/null | grep htai");
+            String tempBox = runRoot("ls -la " + TEMP_FILES_DIR + "/ 2>/dev/null | grep htai");
+            String store = runRoot("ls -la " + STORE_DIR + "/ 2>/dev/null | grep htai");
 
             StringBuilder sb = new StringBuilder();
             sb.append("【模式标记】\n").append(marker == null ? "读取失败" : marker.trim())
-              .append("\n\n【沙箱】\n").append(sandbox == null ? "读取失败" : sandbox.trim())
+              .append("\n\n【主账号沙箱】\n").append(mainBox == null ? "读取失败" : mainBox.trim())
+              .append("\n\n【一次性沙箱】\n").append(tempBox == null ? "读取失败" : tempBox.trim())
               .append("\n\n【保险箱】\n").append(store == null ? "读取失败" : store.trim());
 
             runOnUiThread(() -> new AlertDialog.Builder(MainActivity.this)
@@ -657,9 +700,6 @@ public class MainActivity extends Activity {
         sendMessage();
     }
 
-    // ==========================================
-    // ★ 找回被遗漏的 runRoot 方法
-    // ==========================================
     private String runRoot(String cmd) {
         try {
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
@@ -679,13 +719,14 @@ public class MainActivity extends Activity {
     private void deleteHTChatRoot(ChatSession s) {
         new Thread(() -> {
             try {
-                String histPath = "/data/data/com.hellotalk/files/htai_hist_" + s.id + ".json";
+                String root = currentMemoryRoot();
+                String histPath = root + "/htai_hist_" + s.id + ".json";
                 runRoot("rm " + histPath);
 
-                runRoot("rm /data/data/com.hellotalk/files/htai_profile_" + s.id + ".txt 2>/dev/null");
-                runRoot("rm /data/local/tmp/htai_store/htai_hist_" + s.id + ".json /data/local/tmp/htai_store/htai_profile_" + s.id + ".txt 2>/dev/null");
+                runRoot("rm " + root + "/htai_profile_" + s.id + ".txt 2>/dev/null");
+                runRoot("rm " + STORE_DIR + "/htai_hist_" + s.id + ".json " + STORE_DIR + "/htai_profile_" + s.id + ".txt 2>/dev/null");
 
-                String friendsPath = "/data/data/com.hellotalk/files/htai_friends.json";
+                String friendsPath = root + "/htai_friends.json";
                 String jsonStr = runRoot("cat " + friendsPath);
                 if (jsonStr != null && !jsonStr.trim().isEmpty()) {
                     JSONObject friends = new JSONObject(jsonStr);
@@ -699,7 +740,7 @@ public class MainActivity extends Activity {
 
                         runRoot("cp " + tempFile.getAbsolutePath() + " " + friendsPath);
                         runRoot("chmod 666 " + friendsPath);
-                        runRoot("cp " + friendsPath + " /data/local/tmp/htai_store/htai_friends.json 2>/dev/null");
+                        runRoot("cp " + friendsPath + " " + STORE_DIR + "/htai_friends.json 2>/dev/null");
                     }
                 }
 
@@ -722,8 +763,10 @@ public class MainActivity extends Activity {
     private void refreshDrawerList() {
         new Thread(() -> {
             final List<ChatSession> htFriends = new ArrayList<>();
+            final Set<String> seenNames = new HashSet<>();
             try {
-                String jsonStr = runRoot("cat /data/data/com.hellotalk/files/htai_friends.json");
+                String root = currentMemoryRoot();
+                String jsonStr = runRoot("cat " + root + "/htai_friends.json");
                 if (jsonStr != null && !jsonStr.trim().isEmpty()) {
                     JSONObject friends = new JSONObject(jsonStr);
                     JSONArray names = friends.names();
@@ -732,7 +775,10 @@ public class MainActivity extends Activity {
                             String id = names.getString(i);
                             JSONObject info = friends.getJSONObject(id);
                             String name = info.optString("name", id);
-                            htFriends.add(new ChatSession(id, name));
+                            if (name == null || name.trim().isEmpty()) name = id;
+                            if (seenNames.add(name)) {
+                                htFriends.add(new ChatSession(id, name));
+                            }
                         }
                     }
                 }
@@ -788,7 +834,8 @@ public class MainActivity extends Activity {
     private void loadHTMessagesRoot(String chatId) {
         messageContainer.removeAllViews();
         new Thread(() -> {
-            final String jsonStr = runRoot("cat /data/data/com.hellotalk/files/htai_hist_" + chatId + ".json");
+            String root = currentMemoryRoot();
+            final String jsonStr = runRoot("cat " + root + "/htai_hist_" + chatId + ".json");
             runOnUiThread(() -> {
                 try {
                     if (jsonStr != null && !jsonStr.trim().isEmpty()) {
@@ -841,7 +888,8 @@ public class MainActivity extends Activity {
 
         new Thread(() -> {
             try {
-                String path = "/data/data/com.hellotalk/files/htai_hist_" + currentChatId + ".json";
+                String root = currentMemoryRoot();
+                String path = root + "/htai_hist_" + currentChatId + ".json";
                 String jsonStr = runRoot("cat " + path);
                 JSONArray history;
                 if (jsonStr != null && !jsonStr.trim().isEmpty() && jsonStr.startsWith("[")) {
