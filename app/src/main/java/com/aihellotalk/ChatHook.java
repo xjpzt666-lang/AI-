@@ -178,6 +178,7 @@ public class ChatHook {
         try { hookBubbleFlip(cl); } catch (Throwable ignored) {}
         try { hookStartChat(cl); } catch (Throwable ignored) {}
         try { hookRecv(cl); } catch (Throwable ignored) {}
+        try { hookOutgoingSetMsg(cl); } catch (Throwable ignored) {}
         try { hookLang(cl); } catch (Throwable ignored) {}
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
@@ -1067,6 +1068,73 @@ public class ChatHook {
                         } catch (Throwable ignored) {}
                     }
                 });
+    }
+
+    private static void hookOutgoingSetMsg(ClassLoader cl) {
+        try {
+            Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
+            XC_MethodHook h = new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam p) {
+                    try {
+                        Object msg = p.thisObject;
+                        Object bean = (p.args != null && p.args.length > 0) ? p.args[0] : null;
+                        recordOutgoingIfNeeded(msg, bean);
+                    } catch (Throwable ignored) {}
+                }
+            };
+            XposedBridge.hookAllMethods(hm, "setMsgContent", h);
+        } catch (Throwable ignored) {}
+    }
+
+    private static void recordOutgoingIfNeeded(Object msg, Object bean) {
+        try {
+            if (msg == null || bean == null) return;
+            ensureMsgMethods(msg);
+
+            Object iso = invokeQuiet(mIsSender, msg);
+            if (!(iso instanceof Boolean) || !((Boolean) iso)) return;
+
+            Object cidO = invokeQuiet(mGetChatId, msg);
+            String chatId = (cidO != null) ? String.valueOf(cidO) : currentChatId;
+            if (chatId == null || chatId.isEmpty() || "0".equals(chatId) || "null".equals(chatId)) return;
+
+            Object mto = invokeQuiet(mGetMsgType, msg);
+            String mt = (mto != null) ? String.valueOf(mto) : null;
+
+            String text = null;
+            if (bean instanceof String) {
+                text = (String) bean;
+            } else {
+                Method gtm = ensureBeanGetText(bean);
+                Object to = invokeQuiet(gtm, bean);
+                if (to != null) text = String.valueOf(to);
+                if (text == null) text = extractMessageTextByType(msg, mt);
+            }
+
+            if (text == null || text.trim().isEmpty()) return;
+            text = text.trim();
+            if (text.startsWith("[") || AITranslator.isChineseOnly(text)) return;
+
+            Object mio = invokeQuiet(mGetMsgId, msg);
+            String mid = (mio != null) ? String.valueOf(mio) : null;
+            if (mid == null || mid.isEmpty()) return;
+
+            long st = System.currentTimeMillis();
+            Object sto = invokeQuiet(mGetSendTime, msg);
+            if (sto instanceof Long) st = (Long) sto;
+
+            final String fc = chatId;
+            final String fm = mid;
+            final String ft = text;
+            final long fst = st;
+
+            boolean isNew = recordedMsgIds.add(fc + "_" + fm);
+            if (isNew) {
+                historyExecutor.execute(() ->
+                        AITranslator.appendHistory(fc, fm, "assistant", ft, fst, null, false));
+            }
+        } catch (Throwable ignored) {}
     }
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
