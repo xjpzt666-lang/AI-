@@ -78,6 +78,9 @@ public class ChatHook {
     private static volatile String selectedReplyChatId = null;
     private static volatile ClassLoader hostClassLoader = null;
 
+    private static final java.util.Map<View, String[]> viewFlipMap =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<View, String[]>());
+
     private static final String HT_TEXT_VIEW_CLASS = "com.hellotalk.lib.ui.text.view.HTCompatTextView";
     private static Class<?> htTextViewClass = null;
 
@@ -189,6 +192,11 @@ public class ChatHook {
 
     private static void log(String msg) {
         XposedBridge.log("HT_AI " + msg);
+    }
+
+    private static void rememberViewFlip(View v, String foreign, String chinese) {
+        if (v == null || foreign == null || chinese == null) return;
+        viewFlipMap.put(v, new String[]{foreign, chinese});
     }
 
     private static boolean isPureBracketQuery(String text) {
@@ -601,11 +609,23 @@ public class ChatHook {
 
                     String s = cs.toString();
                     if (s.isEmpty() || s.length() > 5000) return;
-                    if (s.endsWith(" 🌐") || s.endsWith(" 🔄")) return;
 
-                    String d = AITranslator.getDraftFuzzy(s);
-                    if (d == null) d = AITranslator.getChineseByForeign(s);
+                    if (s.endsWith(" 🌐")) {
+                        String clean = s.substring(0, s.length() - 2).trim();
+                        String zh = AITranslator.getMyDraftFuzzy(clean);
+                        if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
+                        return;
+                    }
+                    if (s.endsWith(" 🔄")) {
+                        String clean = s.substring(0, s.length() - 2).trim();
+                        String orig = AITranslator.chineseToForeign.get(clean);
+                        if (orig != null) rememberViewFlip((View) param.thisObject, orig, clean);
+                        return;
+                    }
+
+                    String d = AITranslator.getMyDraftFuzzy(s);
                     if (d != null && !d.equals(s)) {
+                        rememberViewFlip((View) param.thisObject, s, d);
                         SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
                         ssb.append(" 🌐");
                         param.args[0] = ssb;
@@ -641,9 +661,9 @@ public class ChatHook {
                                 String s = new String(chars, start, len);
                                 if (s.endsWith(" 🌐") || s.endsWith(" 🔄")) return;
 
-                                String d = AITranslator.getDraftFuzzy(s);
-                                if (d == null) d = AITranslator.getChineseByForeign(s);
+                                String d = AITranslator.getMyDraftFuzzy(s);
                                 if (d != null && !d.equals(s)) {
+                                    rememberViewFlip((View) param.thisObject, s, d);
                                     String ns = s + " 🌐";
                                     param.args[0] = ns.toCharArray();
                                     param.args[1] = 0;
@@ -711,15 +731,17 @@ public class ChatHook {
 
                         if (ev.getAction() == MotionEvent.ACTION_UP) {
                             final String clean = s.substring(0, s.length() - 2).trim();
+                            String[] pair = viewFlipMap.get(tv);
 
                             if (s.endsWith(" 🔄")) {
-                                String orig = AITranslator.chineseToForeign.get(clean);
+                                String orig = (pair != null && clean.equals(pair[1])) ? pair[0] : null;
+                                if (orig == null) orig = AITranslator.chineseToForeign.get(clean);
                                 if (orig != null && !orig.equals(clean)) {
                                     tv.setText(orig + " 🌐");
                                 }
                             } else {
-                                String zh = AITranslator.mySentDrafts.get(clean);
-                                if (zh == null) zh = AITranslator.foreignToChinese.get(clean);
+                                String zh = (pair != null && clean.equals(pair[0])) ? pair[1] : null;
+                                if (zh == null) zh = AITranslator.getMyDraftFuzzy(clean);
 
                                 if (zh != null && !zh.equals(clean)) {
                                     tv.setText(zh + " 🔄");
@@ -1003,8 +1025,7 @@ public class ChatHook {
                             if (AITranslator.containsJapanese(text) || AITranslator.isChineseOnly(text)) return;
 
                             if (isMine) {
-                                String d = AITranslator.getDraftFuzzy(text);
-                                if (d == null) d = AITranslator.getChineseByForeign(text);
+                                String d = AITranslator.getMyDraftFuzzy(text);
                                 if (d != null) {
                                     AITranslator.cacheResult(mid, text, d);
                                     final Object fbk = bean;
