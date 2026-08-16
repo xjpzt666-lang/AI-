@@ -1072,11 +1072,15 @@ public class ChatHook {
 
                             String[] cached = AITranslator.getCached(mid);
                             if (cached != null) {
-                                try {
-                                    XposedHelpers.callMethod(bean, "setText",
-                                            cached[1].replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
-                                } catch (Exception ignored) {}
-                                return;
+                                if (cached[1] != null && AITranslator.isChineseOnly(cached[1])) {
+                                    try {
+                                        XposedHelpers.callMethod(bean, "setText",
+                                                cached[1].replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
+                                    } catch (Exception ignored) {}
+                                    return;
+                                } else {
+                                    AITranslator.cache.remove(mid);
+                                }
                             }
 
                             String transKey = chatId + "_" + mid;
@@ -1101,7 +1105,8 @@ public class ChatHook {
                                         }
                                     }
 
-                                    if (t != null && !t.trim().isEmpty() && !t.equals(ft)) {
+                                    if (t != null && !t.trim().isEmpty() && !t.equals(ft)
+                                            && AITranslator.isChineseOnly(t)) {
                                         AITranslator.cacheResult(fm, ft, t);
                                         try {
                                             XposedHelpers.callMethod(fb, "setText",
