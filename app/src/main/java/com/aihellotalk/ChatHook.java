@@ -1637,6 +1637,10 @@ public class ChatHook {
             final String ftt = ttt;
             final String rci = text;
 
+            if (qis != null) {
+                currentQuotedImagePath = null;
+            }
+
             new Thread(() -> {
                 try {
                     if (pbm) {
