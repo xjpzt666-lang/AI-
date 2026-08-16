@@ -1292,7 +1292,7 @@ public class AITranslator {
 
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
-            int maxChatMessages = 20;  // ✅ 15→20
+            int maxChatMessages = 20;
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
             boolean hasContext = false;
             for (int i = startIdx; i < fullHistory.length(); i++) {
@@ -1367,27 +1367,32 @@ public class AITranslator {
         }
     }
 
-    // ========== ✅ askAiQuestion：上下文20→60 + 问答结果存历史 ==========
+    // ========== ✅ askAiQuestion：纯文本消息 + 去标记 + 60条上下文 + 问答存历史 ==========
     public static String askAiQuestion(String text, String chatId) throws IOException {
         maybeRecheckMode();
         text = text.trim();
         if (text.isEmpty()) return text;
 
+        // ✅ 去掉 [PURE_BRACKET_MODE] 标记，避免污染 prompt 和 fallback
+        String cleanText = text.replaceAll("(?i)\\[PURE_BRACKET_MODE\\]\\s*", "").trim();
+        if (cleanText.isEmpty()) return text;
+
         try {
             JSONArray messages = new JSONArray();
             String sysPrompt = "你是聊天助手。用户正在和一个外国朋友聊天。"
-                    + "用户会用中文向你提问，或者请你完成某个任务。"
-                    + "请结合对话历史和对方背景档案，用中文直接回答或完成要求。"
+                    + "用户用中文向你提问（用括号括起来的），请直接回答用户的问题。"
+                    + "请结合对话历史和对方背景档案，用中文详细、完整地回答。"
                     + "如果问题涉及翻译，请直接把翻译结果写在回答里。"
                     + "如果上下文里没有相关信息，就诚实说不知道，禁止编造。"
                     + "请给出详细、完整的回答，尽量全面分析，不要只回答一两句话。不要使用Markdown格式。"
                     + profileBlock(chatId);
-            messages.put(createMessageObj("system", sysPrompt));
+            // ✅ 系统消息直接用纯文本，不走 createMessageObj（避免被 parseVisualMarkers 干扰）
+            messages.put(createRawMessage("system", sysPrompt));
 
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
             scriptBuilder.append("【对话上下文】\n");
-            int maxChatMessages = 60;  // ✅ 20→60，和发送翻译一致
+            int maxChatMessages = 60;
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
             boolean hasContext = false;
             for (int i = startIdx; i < fullHistory.length(); i++) {
@@ -1399,23 +1404,18 @@ public class AITranslator {
                 else if ("assistant".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("我", content, "中文原意")); hasContext = true; }
             }
             if (!hasContext) scriptBuilder.append("（暂无有效上下文）\n");
-            scriptBuilder.append("\n【用户的问题/要求】\n").append(text);
+            scriptBuilder.append("\n【用户的问题/要求】\n").append(cleanText);
 
-            messages.put(createMessageObj("user", scriptBuilder.toString()));
+            // ✅ 用户消息也直接用纯文本
+            messages.put(createRawMessage("user", scriptBuilder.toString()));
 
-            String result = refuseGuard(callChatMessages(messages), text);
+            String result = refuseGuard(callChatMessages(messages), cleanText);
 
-            // ✅ 将问答存入历史，下次问就有记忆了
-            String cleanQuestion = text
-                    .replaceAll("\\[PURE_BRACKET_MODE\\]\\s*", "")
-                    .replaceAll("\\[QUOTED_LOCAL_IMAGE:[^\\]]+\\]", "[引用了一张图片]")
-                    .replaceAll("\\[LOCAL_IMAGE:[^\\]]+\\]", "[附带了一张图片]")
-                    .replaceAll("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]", "[引用了一张图片但路径丢失]")
-                    .replaceAll("\\[IMAGE_BASE64:[^\\]]+\\]", "[附带了一张图片]");
-            if (cleanQuestion.length() > 500) cleanQuestion = cleanQuestion.substring(0, 500);
-
+            // ✅ 将问答存入历史
+            String storeQuestion = cleanText;
+            if (storeQuestion.length() > 500) storeQuestion = storeQuestion.substring(0, 500);
             appendHistory(chatId, "q_" + System.currentTimeMillis(), "user",
-                    cleanQuestion, System.currentTimeMillis(), null, false);
+                    storeQuestion, System.currentTimeMillis(), null, false);
             appendHistory(chatId, "a_" + System.currentTimeMillis(), "assistant",
                     result != null && result.length() > 800 ? result.substring(0, 800) : (result != null ? result : ""),
                     System.currentTimeMillis(), null, false);
