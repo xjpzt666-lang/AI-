@@ -743,6 +743,7 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
+    // ========== 修复：用 getPrimaryHorizontal 像素坐标判断，解决 emoji 宽字符误触 ==========
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
         XposedHelpers.findAndHookMethod(HT_TEXT_VIEW_CLASS, cl, "onTouchEvent", MotionEvent.class,
                 new XC_MethodHook() {
@@ -774,9 +775,12 @@ public class ChatHook {
 
                         if (endsGlobeCyclone) {
                             clean = s.substring(0, s.length() - 6).trim();
-                            if (off >= s.length() - 3) {
+                            // ✅ 修复：用像素坐标替代字符偏移，避免 emoji 宽字符误触
+                            float cycloneStartX = lay.getPrimaryHorizontal(s.length() - 3);
+                            float globeStartX = lay.getPrimaryHorizontal(s.length() - 6);
+                            if (ev.getX() >= cycloneStartX) {
                                 cyclone = true;
-                            } else if (off >= s.length() - 6) {
+                            } else if (ev.getX() >= globeStartX) {
                                 globe = true;
                             } else {
                                 return;
