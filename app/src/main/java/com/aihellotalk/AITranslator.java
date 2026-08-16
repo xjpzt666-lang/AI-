@@ -723,6 +723,7 @@ public class AITranslator {
     public static String fromChinese(String text, String lang) throws IOException { text = text.trim(); if (text.isEmpty()) return text; return callChatSimple("\u628a\u4ee5\u4e0b\u4e2d\u6587\u7ffb\u8bd1\u6210" + lang + "\uff1a" + text); }
     public static String translateTest(String text, String lang) throws IOException { if (isChineseOnly(text)) return callChatSimple("\u628a\u4ee5\u4e0b\u4e2d\u6587\u7ffb\u8bd1\u6210" + lang + "\uff1a" + text); else return toChinese(text, "0"); }
 
+    // ========== ✅ reTranslateWithNote：她/他 + 主client ==========
     public static String reTranslateWithNote(String text, String chatId) throws IOException {
         maybeRecheckMode(); text = text.trim(); if (text.isEmpty()) return text; if (!needTranslateToChinese(text)) return text;
         try {
@@ -738,11 +739,11 @@ public class AITranslator {
             for (int i = startIdx; i < fullHistory.length(); i++) { JSONObject msg = fullHistory.getJSONObject(i); String role = msg.optString("role", ""); String content = msg.optString("content", ""); if (content != null && content.equals(text)) continue; String prefix = msg.optBoolean("oneTime", false) ? "[一次性上下文] " : ""; if ("user".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("对方", content, "中文意思")); hasContext = true; } else if ("assistant".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("我", content, "中文原意")); hasContext = true; } }
             if (!hasContext) scriptBuilder.append("（暂无有效上下文）\n"); scriptBuilder.append("\n【要重新翻译的外语】\n<<<\n").append(text).append("\n>>>");
             messages.put(createMessageObj("user", scriptBuilder.toString()));
-            return refuseGuard(callChatMessagesWith(getReverseTranslateClient(), messages), text);
+            return refuseGuard(callChatMessages(messages), text);
         } catch (JSONException e) { throw new IOException("构建Messages失败"); }
     }
 
-    // ========== ✅ askAiQuestion：防复读 retry ==========
+    // ========== ✅ askAiQuestion：createMessageObj 恢复图片识别 ==========
     public static String askAiQuestion(String text, String chatId) throws IOException {
         maybeRecheckMode();
         text = text.trim();
@@ -760,7 +761,7 @@ public class AITranslator {
                     + "如果上下文里没有相关信息，就诚实说不知道，禁止编造。"
                     + "请给出详细、完整的回答，尽量全面分析，不要只回答一两句话。不要使用Markdown格式。"
                     + profileBlock(chatId);
-            messages.put(createRawMessage("system", sysPrompt));
+            messages.put(createMessageObj("system", sysPrompt));
 
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
@@ -779,15 +780,9 @@ public class AITranslator {
             if (!hasContext) scriptBuilder.append("（暂无有效上下文）\n");
             scriptBuilder.append("\n【用户的问题/要求】\n").append(cleanText);
 
-            messages.put(createRawMessage("user", scriptBuilder.toString()));
+            messages.put(createMessageObj("user", scriptBuilder.toString()));
 
             String result = refuseGuard(callChatMessages(messages), cleanText);
-
-            // ✅ 防复读：如果 AI 返回了和问题一模一样的文本，等 0.6 秒再问一次
-            if (result != null && result.trim().equals(cleanText)) {
-                try { Thread.sleep(600); } catch (InterruptedException ignored) {}
-                result = refuseGuard(callChatMessages(messages), cleanText);
-            }
 
             String storeQuestion = cleanText;
             if (storeQuestion.length() > 500) storeQuestion = storeQuestion.substring(0, 500);
