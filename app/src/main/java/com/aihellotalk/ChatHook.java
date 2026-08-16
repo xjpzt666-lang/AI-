@@ -197,13 +197,13 @@ public class ChatHook {
     // " 🌐     🌀" = 1空格 + 🌐(2) + 5空格 + 1空格 + 🌀(2) = 11 个 char
     // 🌐 起始偏移 = len - 11, 🌀 起始偏移 = len - 3
     private static int globeCycloneSuffixLen() {
-        return 1 + 2 + GLOBE_CYCLONE_SEP.length() + 1 + 2; // = 4 + sep.length() + 2 = 6 + sep.length()
+        return 1 + 2 + GLOBE_CYCLONE_SEP.length() + 1 + 2;
     }
     private static int cycloneStartOffset() {
-        return 3; // 1空格 + 🌀(2) = 3 chars from end
+        return 3;
     }
     private static int globeStartOffset() {
-        return cycloneStartOffset() + GLOBE_CYCLONE_SEP.length() + 2; // 3 + sep + 🌐(2)
+        return cycloneStartOffset() + GLOBE_CYCLONE_SEP.length() + 2;
     }
 
     private static void log(String msg) {
@@ -629,7 +629,6 @@ public class ChatHook {
                     String s = cs.toString();
                     if (s.isEmpty() || s.length() > 5000) return;
 
-                    // ✅ 已带分隔空格的 🌐...🌀，跳过
                     if (s.endsWith(globeCycloneSuffix)) {
                         return;
                     }
@@ -646,7 +645,6 @@ public class ChatHook {
                         if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) zh = c[1];
                         if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
                         SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
-                        // ✅ 用 5 空格分隔
                         ssb.append(GLOBE_CYCLONE_SEP + "🌀");
                         param.args[0] = ssb;
                         return;
@@ -708,7 +706,6 @@ public class ChatHook {
                                     String[] c = AITranslator.getCachedByForeign(clean);
                                     if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) zh = c[1];
                                     if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
-                                    // ✅ 用 5 空格分隔
                                     String ns = s + GLOBE_CYCLONE_SEP + "🌀";
                                     param.args[0] = ns.toCharArray();
                                     param.args[1] = 0;
@@ -768,12 +765,9 @@ public class ChatHook {
     // ========== hookBubbleFlip：适配分隔空格 ==========
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
         final String globeCycloneSuffix = " 🌐" + GLOBE_CYCLONE_SEP + "🌀";
-        // suffixLen = 1(空格) + 2(🌐) + 5(分隔空格) + 1(空格) + 2(🌀) = 11
         final int suffixLen = globeCycloneSuffix.length();
-        // 🌀 从末尾往前数: 1(🌀低) + 1(🌀高) + 1(空格) = 3
         final int cycloneOffset = 3;
-        // 🌐 从末尾往前数: 3 + 5(分隔空格) + 2(🌐) = 10, 即 suffixLen - 1
-        final int globeOffset = suffixLen - 1; // = 10
+        final int globeOffset = suffixLen - 1;
 
         XposedHelpers.findAndHookMethod(HT_TEXT_VIEW_CLASS, cl, "onTouchEvent", MotionEvent.class,
                 new XC_MethodHook() {
@@ -804,7 +798,6 @@ public class ChatHook {
                         boolean cycle = false;
 
                         if (endsGlobeCyclone) {
-                            // ✅ 用分隔空格后的偏移
                             clean = s.substring(0, s.length() - suffixLen).trim();
                             float cycloneStartX = lay.getPrimaryHorizontal(s.length() - cycloneOffset);
                             float globeStartX = lay.getPrimaryHorizontal(s.length() - globeOffset);
@@ -833,7 +826,6 @@ public class ChatHook {
                                 if (orig == null) orig = AITranslator.chineseToForeign.get(clean);
                                 if (orig != null && !orig.equals(clean)) {
                                     boolean mine = AITranslator.getMyDraftFuzzy(orig) != null;
-                                    // ✅ 用分隔空格
                                     tv.setText(orig + (mine ? " 🌐" : globeCycloneSuffix));
                                 }
                             } else if (globe) {
@@ -1801,9 +1793,11 @@ public class ChatHook {
         }
     }
 
+    // ========== ✅ showAnswerDialog：去掉 AI 回复中的 Markdown 星号 ==========
     private static void showAnswerDialog(EditText edit, String answer) {
         android.content.Context ctx = edit.getContext();
         String showText = (answer == null) ? "" : answer.trim();
+        showText = showText.replaceAll("\\*+", "");  // ✅ 去掉所有 * 星号
 
         android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
         TextView rawTv = new TextView(ctx);
