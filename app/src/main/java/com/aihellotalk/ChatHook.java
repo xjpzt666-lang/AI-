@@ -724,7 +724,7 @@ public class ChatHook {
 
                         int line = lay.getLineForVertical((int) ev.getY());
                         int off = lay.getOffsetForHorizontal(line, ev.getX());
-                        if (off < s.length() - 2) return;
+                        if (off < s.length() - 3) return;
 
                         if (ev.getAction() == MotionEvent.ACTION_UP) {
                             final String clean = s.substring(0, s.length() - 2).trim();
@@ -745,18 +745,43 @@ public class ChatHook {
                                 } else {
                                     final String needTrans = clean;
                                     final boolean isMineDraft = (pair != null);
+                                    final android.content.Context ctx = tv.getContext();
                                     new Thread(() -> {
+                                        String newZh = null;
+                                        Exception lastErr = null;
+
                                         try {
-                                            String newZh = AITranslator.toChinese(needTrans, currentChatId);
-                                            if (newZh != null && !newZh.trim().isEmpty() && !newZh.equals(needTrans)) {
-                                                if (isMineDraft) {
-                                                    AITranslator.rememberDraft(needTrans, newZh);
-                                                } else {
-                                                    AITranslator.cacheResult("manual_" + needTrans.hashCode(), needTrans, newZh);
-                                                }
-                                                uiHandler.post(() -> tv.setText(newZh + " 🔄"));
+                                            newZh = AITranslator.toChinese(needTrans, currentChatId);
+                                        } catch (Exception e) {
+                                            lastErr = e;
+                                        }
+
+                                        if (newZh == null || newZh.trim().isEmpty() || newZh.equals(needTrans)) {
+                                            try {
+                                                newZh = AITranslator.reverseTranslateMyForeign(needTrans, currentChatId);
+                                                lastErr = null;
+                                            } catch (Exception e) {
+                                                if (lastErr == null) lastErr = e;
                                             }
-                                        } catch (Exception ignored) {}
+                                        }
+
+                                        final String result = newZh;
+                                        final Exception err = lastErr;
+                                        uiHandler.post(() -> {
+                                            if (result != null && !result.trim().isEmpty() && !result.equals(needTrans)) {
+                                                if (isMineDraft) {
+                                                    AITranslator.rememberDraft(needTrans, result);
+                                                } else {
+                                                    AITranslator.cacheResult("manual_" + needTrans.hashCode(), needTrans, result);
+                                                }
+                                                tv.setText(result.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
+                                            } else {
+                                                String msg = (err != null && err.getMessage() != null)
+                                                        ? err.getMessage()
+                                                        : "未翻译";
+                                                Toast.makeText(ctx, "⚠️ 手动翻译失败: " + msg, Toast.LENGTH_LONG).show();
+                                            }
+                                        });
                                     }).start();
                                 }
                             }
