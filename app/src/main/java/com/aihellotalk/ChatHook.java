@@ -707,7 +707,10 @@ public class ChatHook {
                     CharSequence t = cd.getItemAt(0).getText();
                     if (t != null) {
                         String ts = t.toString();
-                        if (cd.getDescription() != null && "HT_AI_Copy".equals(cd.getDescription().getLabel())) {
+                        String label = (cd.getDescription() != null)
+                                ? String.valueOf(cd.getDescription().getLabel())
+                                : null;
+                        if (label != null && label.startsWith("HT_AI")) {
                             return;
                         }
                         if (!ts.endsWith(" 🌐") && !ts.endsWith(" 🔄") && !ts.endsWith(" 🌀") && !ts.matches(".*[\\u4e00-\\u9fa5]+.*")) {
@@ -1636,32 +1639,43 @@ public class ChatHook {
 
             new Thread(() -> {
                 try {
-                    String manualLang = chatLangOverride.get(cs);
-                    String tl = (manualLang != null && !manualLang.isEmpty())
-                            ? manualLang
-                            : determineSmartTargetLang(nats, nls, cs);
-
-                    if (cts == 1) AITranslator.registerFriend(cs, pns, tl, nats);
-
-                    String lr = chatRequestMap.get(cs);
-                    boolean retry = ftt.equals(lr);
-                    if (retry) {
-                        chatRetryCountMap.put(cs, chatRetryCountMap.getOrDefault(cs, 0) + 1);
+                    if (pbm) {
+                        String answer = AITranslator.askAiQuestion(ftt, cs);
+                        isTranslatingAPI = false;
+                        edit.post(() -> {
+                            btn.setEnabled(true);
+                            updateTranslateBtnText(btn);
+                            btn.setAlpha(0.92f);
+                            showAnswerDialog(edit, answer);
+                        });
                     } else {
-                        chatRequestMap.put(cs, ftt);
-                        chatRetryCountMap.put(cs, 0);
+                        String manualLang = chatLangOverride.get(cs);
+                        String tl = (manualLang != null && !manualLang.isEmpty())
+                                ? manualLang
+                                : determineSmartTargetLang(nats, nls, cs);
+
+                        if (cts == 1) AITranslator.registerFriend(cs, pns, tl, nats);
+
+                        String lr = chatRequestMap.get(cs);
+                        boolean retry = ftt.equals(lr);
+                        if (retry) {
+                            chatRetryCountMap.put(cs, chatRetryCountMap.getOrDefault(cs, 0) + 1);
+                        } else {
+                            chatRequestMap.put(cs, ftt);
+                            chatRetryCountMap.put(cs, 0);
+                        }
+
+                        String result = AITranslator.translateForPicker(ftt, tl, cs, retry);
+                        isTranslatingAPI = false;
+                        String fr = result;
+
+                        edit.post(() -> {
+                            btn.setEnabled(true);
+                            updateTranslateBtnText(btn);
+                            btn.setAlpha(0.92f);
+                            showPicker(edit, btn, fr, rci, pns, oneTimeFinal);
+                        });
                     }
-
-                    String result = AITranslator.translateForPicker(ftt, tl, cs, retry);
-                    isTranslatingAPI = false;
-                    String fr = result;
-
-                    edit.post(() -> {
-                        btn.setEnabled(true);
-                        updateTranslateBtnText(btn);
-                        btn.setAlpha(0.92f);
-                        showPicker(edit, btn, fr, rci, pns, oneTimeFinal);
-                    });
                 } catch (Exception e) {
                     isTranslatingAPI = false;
                     chatRequestMap.remove(cs);
@@ -1672,7 +1686,7 @@ public class ChatHook {
                         updateTranslateBtnText(btn);
                         btn.setAlpha(0.88f);
                         Toast.makeText(edit.getContext(),
-                                "⚠️ 翻译失败: " + (e.getMessage() != null ? e.getMessage() : "未知错误"),
+                                "⚠️ 失败: " + (e.getMessage() != null ? e.getMessage() : "未知错误"),
                                 Toast.LENGTH_LONG).show();
                     });
                 }
@@ -1735,6 +1749,45 @@ public class ChatHook {
             case "india": return "hi";
             case "ukraine": return "uk";
             default: return null;
+        }
+    }
+
+    private static void showAnswerDialog(EditText edit, String answer) {
+        android.content.Context ctx = edit.getContext();
+        String showText = (answer == null) ? "" : answer.trim();
+
+        android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+        TextView rawTv = new TextView(ctx);
+        rawTv.setText(showText);
+        rawTv.setTextIsSelectable(true);
+        rawTv.setTextSize(14f);
+        rawTv.setTextColor(Color.BLACK);
+        rawTv.setPadding(32, 24, 32, 24);
+        rawTv.setLineSpacing(4f, 1.1f);
+        sv.addView(rawTv, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
+                .setTitle("AI 回答")
+                .setView(sv)
+                .setPositiveButton("复制", (d, w) -> {
+                    try {
+                        android.content.ClipboardManager cm = (android.content.ClipboardManager)
+                                ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                        cm.setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", showText));
+                        Toast.makeText(ctx, "已复制", Toast.LENGTH_SHORT).show();
+                    } catch (Exception ignored) {}
+                })
+                .setNegativeButton("关闭", null)
+                .create();
+
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+            dialog.getWindow().setLayout(
+                    (int) (dm.widthPixels * 0.92),
+                    (int) (dm.heightPixels * 0.75));
         }
     }
 
