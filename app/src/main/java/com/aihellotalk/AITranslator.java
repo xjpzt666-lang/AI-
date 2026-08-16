@@ -653,10 +653,6 @@ public class AITranslator {
         return null;
     }
 
-    /**
-     * 只在"我发过的外语→中文"草稿里查，绝不查 foreignToChinese。
-     * 用于自己发出的消息显示 🌐 和点按翻转，避免串到对方消息的翻译。
-     */
     public static String getMyDraftFuzzy(String sentForeignText) {
         if (sentForeignText == null || sentForeignText.trim().isEmpty()) return null;
         String clean = stripFlipMarks(sentForeignText);
@@ -1327,6 +1323,7 @@ public class AITranslator {
         else return toChinese(text, "0");
     }
 
+    // ========== ✅ 修复：sysPrompt加"她/他" + 用独立client防取消 ==========
     public static String reTranslateWithNote(String text, String chatId) throws IOException {
         maybeRecheckMode();
         text = text.trim();
@@ -1337,6 +1334,7 @@ public class AITranslator {
             JSONArray messages = new JSONArray();
             String sysPrompt = "你是翻译助手。请把下面<<< >>>里的外语翻译成自然的中文口语，"
                     + "然后在译文末尾用中文全角括号（）补充这句话的真实意思或潜台词，括号内不超过30个字。"
+                    + "解释时请用\u201c她\u201d（或\u201c他\u201d）来指代说话者本人，绝对不要用\u201c对方\u201d或\u201c说话者\u201d来指代。"
                     + "只输出\u201c译文（解释）\u201d，不要输出任何其他内容。"
                     + profileBlock(chatId);
             messages.put(createMessageObj("system", sysPrompt));
@@ -1361,7 +1359,8 @@ public class AITranslator {
 
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
-            return refuseGuard(callChatMessages(messages), text);
+            // ✅ 用独立 reverseTranslateClient，不会被 cancelOngoingTranslation 取消
+            return refuseGuard(callChatMessagesWith(getReverseTranslateClient(), messages), text);
         } catch (JSONException e) {
             throw new IOException("构建Messages失败");
         }
@@ -1373,7 +1372,6 @@ public class AITranslator {
         text = text.trim();
         if (text.isEmpty()) return text;
 
-        // ✅ 去掉 [PURE_BRACKET_MODE] 标记，避免污染 prompt 和 fallback
         String cleanText = text.replaceAll("(?i)\\[PURE_BRACKET_MODE\\]\\s*", "").trim();
         if (cleanText.isEmpty()) return text;
 
@@ -1386,7 +1384,6 @@ public class AITranslator {
                     + "如果上下文里没有相关信息，就诚实说不知道，禁止编造。"
                     + "请给出详细、完整的回答，尽量全面分析，不要只回答一两句话。不要使用Markdown格式。"
                     + profileBlock(chatId);
-            // ✅ 系统消息直接用纯文本，不走 createMessageObj（避免被 parseVisualMarkers 干扰）
             messages.put(createRawMessage("system", sysPrompt));
 
             JSONArray fullHistory = loadHistory(chatId);
@@ -1406,12 +1403,10 @@ public class AITranslator {
             if (!hasContext) scriptBuilder.append("（暂无有效上下文）\n");
             scriptBuilder.append("\n【用户的问题/要求】\n").append(cleanText);
 
-            // ✅ 用户消息也直接用纯文本
             messages.put(createRawMessage("user", scriptBuilder.toString()));
 
             String result = refuseGuard(callChatMessages(messages), cleanText);
 
-            // ✅ 将问答存入历史
             String storeQuestion = cleanText;
             if (storeQuestion.length() > 500) storeQuestion = storeQuestion.substring(0, 500);
             appendHistory(chatId, "q_" + System.currentTimeMillis(), "user",
@@ -1657,6 +1652,20 @@ public class AITranslator {
             body.put("temperature", getTemperature());
             body.put("messages", messages);
             return executeRequest(body);
+        } catch (JSONException e) { throw new IOException("构建失败"); }
+    }
+
+    // ========== ✅ 新增：用指定 client 发请求，供独立 client 使用 ==========
+    private static String callChatMessagesWith(OkHttpClient useClient, JSONArray messages) throws IOException {
+        if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
+        if (useClient == null) throw new IOException("未初始化");
+        try {
+            JSONObject body = new JSONObject();
+            body.put("model", model);
+            body.put("max_tokens", 8000);
+            body.put("temperature", getTemperature());
+            body.put("messages", messages);
+            return executeRequestWith(useClient, body);
         } catch (JSONException e) { throw new IOException("构建失败"); }
     }
 
