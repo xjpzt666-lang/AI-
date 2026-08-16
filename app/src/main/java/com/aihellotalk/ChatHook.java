@@ -610,7 +610,19 @@ public class ChatHook {
                     String s = cs.toString();
                     if (s.isEmpty() || s.length() > 5000) return;
 
+                    if (s.endsWith(" 🌐 🌀")) {
+                        return;
+                    }
                     if (s.endsWith(" 🌐")) {
+                        String clean = s.substring(0, s.length() - 2).trim();
+                        String zh = null;
+                        String[] c = AITranslator.getCachedByForeign(clean);
+                        if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) zh = c[1];
+                        if (zh == null) zh = AITranslator.getMyDraftFuzzy(clean);
+                        if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
+                        SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
+                        ssb.append(" 🌀");
+                        param.args[0] = ssb;
                         return;
                     }
                     if (s.endsWith(" 🔄")) {
@@ -656,7 +668,21 @@ public class ChatHook {
                                 if (chars == null || len <= 0 || len > 5000) return;
 
                                 String s = new String(chars, start, len);
-                                if (s.endsWith(" 🌐") || s.endsWith(" 🔄")) return;
+                                if (s.endsWith(" 🌐 🌀") || s.endsWith(" 🔄")) return;
+
+                                if (s.endsWith(" 🌐")) {
+                                    String clean = s.substring(0, s.length() - 2).trim();
+                                    String zh = null;
+                                    String[] c = AITranslator.getCachedByForeign(clean);
+                                    if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) zh = c[1];
+                                    if (zh == null) zh = AITranslator.getMyDraftFuzzy(clean);
+                                    if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
+                                    String ns = s + " 🌀";
+                                    param.args[0] = ns.toCharArray();
+                                    param.args[1] = 0;
+                                    param.args[2] = ns.length();
+                                    return;
+                                }
 
                                 String d = AITranslator.getMyDraftFuzzy(s);
                                 if (d != null && !d.equals(s)) {
@@ -684,7 +710,7 @@ public class ChatHook {
                         if (cd.getDescription() != null && "HT_AI_Copy".equals(cd.getDescription().getLabel())) {
                             return;
                         }
-                        if (!ts.endsWith(" 🌐") && !ts.endsWith(" 🔄") && !ts.matches(".*[\\u4e00-\\u9fa5]+.*")) {
+                        if (!ts.endsWith(" 🌐") && !ts.endsWith(" 🔄") && !ts.endsWith(" 🌀") && !ts.matches(".*[\\u4e00-\\u9fa5]+.*")) {
                             return;
                         }
                         try {
@@ -717,28 +743,58 @@ public class ChatHook {
                         if (cs == null) return;
 
                         String s = cs.toString();
-                        if (!s.endsWith(" 🔄") && !s.endsWith(" 🌐")) return;
+                        boolean endsCycle = s.endsWith(" 🔄");
+                        boolean endsGlobe = s.endsWith(" 🌐");
+                        boolean endsGlobeCyclone = s.endsWith(" 🌐 🌀");
+                        if (!endsCycle && !endsGlobe && !endsGlobeCyclone) return;
 
                         Layout lay = tv.getLayout();
                         if (lay == null) return;
 
                         int line = lay.getLineForVertical((int) ev.getY());
                         int off = lay.getOffsetForHorizontal(line, ev.getX());
-                        if (off < s.length() - 3) return;
+
+                        String clean;
+                        boolean cyclone = false;
+                        boolean globe = false;
+                        boolean cycle = false;
+
+                        if (endsGlobeCyclone) {
+                            clean = s.substring(0, s.length() - 6).trim();
+                            if (off >= s.length() - 3) {
+                                cyclone = true;
+                            } else if (off >= s.length() - 6) {
+                                globe = true;
+                            } else {
+                                return;
+                            }
+                        } else if (endsGlobe) {
+                            clean = s.substring(0, s.length() - 2).trim();
+                            if (off < s.length() - 3) return;
+                            globe = true;
+                        } else {
+                            clean = s.substring(0, s.length() - 2).trim();
+                            if (off < s.length() - 3) return;
+                            cycle = true;
+                        }
 
                         if (ev.getAction() == MotionEvent.ACTION_UP) {
-                            final String clean = s.substring(0, s.length() - 2).trim();
                             String[] pair = viewFlipMap.get(tv);
 
-                            if (s.endsWith(" 🔄")) {
+                            if (cycle) {
                                 String orig = (pair != null && clean.equals(pair[1])) ? pair[0] : null;
                                 if (orig == null) orig = AITranslator.chineseToForeign.get(clean);
                                 if (orig != null && !orig.equals(clean)) {
-                                    tv.setText(orig + " 🌐");
+                                    boolean mine = AITranslator.getMyDraftFuzzy(orig) != null;
+                                    tv.setText(orig + (mine ? " 🌐" : " 🌐 🌀"));
                                 }
-                            } else {
+                            } else if (globe) {
                                 String zh = (pair != null && clean.equals(pair[0])) ? pair[1] : null;
                                 if (zh == null) zh = AITranslator.getMyDraftFuzzy(clean);
+                                if (zh == null) {
+                                    String[] c = AITranslator.getCachedByForeign(clean);
+                                    if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) zh = c[1];
+                                }
 
                                 if (zh != null && !zh.equals(clean)) {
                                     tv.setText(zh + " 🔄");
@@ -784,6 +840,24 @@ public class ChatHook {
                                         });
                                     }).start();
                                 }
+                            } else if (cyclone) {
+                                final String needTrans = clean;
+                                final android.content.Context ctx = tv.getContext();
+                                new Thread(() -> {
+                                    try {
+                                        String newZh = AITranslator.reTranslateWithNote(needTrans, currentChatId);
+                                        if (newZh != null && !newZh.trim().isEmpty() && !newZh.equals(needTrans)) {
+                                            AITranslator.replaceCacheByForeign(needTrans, newZh.trim());
+                                            uiHandler.post(() -> tv.setText(newZh.trim() + " 🔄"));
+                                        } else {
+                                            uiHandler.post(() -> Toast.makeText(ctx, "⚠️ 重新翻译失败：未翻译", Toast.LENGTH_LONG).show());
+                                        }
+                                    } catch (Exception e) {
+                                        uiHandler.post(() -> Toast.makeText(ctx,
+                                                "⚠️ 重新翻译失败: " + (e.getMessage() != null ? e.getMessage() : "未知错误"),
+                                                Toast.LENGTH_LONG).show());
+                                    }
+                                }).start();
                             }
 
                             p.setResult(true);
