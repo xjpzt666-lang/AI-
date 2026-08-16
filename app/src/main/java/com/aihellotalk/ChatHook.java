@@ -36,7 +36,8 @@ public class ChatHook {
     private static final String TAG = "HT_AI";
     private static final String DEFAULT_REPLY_LANG = "en";
 
-    private static final String GLOBE_CYCLONE_SEP = "     ";
+    // ✅ 8 个空格，🌐 和 🌀 之间更宽松
+    private static final String GLOBE_CYCLONE_SEP = "        ";
 
     private static volatile String currentChatId = "0";
     private static volatile int currentChatType = 1;
@@ -190,16 +191,6 @@ public class ChatHook {
         try { hookUltimateStealth(cl); } catch (Throwable ignored) {}
         try { hookImageRenderLayer(cl); } catch (Throwable ignored) {}
         try { hookInputReplyBar(cl); } catch (Throwable ignored) {}
-    }
-
-    private static int globeCycloneSuffixLen() {
-        return 1 + 2 + GLOBE_CYCLONE_SEP.length() + 1 + 2;
-    }
-    private static int cycloneStartOffset() {
-        return 3;
-    }
-    private static int globeStartOffset() {
-        return cycloneStartOffset() + GLOBE_CYCLONE_SEP.length() + 2;
     }
 
     private static void log(String msg) {
@@ -757,11 +748,14 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
+    // ========== ✅ hookBubbleFlip：8空格 + cycloneOffset=2 ==========
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
         final String globeCycloneSuffix = " 🌐" + GLOBE_CYCLONE_SEP + "🌀";
         final int suffixLen = globeCycloneSuffix.length();
-        final int cycloneOffset = 3;
-        final int globeOffset = suffixLen - 1;
+        // ✅ 🌀 起始 = s.length()-2（高代理），不是 -3（空格）
+        final int cycloneOffset = 2;
+        // ✅ 🌐 起始 = s.length() - (cycloneOffset + 2 + sepLen + 1)
+        final int globeOffset = cycloneOffset + 2 + GLOBE_CYCLONE_SEP.length() + 1;
 
         XposedHelpers.findAndHookMethod(HT_TEXT_VIEW_CLASS, cl, "onTouchEvent", MotionEvent.class,
                 new XC_MethodHook() {
@@ -1018,6 +1012,7 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
+    // ========== ✅ hookRecv：chatId=0 时用 currentChatId 兜底 ==========
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
 
@@ -1040,12 +1035,12 @@ public class ChatHook {
                             Object cidO = invokeQuiet(mGetChatId, msg);
                             if (cidO != null) eid = String.valueOf(cidO);
 
-                            if ("0".equals(eid)
-                                    || "null".equals(eid)
-                                    || eid.trim().isEmpty()) {
-                                log("chatId invalid skip. current=" + currentChatId
-                                        + " rawId=" + eid);
-                                return;
+                            // ✅ chatId 无效时，用 currentChatId 兜底，不再直接跳过
+                            if ("0".equals(eid) || "null".equals(eid) || eid.trim().isEmpty()) {
+                                if ("0".equals(currentChatId) || "null".equals(currentChatId) || currentChatId.isEmpty()) {
+                                    return;
+                                }
+                                eid = currentChatId;
                             }
 
                             final String chatId = eid;
@@ -1461,6 +1456,7 @@ public class ChatHook {
                 .show();
     }
 
+    // ========== ✅ addTranslateBtn：括号提问不再发送 [PURE_BRACKET_MODE] 标记 ==========
     private static void addTranslateBtn(ViewGroup layout, EditText edit) {
         try {
             edit.setLongClickable(true);
@@ -1654,7 +1650,19 @@ public class ChatHook {
                         + "\n【补充内容】：" + text;
             }
 
-            if (pbm) ttt = "[PURE_BRACKET_MODE]\n" + ttt;
+            // ✅ 括号提问：不再加 [PURE_BRACKET_MODE]，直接传纯文本给 AI
+            // askAiQuestion 内部用 createRawMessage，不需要图片标记解析
+            if (pbm) {
+                // 去掉括号，提取纯问题文本
+                String cleanQ = text;
+                if (text.startsWith("(") && text.endsWith(")")) {
+                    cleanQ = text.substring(1, text.length() - 1).trim();
+                } else if (text.startsWith("（") && text.endsWith("）")) {
+                    cleanQ = text.substring(1, text.length() - 1).trim();
+                }
+                if (cleanQ.isEmpty()) cleanQ = text;
+                ttt = cleanQ;
+            }
 
             if (qis != null) {
                 File qf = new File(qis);
@@ -1787,7 +1795,6 @@ public class ChatHook {
         }
     }
 
-    // ========== ✅ 修复：final + 链式 replaceAll，lambda 可用 ==========
     private static void showAnswerDialog(EditText edit, String answer) {
         android.content.Context ctx = edit.getContext();
         final String showText = (answer == null) ? "" : answer.trim().replaceAll("\\*+", "");
