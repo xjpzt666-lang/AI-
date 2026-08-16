@@ -1096,6 +1096,7 @@ public class ChatHook {
                             }
 
                             String[] cached = AITranslator.getCached(mid);
+                            if (cached == null) cached = AITranslator.getCachedByForeign(text);
                             if (cached != null) {
                                 if (cached[1] != null && AITranslator.isChineseOnly(cached[1])) {
                                     try {
