@@ -36,6 +36,9 @@ public class ChatHook {
     private static final String TAG = "HT_AI";
     private static final String DEFAULT_REPLY_LANG = "en";
 
+    // 🌐 和 🌀 之间的分隔空格数（越大越不容易误触）
+    private static final String GLOBE_CYCLONE_SEP = "     "; // 5个空格
+
     private static volatile String currentChatId = "0";
     private static volatile int currentChatType = 1;
     private static volatile String currentPartnerName = "";
@@ -188,6 +191,19 @@ public class ChatHook {
         try { hookUltimateStealth(cl); } catch (Throwable ignored) {}
         try { hookImageRenderLayer(cl); } catch (Throwable ignored) {}
         try { hookInputReplyBar(cl); } catch (Throwable ignored) {}
+    }
+
+    // ========== 计算后缀长度 ==========
+    // " 🌐     🌀" = 1空格 + 🌐(2) + 5空格 + 1空格 + 🌀(2) = 11 个 char
+    // 🌐 起始偏移 = len - 11, 🌀 起始偏移 = len - 3
+    private static int globeCycloneSuffixLen() {
+        return 1 + 2 + GLOBE_CYCLONE_SEP.length() + 1 + 2; // = 4 + sep.length() + 2 = 6 + sep.length()
+    }
+    private static int cycloneStartOffset() {
+        return 3; // 1空格 + 🌀(2) = 3 chars from end
+    }
+    private static int globeStartOffset() {
+        return cycloneStartOffset() + GLOBE_CYCLONE_SEP.length() + 2; // 3 + sep + 🌐(2)
     }
 
     private static void log(String msg) {
@@ -594,8 +610,11 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
+    // ========== hookTextViewRender：用 5 空格分隔 🌐 和 🌀 ==========
     private static void hookTextViewRender(ClassLoader cl) {
         if (htTextViewClass == null) return;
+
+        final String globeCycloneSuffix = " 🌐" + GLOBE_CYCLONE_SEP + "🌀";
 
         XC_MethodHook renderLogic = new XC_MethodHook() {
             @Override
@@ -610,7 +629,8 @@ public class ChatHook {
                     String s = cs.toString();
                     if (s.isEmpty() || s.length() > 5000) return;
 
-                    if (s.endsWith(" 🌐 🌀")) {
+                    // ✅ 已带分隔空格的 🌐...🌀，跳过
+                    if (s.endsWith(globeCycloneSuffix)) {
                         return;
                     }
                     if (s.endsWith(" 🌐")) {
@@ -626,7 +646,8 @@ public class ChatHook {
                         if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) zh = c[1];
                         if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
                         SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
-                        ssb.append(" 🌀");
+                        // ✅ 用 5 空格分隔
+                        ssb.append(GLOBE_CYCLONE_SEP + "🌀");
                         param.args[0] = ssb;
                         return;
                     }
@@ -673,7 +694,7 @@ public class ChatHook {
                                 if (chars == null || len <= 0 || len > 5000) return;
 
                                 String s = new String(chars, start, len);
-                                if (s.endsWith(" 🌐 🌀") || s.endsWith(" 🔄")) return;
+                                if (s.endsWith(globeCycloneSuffix) || s.endsWith(" 🔄")) return;
 
                                 if (s.endsWith(" 🌐")) {
                                     String clean = s.substring(0, s.length() - 2).trim();
@@ -687,7 +708,8 @@ public class ChatHook {
                                     String[] c = AITranslator.getCachedByForeign(clean);
                                     if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) zh = c[1];
                                     if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
-                                    String ns = s + " 🌀";
+                                    // ✅ 用 5 空格分隔
+                                    String ns = s + GLOBE_CYCLONE_SEP + "🌀";
                                     param.args[0] = ns.toCharArray();
                                     param.args[1] = 0;
                                     param.args[2] = ns.length();
@@ -743,8 +765,16 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ========== 修复：用 getPrimaryHorizontal 像素坐标判断，解决 emoji 宽字符误触 ==========
+    // ========== hookBubbleFlip：适配分隔空格 ==========
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
+        final String globeCycloneSuffix = " 🌐" + GLOBE_CYCLONE_SEP + "🌀";
+        // suffixLen = 1(空格) + 2(🌐) + 5(分隔空格) + 1(空格) + 2(🌀) = 11
+        final int suffixLen = globeCycloneSuffix.length();
+        // 🌀 从末尾往前数: 1(🌀低) + 1(🌀高) + 1(空格) = 3
+        final int cycloneOffset = 3;
+        // 🌐 从末尾往前数: 3 + 5(分隔空格) + 2(🌐) = 10, 即 suffixLen - 1
+        final int globeOffset = suffixLen - 1; // = 10
+
         XposedHelpers.findAndHookMethod(HT_TEXT_VIEW_CLASS, cl, "onTouchEvent", MotionEvent.class,
                 new XC_MethodHook() {
                     @Override
@@ -759,7 +789,7 @@ public class ChatHook {
                         String s = cs.toString();
                         boolean endsCycle = s.endsWith(" 🔄");
                         boolean endsGlobe = s.endsWith(" 🌐");
-                        boolean endsGlobeCyclone = s.endsWith(" 🌐 🌀");
+                        boolean endsGlobeCyclone = s.endsWith(globeCycloneSuffix);
                         if (!endsCycle && !endsGlobe && !endsGlobeCyclone) return;
 
                         Layout lay = tv.getLayout();
@@ -774,10 +804,10 @@ public class ChatHook {
                         boolean cycle = false;
 
                         if (endsGlobeCyclone) {
-                            clean = s.substring(0, s.length() - 6).trim();
-                            // ✅ 修复：用像素坐标替代字符偏移，避免 emoji 宽字符误触
-                            float cycloneStartX = lay.getPrimaryHorizontal(s.length() - 3);
-                            float globeStartX = lay.getPrimaryHorizontal(s.length() - 6);
+                            // ✅ 用分隔空格后的偏移
+                            clean = s.substring(0, s.length() - suffixLen).trim();
+                            float cycloneStartX = lay.getPrimaryHorizontal(s.length() - cycloneOffset);
+                            float globeStartX = lay.getPrimaryHorizontal(s.length() - globeOffset);
                             if (ev.getX() >= cycloneStartX) {
                                 cyclone = true;
                             } else if (ev.getX() >= globeStartX) {
@@ -803,7 +833,8 @@ public class ChatHook {
                                 if (orig == null) orig = AITranslator.chineseToForeign.get(clean);
                                 if (orig != null && !orig.equals(clean)) {
                                     boolean mine = AITranslator.getMyDraftFuzzy(orig) != null;
-                                    tv.setText(orig + (mine ? " 🌐" : " 🌐 🌀"));
+                                    // ✅ 用分隔空格
+                                    tv.setText(orig + (mine ? " 🌐" : globeCycloneSuffix));
                                 }
                             } else if (globe) {
                                 String zh = (pair != null && clean.equals(pair[0])) ? pair[1] : null;
