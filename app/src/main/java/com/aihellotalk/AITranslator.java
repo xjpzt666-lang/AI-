@@ -653,6 +653,41 @@ public class AITranslator {
         return null;
     }
 
+    /**
+     * 只在“我发过的外语→中文”草稿里查，绝不查 foreignToChinese。
+     * 用于自己发出的消息显示 🌐 和点按翻转，避免串到对方消息的翻译。
+     */
+    public static String getMyDraftFuzzy(String sentForeignText) {
+        if (sentForeignText == null || sentForeignText.trim().isEmpty()) return null;
+        String clean = stripFlipMarks(sentForeignText);
+        if (clean == null || clean.isEmpty()) return null;
+
+        String exact = mySentDrafts.get(clean);
+        if (exact != null) return exact;
+
+        String bestKey = null;
+        int bestLen = 0;
+        for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
+            String key = stripFlipMarks(entry.getKey());
+            if (key == null || key.isEmpty()) continue;
+            int common = longestCommonSubstringLength(clean, key);
+            double coverage = (double) common / Math.max(clean.length(), key.length());
+            if (coverage >= 0.45 && common > bestLen) {
+                bestLen = common;
+                bestKey = key;
+            }
+        }
+        if (bestKey != null) return mySentDrafts.get(bestKey);
+
+        for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
+            String key = stripFlipMarks(entry.getKey());
+            if (key == null || key.isEmpty()) continue;
+            if (clean.contains(key) && (double) key.length() / clean.length() >= 0.45) return entry.getValue();
+            if (key.contains(clean) && (double) clean.length() / key.length() >= 0.45) return entry.getValue();
+        }
+        return null;
+    }
+
     private static int longestCommonSubstringLength(String a, String b) {
         if (a == null || b == null || a.isEmpty() || b.isEmpty()) return 0;
         int[][] dp = new int[a.length() + 1][b.length() + 1]; int max = 0;
