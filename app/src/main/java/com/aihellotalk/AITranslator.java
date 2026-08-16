@@ -1367,6 +1367,47 @@ public class AITranslator {
         }
     }
 
+    public static String askAiQuestion(String text, String chatId) throws IOException {
+        maybeRecheckMode();
+        text = text.trim();
+        if (text.isEmpty()) return text;
+
+        try {
+            JSONArray messages = new JSONArray();
+            String sysPrompt = "你是聊天助手。用户正在和一个外国朋友聊天。"
+                    + "用户会用中文向你提问，或者请你完成某个任务。"
+                    + "请结合对话历史和对方背景档案，用中文直接回答或完成要求。"
+                    + "如果问题涉及翻译，请直接把翻译结果写在回答里。"
+                    + "如果上下文里没有相关信息，就诚实说不知道，禁止编造。"
+                    + "只输出回答本身，不要任何额外解释。"
+                    + profileBlock(chatId);
+            messages.put(createMessageObj("system", sysPrompt));
+
+            JSONArray fullHistory = loadHistory(chatId);
+            StringBuilder scriptBuilder = new StringBuilder();
+            scriptBuilder.append("【对话上下文】\n");
+            int maxChatMessages = 20;
+            int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
+            boolean hasContext = false;
+            for (int i = startIdx; i < fullHistory.length(); i++) {
+                JSONObject msg = fullHistory.getJSONObject(i);
+                String role = msg.optString("role", "");
+                String content = msg.optString("content", "");
+                String prefix = msg.optBoolean("oneTime", false) ? "[一次性上下文] " : "";
+                if ("user".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("对方", content, "中文意思")); hasContext = true; }
+                else if ("assistant".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("我", content, "中文原意")); hasContext = true; }
+            }
+            if (!hasContext) scriptBuilder.append("（暂无有效上下文）\n");
+            scriptBuilder.append("\n【用户的问题/要求】\n").append(text);
+
+            messages.put(createMessageObj("user", scriptBuilder.toString()));
+
+            return refuseGuard(callChatMessages(messages), text);
+        } catch (JSONException e) {
+            throw new IOException("构建Messages失败");
+        }
+    }
+
     public static String getSpanishRegionDirective(String nationality, int nativeLang, String chatId) {
         String nat = (nationality != null) ? nationality.toLowerCase() : "";
         if (nat.isEmpty() && chatId != null) nat = getFriendNationality(chatId);
