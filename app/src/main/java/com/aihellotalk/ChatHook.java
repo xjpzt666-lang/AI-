@@ -615,10 +615,15 @@ public class ChatHook {
                     }
                     if (s.endsWith(" 🌐")) {
                         String clean = s.substring(0, s.length() - 2).trim();
+                        boolean mine = AITranslator.getMyDraftFuzzy(clean) != null;
+                        if (mine) {
+                            String zh = AITranslator.getMyDraftFuzzy(clean);
+                            if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
+                            return;
+                        }
                         String zh = null;
                         String[] c = AITranslator.getCachedByForeign(clean);
                         if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) zh = c[1];
-                        if (zh == null) zh = AITranslator.getMyDraftFuzzy(clean);
                         if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
                         SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
                         ssb.append(" 🌀");
@@ -672,10 +677,15 @@ public class ChatHook {
 
                                 if (s.endsWith(" 🌐")) {
                                     String clean = s.substring(0, s.length() - 2).trim();
+                                    boolean mine = AITranslator.getMyDraftFuzzy(clean) != null;
+                                    if (mine) {
+                                        String zh = AITranslator.getMyDraftFuzzy(clean);
+                                        if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
+                                        return;
+                                    }
                                     String zh = null;
                                     String[] c = AITranslator.getCachedByForeign(clean);
                                     if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) zh = c[1];
-                                    if (zh == null) zh = AITranslator.getMyDraftFuzzy(clean);
                                     if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
                                     String ns = s + " 🌀";
                                     param.args[0] = ns.toCharArray();
