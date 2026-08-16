@@ -167,7 +167,8 @@ public class ChatHook {
 
     public static void install(ClassLoader cl) {
         hostClassLoader = cl;
-        log("=== Hook v5.7 严格模式 ===");
+        // ★ v5.8：版本号更新，方便你在日志里确认装的是新版
+        log("=== Hook v5.8 严格模式（括号历史过滤+翻转命中修复） ===");
 
         try {
             htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl);
@@ -205,6 +206,18 @@ public class ChatHook {
         if (text == null) return false;
         String s = text.trim();
         return (s.startsWith("(") && s.endsWith(")")) || (s.startsWith("（") && s.endsWith("）"));
+    }
+
+    // ★ v5.8：命中此判断的文本永不写入遥控器历史。
+    //   1) 任何"整段被括号包住"的内容（对 AI 的提问，不是正式聊天内容）；
+    //   2) 刚问过 AI、被 markNoHistory 动态标记的文本（含带括号/去括号两种形态）。
+    //   全部是通用规则与运行时标记，代码里不含任何具体例句。
+    private static boolean shouldSkipHistory(String text) {
+        if (text == null) return false;
+        String t = text.trim();
+        if (t.isEmpty()) return false;
+        if (AITranslator.isNoHistoryText(t)) return true;
+        return isPureBracketQuery(t);
     }
 
     private static String safeCallString(Object obj, String methodName) {
@@ -676,10 +689,15 @@ public class ChatHook {
                         boolean cyclone = false, globe = false, cycle = false;
                         if (endsGlobeCyclone) {
                             clean = s.substring(0, s.length() - suffixLen).trim();
-                            float cycloneStartX = lay.getPrimaryHorizontal(s.length() - cycloneOffset);
-                            float globeStartX = lay.getPrimaryHorizontal(s.length() - globeOffset);
-                            if (ev.getX() >= cycloneStartX) { cyclone = true; }
-                            else if (ev.getX() >= globeStartX) { globe = true; }
+                            // ★ v5.8 修复：旧版用"手指X坐标 vs getPrimaryHorizontal字符X"比大小。
+                            //   尾巴" 🌐        🌀"一旦换行（或阿拉伯语等RTL排版），两者不在同一参照系：
+                            //   点🌐会被误判成🌀（触发API重翻），或整体落空（没反应）。
+                            //   现在改用"手指按到的字符偏移 off"判断，天然支持换行/RTL：
+                            //   off >= 🌀起始 → 重新翻译；off >= 🌐起始 → 翻回缓存中文；否则视为点正文。
+                            int cycloneIdx = s.length() - cycloneOffset;
+                            int globeIdx = s.length() - globeOffset + 1;
+                            if (off >= cycloneIdx) { cyclone = true; }
+                            else if (off >= globeIdx) { globe = true; }
                             else { return; }
                         } else if (endsGlobe) {
                             clean = s.substring(0, s.length() - 2).trim();
@@ -701,13 +719,16 @@ public class ChatHook {
                                 }
                             } else if (globe) {
                                 String zh = (pair != null && clean.equals(pair[0])) ? pair[1] : null;
-                                if (zh == null) zh = AITranslator.getMyDraftFuzzy(clean);
+                                // ★ v5.8 修复：翻回中文一律先吃本地缓存，不调API。
+                                //   顺序：视图配对 → 缓存精确匹配 → 本地映射(含模糊) → 我的草稿；全落空才走API兜底。
                                 if (zh == null) {
                                     String[] c = AITranslator.getCachedByForeign(clean);
                                     if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) zh = c[1];
                                 }
-                                if (zh != null && !zh.equals(clean)) {
-                                    tv.setText(zh + " 🔄");
+                                if (zh == null) zh = AITranslator.getChineseByForeign(clean);
+                                if (zh == null) zh = AITranslator.getMyDraftFuzzy(clean);
+                                if (zh != null && !zh.isEmpty() && !zh.equals(clean)) {
+                                    tv.setText(zh.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
                                 } else {
                                     final String needTrans = clean;
                                     final boolean isMineDraft = (pair != null);
@@ -844,7 +865,7 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ========== ✅ hookRecv：chatId=0 兜底 + 翻译线程异常日志 ==========
+    // ========== ✅ hookRecv：chatId=0 兜底 + 翻译线程异常日志 + ★v5.8括号问题不入历史 ==========
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
         XposedHelpers.findAndHookMethod(hm, "getMessageContent", Class.class, boolean.class,
@@ -923,7 +944,9 @@ public class ChatHook {
                             final boolean oneTime = isMine && text != null && AITranslator.consumeSuppressSent(text);
                             final boolean isPureSymbol = !AITranslator.hasAnyLetterOrDigit(text);
                             boolean isNew = recordedMsgIds.add(chatId + "_" + mid);
-                            if (isNew) {
+                            // ★ v5.8：纯括号AI提问（及刚问过AI的标记文本）永不写入遥控器历史，
+                            //   避免"我问AI的问题"被当成对方消息显示在遥控器左侧。
+                            if (isNew && !shouldSkipHistory(text)) {
                                 final String fm = mid, ft = text, fq = quotedText;
                                 final long fst = st;
                                 final boolean fmn = isMine;
@@ -1078,7 +1101,8 @@ public class ChatHook {
             final String fc = chatId, fm = mid, ft = text;
             final long fst = st;
             boolean isNew = recordedMsgIds.add(fc + "_" + fm);
-            if (isNew) historyExecutor.execute(() -> AITranslator.appendHistory(fc, fm, "assistant", ft, fst, null, false));
+            // ★ v5.8：同 hookRecv，纯括号AI提问不记录
+            if (isNew && !shouldSkipHistory(text)) historyExecutor.execute(() -> AITranslator.appendHistory(fc, fm, "assistant", ft, fst, null, false));
         } catch (Throwable ignored) {}
     }
 
@@ -1288,6 +1312,16 @@ public class ChatHook {
             else if (qms) ttt += "\n[QUOTED_IMAGE_BUT_PATH_MISSING]";
             final String ftt = ttt, rci = text;
             if (qis != null) currentQuotedImagePath = null;
+
+            // ★ v5.8：纯括号提问打上"永不入历史"标记（带括号 + 去括号两种形态，运行时动态记录，无任何写死例句）。
+            //   之后无论文本以什么角色经过消息管道，hookRecv / recordOutgoingIfNeeded 都会跳过记录。
+            if (pbm) {
+                AITranslator.markNoHistory(rci);
+                String inner = rci;
+                if (inner.startsWith("(") && inner.endsWith(")")) inner = inner.substring(1, inner.length() - 1).trim();
+                else if (inner.startsWith("（") && inner.endsWith("）")) inner = inner.substring(1, inner.length() - 1).trim();
+                AITranslator.markNoHistory(inner);
+            }
 
             new Thread(() -> {
                 try {
