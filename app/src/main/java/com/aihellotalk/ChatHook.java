@@ -611,9 +611,6 @@ public class ChatHook {
                     if (s.isEmpty() || s.length() > 5000) return;
 
                     if (s.endsWith(" 🌐")) {
-                        String clean = s.substring(0, s.length() - 2).trim();
-                        String zh = AITranslator.getMyDraftFuzzy(clean);
-                        if (zh != null) rememberViewFlip((View) param.thisObject, clean, zh);
                         return;
                     }
                     if (s.endsWith(" 🔄")) {
@@ -747,11 +744,16 @@ public class ChatHook {
                                     tv.setText(zh + " 🔄");
                                 } else {
                                     final String needTrans = clean;
+                                    final boolean isMineDraft = (pair != null);
                                     new Thread(() -> {
                                         try {
                                             String newZh = AITranslator.toChinese(needTrans, currentChatId);
                                             if (newZh != null && !newZh.trim().isEmpty() && !newZh.equals(needTrans)) {
-                                                AITranslator.rememberDraft(needTrans, newZh);
+                                                if (isMineDraft) {
+                                                    AITranslator.rememberDraft(needTrans, newZh);
+                                                } else {
+                                                    AITranslator.cacheResult("manual_" + needTrans.hashCode(), needTrans, newZh);
+                                                }
                                                 uiHandler.post(() -> tv.setText(newZh + " 🔄"));
                                             }
                                         } catch (Exception ignored) {}
@@ -952,13 +954,13 @@ public class ChatHook {
                                 });
                             }
 
-                            Object mio = invokeQuiet(mGetMsgId, msg);
-                            String mid = (mio != null) ? String.valueOf(mio) : null;
-                            if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode();
-
                             long st = System.currentTimeMillis();
                             Object sto = invokeQuiet(mGetSendTime, msg);
                             if (sto instanceof Long) st = (Long) sto;
+
+                            Object mio = invokeQuiet(mGetMsgId, msg);
+                            String mid = (mio != null) ? String.valueOf(mio) : null;
+                            if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode() + "_" + st;
 
                             String quotedText = null;
                             try {
@@ -1077,13 +1079,16 @@ public class ChatHook {
                                 return;
                             }
 
-                            if (!translating.add(mid)) return;
+                            String transKey = chatId + "_" + mid;
+                            if (!translating.add(transKey)) return;
 
                             final String ft = text;
                             final String fm = mid;
+                            final String fk = transKey;
                             final Object fb = bean;
 
                             new Thread(() -> {
+                                boolean ok = false;
                                 try {
                                     String t = null;
                                     try {
@@ -1102,10 +1107,17 @@ public class ChatHook {
                                             XposedHelpers.callMethod(fb, "setText",
                                                     t.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
                                         } catch (Exception ignored) {}
+                                        ok = true;
                                     }
                                 } catch (Exception ignored) {
                                 } finally {
-                                    translating.remove(fm);
+                                    translating.remove(fk);
+                                }
+
+                                if (!ok) {
+                                    try {
+                                        XposedHelpers.callMethod(fb, "setText", ft + " 🌐");
+                                    } catch (Exception ignored) {}
                                 }
                             }).start();
 
