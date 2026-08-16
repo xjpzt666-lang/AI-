@@ -654,7 +654,7 @@ public class AITranslator {
     }
 
     /**
-     * 只在“我发过的外语→中文”草稿里查，绝不查 foreignToChinese。
+     * 只在"我发过的外语→中文"草稿里查，绝不查 foreignToChinese。
      * 用于自己发出的消息显示 🌐 和点按翻转，避免串到对方消息的翻译。
      */
     public static String getMyDraftFuzzy(String sentForeignText) {
@@ -1292,7 +1292,7 @@ public class AITranslator {
 
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
-            int maxChatMessages = 15;
+            int maxChatMessages = 20;  // ✅ 15→20
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
             boolean hasContext = false;
             for (int i = startIdx; i < fullHistory.length(); i++) {
@@ -1337,7 +1337,7 @@ public class AITranslator {
             JSONArray messages = new JSONArray();
             String sysPrompt = "你是翻译助手。请把下面<<< >>>里的外语翻译成自然的中文口语，"
                     + "然后在译文末尾用中文全角括号（）补充这句话的真实意思或潜台词，括号内不超过30个字。"
-                    + "只输出“译文（解释）”，不要输出任何其他内容。"
+                    + "只输出"译文（解释）"，不要输出任何其他内容。"
                     + profileBlock(chatId);
             messages.put(createMessageObj("system", sysPrompt));
 
@@ -1367,6 +1367,7 @@ public class AITranslator {
         }
     }
 
+    // ========== ✅ askAiQuestion：上下文20→60 + 问答结果存历史 ==========
     public static String askAiQuestion(String text, String chatId) throws IOException {
         maybeRecheckMode();
         text = text.trim();
@@ -1379,14 +1380,14 @@ public class AITranslator {
                     + "请结合对话历史和对方背景档案，用中文直接回答或完成要求。"
                     + "如果问题涉及翻译，请直接把翻译结果写在回答里。"
                     + "如果上下文里没有相关信息，就诚实说不知道，禁止编造。"
-                    + "只输出回答本身，不要任何额外解释。"
+                    + "请给出详细、完整的回答，尽量全面分析，不要只回答一两句话。不要使用Markdown格式。"
                     + profileBlock(chatId);
             messages.put(createMessageObj("system", sysPrompt));
 
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
             scriptBuilder.append("【对话上下文】\n");
-            int maxChatMessages = 20;
+            int maxChatMessages = 60;  // ✅ 20→60，和发送翻译一致
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
             boolean hasContext = false;
             for (int i = startIdx; i < fullHistory.length(); i++) {
@@ -1402,7 +1403,24 @@ public class AITranslator {
 
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
-            return refuseGuard(callChatMessages(messages), text);
+            String result = refuseGuard(callChatMessages(messages), text);
+
+            // ✅ 将问答存入历史，下次问就有记忆了
+            String cleanQuestion = text
+                    .replaceAll("\\[PURE_BRACKET_MODE\\]\\s*", "")
+                    .replaceAll("\\[QUOTED_LOCAL_IMAGE:[^\\]]+\\]", "[引用了一张图片]")
+                    .replaceAll("\\[LOCAL_IMAGE:[^\\]]+\\]", "[附带了一张图片]")
+                    .replaceAll("\\[QUOTED_IMAGE_BUT_PATH_MISSING\\]", "[引用了一张图片但路径丢失]")
+                    .replaceAll("\\[IMAGE_BASE64:[^\\]]+\\]", "[附带了一张图片]");
+            if (cleanQuestion.length() > 500) cleanQuestion = cleanQuestion.substring(0, 500);
+
+            appendHistory(chatId, "q_" + System.currentTimeMillis(), "user",
+                    cleanQuestion, System.currentTimeMillis(), null, false);
+            appendHistory(chatId, "a_" + System.currentTimeMillis(), "assistant",
+                    result != null && result.length() > 800 ? result.substring(0, 800) : (result != null ? result : ""),
+                    System.currentTimeMillis(), null, false);
+
+            return result;
         } catch (JSONException e) {
             throw new IOException("构建Messages失败");
         }
@@ -1528,7 +1546,7 @@ public class AITranslator {
                     + "5. 上半部分分析必须使用中文，并且不少于1500个中文字，不超过2000个中文字。宁多勿少。\n"
                     + "6. 上半部分分析必须严格按你收到的系统提示里的分析步骤逐步写，不得跳过步骤，不得只写一两句概括。\n"
                     + "7. 先完成上半部分分析，再生成4个选项。\n"
-                    + "8. 人称锁定规则：中文原文中的“我”永远指说话者本人，不能翻译成“你”或指对方；中文“你”才指对方。不得擅自改变人称视角。\n";
+                    + "8. 人称锁定规则：中文原文中的"我"永远指说话者本人，不能翻译成"你"或指对方；中文"你"才指对方。不得擅自改变人称视角。\n";
 
             String contextRule = "\n【上下文使用规则】\n"
                     + "历史记录仅用于理解对话语义和对方背景。\n"
