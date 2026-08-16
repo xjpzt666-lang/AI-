@@ -36,8 +36,7 @@ public class ChatHook {
     private static final String TAG = "HT_AI";
     private static final String DEFAULT_REPLY_LANG = "en";
 
-    // 🌐 和 🌀 之间的分隔空格数（越大越不容易误触）
-    private static final String GLOBE_CYCLONE_SEP = "     "; // 5个空格
+    private static final String GLOBE_CYCLONE_SEP = "     ";
 
     private static volatile String currentChatId = "0";
     private static volatile int currentChatType = 1;
@@ -193,9 +192,6 @@ public class ChatHook {
         try { hookInputReplyBar(cl); } catch (Throwable ignored) {}
     }
 
-    // ========== 计算后缀长度 ==========
-    // " 🌐     🌀" = 1空格 + 🌐(2) + 5空格 + 1空格 + 🌀(2) = 11 个 char
-    // 🌐 起始偏移 = len - 11, 🌀 起始偏移 = len - 3
     private static int globeCycloneSuffixLen() {
         return 1 + 2 + GLOBE_CYCLONE_SEP.length() + 1 + 2;
     }
@@ -610,7 +606,6 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ========== hookTextViewRender：用 5 空格分隔 🌐 和 🌀 ==========
     private static void hookTextViewRender(ClassLoader cl) {
         if (htTextViewClass == null) return;
 
@@ -762,7 +757,6 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ========== hookBubbleFlip：适配分隔空格 ==========
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
         final String globeCycloneSuffix = " 🌐" + GLOBE_CYCLONE_SEP + "🌀";
         final int suffixLen = globeCycloneSuffix.length();
@@ -1793,11 +1787,10 @@ public class ChatHook {
         }
     }
 
-    // ========== ✅ showAnswerDialog：去掉 AI 回复中的 Markdown 星号 ==========
+    // ========== ✅ 修复：final + 链式 replaceAll，lambda 可用 ==========
     private static void showAnswerDialog(EditText edit, String answer) {
         android.content.Context ctx = edit.getContext();
-        String showText = (answer == null) ? "" : answer.trim();
-        showText = showText.replaceAll("\\*+", "");  // ✅ 去掉所有 * 星号
+        final String showText = (answer == null) ? "" : answer.trim().replaceAll("\\*+", "");
 
         android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
         TextView rawTv = new TextView(ctx);
