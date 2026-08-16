@@ -1327,6 +1327,46 @@ public class AITranslator {
         else return toChinese(text, "0");
     }
 
+    public static String reTranslateWithNote(String text, String chatId) throws IOException {
+        maybeRecheckMode();
+        text = text.trim();
+        if (text.isEmpty()) return text;
+        if (!needTranslateToChinese(text)) return text;
+
+        try {
+            JSONArray messages = new JSONArray();
+            String sysPrompt = "你是翻译助手。请把下面<<< >>>里的外语翻译成自然的中文口语，"
+                    + "然后在译文末尾用中文全角括号（）补充这句话的真实意思或潜台词，括号内不超过30个字。"
+                    + "只输出“译文（解释）”，不要输出任何其他内容。"
+                    + profileBlock(chatId);
+            messages.put(createMessageObj("system", sysPrompt));
+
+            JSONArray fullHistory = loadHistory(chatId);
+            StringBuilder scriptBuilder = new StringBuilder();
+            scriptBuilder.append("【对话上下文】\n");
+            int maxChatMessages = 10;
+            int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
+            boolean hasContext = false;
+            for (int i = startIdx; i < fullHistory.length(); i++) {
+                JSONObject msg = fullHistory.getJSONObject(i);
+                String role = msg.optString("role", "");
+                String content = msg.optString("content", "");
+                if (content != null && content.equals(text)) continue;
+                String prefix = msg.optBoolean("oneTime", false) ? "[一次性上下文] " : "";
+                if ("user".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("对方", content, "中文意思")); hasContext = true; }
+                else if ("assistant".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("我", content, "中文原意")); hasContext = true; }
+            }
+            if (!hasContext) scriptBuilder.append("（暂无有效上下文）\n");
+            scriptBuilder.append("\n【要重新翻译的外语】\n<<<\n").append(text).append("\n>>>");
+
+            messages.put(createMessageObj("user", scriptBuilder.toString()));
+
+            return refuseGuard(callChatMessages(messages), text);
+        } catch (JSONException e) {
+            throw new IOException("构建Messages失败");
+        }
+    }
+
     public static String getSpanishRegionDirective(String nationality, int nativeLang, String chatId) {
         String nat = (nationality != null) ? nationality.toLowerCase() : "";
         if (nat.isEmpty() && chatId != null) nat = getFriendNationality(chatId);
@@ -1654,6 +1694,20 @@ public class AITranslator {
             }
         }
         return null;
+    }
+
+    public static void replaceCacheByForeign(String foreign, String chinese) {
+        String clean = stripFlipMarks(foreign);
+        if (clean == null || clean.isEmpty()) return;
+        Iterator<Map.Entry<String, String[]>> it = cache.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<String, String[]> e = it.next();
+            String[] v = e.getValue();
+            if (v != null && v.length >= 2 && clean.equals(stripFlipMarks(v[0]))) {
+                it.remove();
+            }
+        }
+        cacheResult("retrans_" + clean.hashCode(), clean, chinese);
     }
 
     public static void cacheResult(String key, String foreign, String chinese) {
