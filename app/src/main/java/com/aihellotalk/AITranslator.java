@@ -1643,6 +1643,19 @@ public class AITranslator {
 
     public static String[] getCached(String key) { return cache.get(key); }
 
+    public static String[] getCachedByForeign(String foreign) {
+        if (foreign == null || foreign.trim().isEmpty()) return null;
+        String clean = stripFlipMarks(foreign);
+        if (clean == null) return null;
+        for (Map.Entry<String, String[]> e : cache.entrySet()) {
+            String[] v = e.getValue();
+            if (v != null && v.length >= 2 && clean.equals(stripFlipMarks(v[0]))) {
+                return v;
+            }
+        }
+        return null;
+    }
+
     public static void cacheResult(String key, String foreign, String chinese) {
         foreign = stripFlipMarks(foreign); chinese = stripFlipMarks(chinese);
         cache.put(key, new String[]{foreign, chinese});
