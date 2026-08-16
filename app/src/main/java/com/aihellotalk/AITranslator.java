@@ -206,6 +206,36 @@ public class AITranslator {
         return oneTimeSentSuppress.remove(t);
     }
 
+    // ================= ★ v5.8 新增：括号AI提问"永不入历史"标记 =================
+    // 集合内容全部是运行时动态加入的（点"译"问AI的那一刻把输入框文本加进来），
+    // 代码里不含任何写死的具体例句，对任何括号问题一视同仁。
+    private static final Set<String> noHistoryTexts = ConcurrentHashMap.newKeySet();
+
+    public static void markNoHistory(String s) {
+        if (s == null) return;
+        String t = stripFlipMarks(s);
+        if (t == null) return;
+        t = t.trim();
+        if (t.isEmpty()) return;
+        noHistoryTexts.add(t);
+        if (noHistoryTexts.size() > 300) noHistoryTexts.clear();
+    }
+
+    public static boolean isNoHistoryText(String s) {
+        if (s == null) return false;
+        String t = stripFlipMarks(s);
+        if (t == null) return false;
+        t = t.trim();
+        if (t.isEmpty()) return false;
+        if (noHistoryTexts.contains(t)) return true;
+        if ((t.startsWith("（") && t.endsWith("）")) || (t.startsWith("(") && t.endsWith(")"))) {
+            String inner = t.substring(1, t.length() - 1).trim();
+            if (!inner.isEmpty() && noHistoryTexts.contains(inner)) return true;
+        }
+        return false;
+    }
+    // ================= ★ v5.8 新增结束 =================
+
     public static void init(String key, String url, String m) {
         apiKey = key; apiUrl = url; model = m;
         client = new OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(90, TimeUnit.SECONDS).writeTimeout(45, TimeUnit.SECONDS).build();
