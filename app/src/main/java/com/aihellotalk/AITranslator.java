@@ -813,8 +813,8 @@ public class AITranslator {
             JSONArray messages = new JSONArray();
             String sysPrompt = "你是翻译助手。请把下面<<< >>>里的外语翻译成自然的中文口语，"
                     + "然后在译文末尾用中文全角括号（）补充这句话的真实意思或潜台词，括号内不超过30个字。"
-                    + "解释时请用\u201c她\u201d（或\u201c他\u201d）来指代说话者本人，绝对不要用\u201c对方\u201d或\u201c说话者\u201d来指代。"
-                    + "只输出\u201c译文（解释）\u201d，不要输出任何其他内容。"
+                    + "解释时请用“她”（或“他”）来指代说话者本人，绝对不要用“对方”或“说话者”来指代。"
+                    + "只输出“译文（解释）”，不要输出任何其他内容。"
                     + profileBlock(chatId);
             messages.put(createMessageObj("system", sysPrompt));
             JSONArray fullHistory = loadHistory(chatId); StringBuilder scriptBuilder = new StringBuilder(); scriptBuilder.append("【对话上下文】\n");
@@ -880,7 +880,7 @@ public class AITranslator {
         String nat = (nationality != null) ? nationality.toLowerCase() : ""; if (nat.isEmpty() && chatId != null) nat = getFriendNationality(chatId);
         String friendLang = getFriendLang(chatId); String langCode = (friendLang != null && !friendLang.isEmpty()) ? friendLang : "";
         String region = mapSpanishRegion(nat); if (region == null && (langCode.startsWith("es") || "es".equals(langCode))) region = "es-419"; if (region == null) return "";
-        String description; switch (region) { case "es-MX": description = "墨西哥西班牙语：请使用墨西哥常用词汇和表达习惯，如\u201c\u00bfQu\u00e9 onda?\u201d风格"; break; case "es-AR": description = "阿根廷/拉普拉塔西班牙语：请使用voseo（vos tenés/vos querés）、阿根廷常用词汇"; break; case "es-ES": description = "西班牙本土西班牙语：请使用vosotros和西班牙常用表达，如\u201c\u00bfQu\u00e9 tal?\u201d风格"; break; case "es-CO": description = "拉美西班牙语（偏安第斯）：请使用哥伦比亚/秘鲁/厄瓜多尔等地常用表达，语气礼貌温和"; break; case "es-US": description = "美国西班牙语：可混入少量英语借词，拉美表达为主"; break; case "es-419": description = "拉美西班牙语（中性）：请使用拉美通用表达，避免vosotros"; break; default: description = "请根据对方国家调整西班牙语表达"; break; }
+        String description; switch (region) { case "es-MX": description = "墨西哥西班牙语：请使用墨西哥常用词汇和表达习惯，如“¿Qué onda?”风格"; break; case "es-AR": description = "阿根廷/拉普拉塔西班牙语：请使用voseo（vos tenés/vos querés）、阿根廷常用词汇"; break; case "es-ES": description = "西班牙本土西班牙语：请使用vosotros和西班牙常用表达，如“¿Qué tal?”风格"; break; case "es-CO": description = "拉美西班牙语（偏安第斯）：请使用哥伦比亚/秘鲁/厄瓜多尔等地常用表达，语气礼貌温和"; break; case "es-US": description = "美国西班牙语：可混入少量英语借词，拉美表达为主"; break; case "es-419": description = "拉美西班牙语（中性）：请使用拉美通用表达，避免vosotros"; break; default: description = "请根据对方国家调整西班牙语表达"; break; }
         return "\n\n【目标语地区适配】" + region + "：" + description + "。";
     }
 
@@ -894,7 +894,9 @@ public class AITranslator {
             String spanishDirective = ""; if ("es".equals(langCode)) spanishDirective = getSpanishRegionDirective(null, 0, chatId);
             boolean useCustomPipeFormat = sysPrompt != null && (sysPrompt.contains("==========") || sysPrompt.contains("选项区") || sysPrompt.contains("下半部分"));
             String formatProtocol = useCustomPipeFormat ? (retry ? "\n\n【输出格式补充】\n请严格遵循你上面收到的【最终输出格式】，不要输出JSON。\n中间必须用 ========== 隔开。\n上半部分分析必须使用中文，并且不少于1200个中文字，目标控制在1800字以内，绝对不要超过2000字。\n下半部分只输出4个选项，每个选项用 | 分隔。\n" : "\n\n【输出格式补充】\n请严格遵循你上面收到的【最终输出格式】，不要输出JSON。\n中间必须用 ========== 隔开。\n上半部分分析必须使用中文，并且不少于1200个中文字，目标控制在1800字以内，绝对不要超过2000字。\n下半部分只输出4个选项，每个选项用 | 分隔。\n") : (retry ? "\n\n【最高优先级输出格式】\n忽略你之前提到的 ========== 和 | 格式。\n必须只输出一个JSON对象，不要输出任何额外文字。\nJSON格式如下：\n{\"analysis\":\"\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n必须输出4个选项。\nforeign、meaning、tone字段名不能改。\n" : "\n\n【最高优先级输出格式】\n忽略你之前提到的 ========== 和 | 格式。\n必须只输出一个JSON对象，不要输出任何额外文字。\nJSON格式如下：\n{\"analysis\":\"这里写上半部分分析\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n必须输出4个选项。\nforeign、meaning、tone字段名不能改，内容按你的指令填写。\n");
-            String targetRule = "\n【回复目标识别规则，必须遵守】\n1. 如果用户输入中包含【我要回复的对方原话】，说明用户是在回复对方这条消息。你必须在分析中第一句写明：\"你正在回复对方这句话：<原话>\"，然后再写其他分析。\n2. 如果用户输入中包含【我对我自己之前这条外语消息的补充】，说明用户是在补充自己这条历史消息。你必须在分析中第一句写明：\"你是在补充自己这条历史消息：<原话>\"，然后再写其他分析。\n3. 如果用户输入中既没有【我要回复的对方原话】，也没有【我对我自己之前这条外语消息的补充】，说明用户没有显式选择回复目标。你必须根据下面的对话历史，推断用户最可能是在回复对方哪一句话，还是在补充自己之前哪一条外语消息。然后在分析中第一句写明：\"我推断你是在回复对方这句话：<推断原话>\" 或 \"我推断你是在补充自己这条历史消息：<推断原话>\"。如果无法判断，就写\"我推断你是接着最近对话继续回复\"。\n4. 上半部分分析不能为空。\n5. 上半部分分析必须使用中文。\n6. 上半部分分析必须严格按你收到的系统提示里的分析步骤逐步写，不得跳过步骤，不得只写一两句概括。\n7. 先完成上半部分分析，再生成4个选项。\n8. 人称锁定规则：中文原文中的\u201c我\u201d永远指说话者本人，不能翻译成\u201c你\u201d或指对方；中文\u201c你\u201d才指对方。不得擅自改变人称视角。\n";
+            
+            String targetRule = "\n【回复目标识别规则，必须遵守】\n1. 如果用户输入中包含【我要回复的对方原话】，说明用户是在回复对方这条消息。你必须在分析中第一句写明：\"你正在回复对方这句话：<原话>\"，然后再写其他分析。\n2. 如果用户输入中包含【我对我自己之前这条外语消息的补充】，说明用户是在补充自己这条历史消息。你必须在分析中第一句写明：\"你是在补充自己这条历史消息：<原话>\"，然后再写其他分析。\n3. 如果用户输入中既没有【我要回复的对方原话】，也没有【我对我自己之前这条外语消息的补充】，说明用户没有显式选择回复目标。你必须根据下面的对话历史，推断用户最可能是在回复对方哪一句话，还是在补充自己之前哪一条外语消息。然后在分析中第一句写明：\"我推断你是在回复对方这句话：<推断原话>\" 或 \"我推断你是在补充自己这条历史消息：<推断原话>\"。如果无法判断，就写\"我推断你是接着最近对话继续回复\"。\n4. 上半部分分析不能为空，必须完整写完本地prompt里提到的要求，分析部分目标长度约为1200至1500个中文字。\n5. 上半部分分析必须使用中文，完成后立即进入分隔线和4个翻译选项，不要继续扩写。\n6. 上半部分分析必须严格按你收到的系统提示里的分析步骤逐步写，不得跳过步骤，不得只写一两句概括。\n7. 先完成上半部分分析，再生成4个选项。\n8. 人称锁定规则：中文原文中的“我”永远指说话者本人，不能翻译成“你”或指对方；中文“你”才指对方。不得擅自改变人称视角。\n";
+            
             String contextRule = "\n【上下文使用规则】\n历史记录仅用于理解对话语义和对方背景。\n不得继承历史中曾出现的极端、露骨、粗俗或一次性语气。\n历史中标记为[一次性上下文]的内容只表示它发生过，不代表长期风格。\n本次翻译的语气只由 <translate> 内的当前原文决定。\n";
             String fullProtocol = sysPrompt + profileBlock(chatId) + spanishDirective + formatProtocol + targetRule + contextRule;
             messages.put(createMessageObj("system", fullProtocol));
@@ -912,25 +914,27 @@ public class AITranslator {
     private static String fallbackToPureTextRequest(JSONArray originalMessages) throws IOException { try { JSONArray cleanMessages = new JSONArray(); for (int i = 0; i < originalMessages.length(); i++) { JSONObject msg = originalMessages.getJSONObject(i); String role = msg.getString("role"); Object contentObj = msg.get("content"); JSONObject cleanMsg = new JSONObject(); cleanMsg.put("role", role); if (contentObj instanceof JSONArray) { JSONArray arr = (JSONArray) contentObj; StringBuilder textSb = new StringBuilder(); for (int j = 0; j < arr.length(); j++) { JSONObject item = arr.getJSONObject(j); if ("text".equals(item.optString("type"))) textSb.append(item.optString("text")).append("\n"); } cleanMsg.put("content", textSb.toString().replaceAll("\\n{3,}", "\n\n").trim()); } else { cleanMsg.put("content", contentObj.toString()); } cleanMessages.put(cleanMsg); } return callChatMessages(cleanMessages); } catch (JSONException e) { throw new IOException("降级解析失败"); } }
 
     private static String callChatSimple(String prompt) throws IOException { if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置"); if (client == null) throw new IOException("未初始化"); try { JSONObject body = new JSONObject(); body.put("model", model); body.put("max_tokens", 8000); body.put("temperature", getTemperature()); JSONArray msgs = new JSONArray(); JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt); msgs.put(m); body.put("messages", msgs); return executeRequest(body); } catch (JSONException e) { throw new IOException("构建失败"); } }
-private static String callChatMessages(JSONArray messages) throws IOException {
-    if (apiKey == null || apiKey.isEmpty()) {
-        throw new IOException("Key未配置");
-    }
-    if (client == null) {
-        throw new IOException("未初始化");
+
+    private static String callChatMessages(JSONArray messages) throws IOException {
+        if (apiKey == null || apiKey.isEmpty()) {
+            throw new IOException("Key未配置");
+        }
+        if (client == null) {
+            throw new IOException("未初始化");
+        }
+
+        try {
+            JSONObject body = new JSONObject();
+            body.put("model", model);
+            body.put("max_tokens", 8000);
+            body.put("temperature", getTemperature());
+            body.put("messages", messages);
+            return executeRequest(body);
+        } catch (JSONException e) {
+            throw new IOException("构建失败");
+        }
     }
 
-    try {
-        JSONObject body = new JSONObject();
-        body.put("model", model);
-        body.put("max_tokens", 8000);
-        body.put("temperature", getTemperature());
-        body.put("messages", messages);
-        return executeRequest(body);
-    } catch (JSONException e) {
-        throw new IOException("构建失败");
-    }
-}
     private static String callChatMessagesWith(OkHttpClient useClient, JSONArray messages) throws IOException { if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置"); if (useClient == null) throw new IOException("未初始化"); try { JSONObject body = new JSONObject(); body.put("model", model); body.put("max_tokens", 8000); body.put("temperature", getTemperature()); body.put("messages", messages); return executeRequestWith(useClient, body); } catch (JSONException e) { throw new IOException("构建失败"); } }
 
     private static String executeRequest(JSONObject body) throws IOException { return executeRequestWith(client, body); }
@@ -944,25 +948,25 @@ private static String callChatMessages(JSONArray messages) throws IOException {
     public static List<String> fetchModels(String key, String baseUrl) throws IOException { List<String> result = new ArrayList<>(); String url = baseUrl; if (url.endsWith("/chat/completions")) url = url.substring(0, url.length() - "/chat/completions".length()); int idx = url.indexOf("/v1"); if (idx >= 0) url = url.substring(0, idx); if (!url.endsWith("/")) url += "/"; url += "v1/models"; initForFetch(key, url); Request req = new Request.Builder().url(url).header("Authorization", "Bearer " + key).get().build(); try (Response resp = client.newCall(req).execute()) { if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code()); JSONArray data = new JSONObject(resp.body().string()).getJSONArray("data"); for (int i = 0; i < data.length(); i++) result.add(data.getJSONObject(i).getString("id")); } catch (JSONException e) { throw new IOException("解析失败"); } return result; }
 
     private static void loadCache() { if (cacheFile == null || !cacheFile.exists()) return; try (BufferedReader r = new BufferedReader(new FileReader(cacheFile))) { String line; while ((line = r.readLine()) != null) { String[] parts = line.split("\\|\\|\\|"); if (parts.length >= 3) { String foreign = stripFlipMarks(parts[1]).replace("\\n", "\n"); String chinese = stripFlipMarks(parts[2]).replace("\\n", "\n"); cache.put(parts[0], new String[]{foreign, chinese}); foreignToChinese.put(foreign, chinese); chineseToForeign.put(chinese, foreign); } } } catch (Exception ignored) {} }
-    // ★ v5.11：原子写——先写临时文件再改名，防止 HelloTalk 进程被杀时把缓存文件写坏，
-//   导致重启后"中文→原文"映射丢失、点🔄提示找不到原文。
-public static void saveCache() {
-    try {
-        if (cacheFile == null) return;
-        cacheFile.getParentFile().mkdirs();
-        File tmp = new File(cacheFile.getParentFile(), cacheFile.getName() + ".tmp");
-        try (BufferedWriter w = new BufferedWriter(new FileWriter(tmp))) {
-            for (Map.Entry<String, String[]> e : cache.entrySet()) {
-                w.write(e.getKey() + "|||" + stripFlipMarks(e.getValue()[0]).replace("\n", "\\n") + "|||" + stripFlipMarks(e.getValue()[1]).replace("\n", "\\n"));
-                w.newLine();
+
+    // ★ v5.11：原子写——先写临时文件再改名，防止 HelloTalk 进程被杀时把缓存文件写坏
+    public static synchronized void saveCache() {
+        try {
+            if (cacheFile == null) return;
+            cacheFile.getParentFile().mkdirs();
+            File tmp = new File(cacheFile.getParentFile(), cacheFile.getName() + ".tmp");
+            try (BufferedWriter w = new BufferedWriter(new FileWriter(tmp))) {
+                for (Map.Entry<String, String[]> e : cache.entrySet()) {
+                    w.write(e.getKey() + "|||" + stripFlipMarks(e.getValue()[0]).replace("\n", "\\n") + "|||" + stripFlipMarks(e.getValue()[1]).replace("\n", "\\n"));
+                    w.newLine();
+                }
             }
-        }
-        if (!tmp.renameTo(cacheFile)) {
-            cacheFile.delete();
-            tmp.renameTo(cacheFile);
-        }
-    } catch (Exception ignored) {}
-}
+            if (!tmp.renameTo(cacheFile)) {
+                cacheFile.delete();
+                tmp.renameTo(cacheFile);
+            }
+        } catch (Exception ignored) {}
+    }
     public static String[] getCached(String key) { return cache.get(key); }
     public static String[] getCachedByForeign(String foreign) { if (foreign == null || foreign.trim().isEmpty()) return null; String clean = stripFlipMarks(foreign); if (clean == null) return null; for (Map.Entry<String, String[]> e : cache.entrySet()) { String[] v = e.getValue(); if (v != null && v.length >= 2 && clean.equals(stripFlipMarks(v[0]))) return v; } return null; }
     public static void replaceCacheByForeign(String foreign, String chinese) { String clean = stripFlipMarks(foreign); if (clean == null || clean.isEmpty()) return; Iterator<Map.Entry<String, String[]>> it = cache.entrySet().iterator(); while (it.hasNext()) { Map.Entry<String, String[]> e = it.next(); String[] v = e.getValue(); if (v != null && v.length >= 2 && clean.equals(stripFlipMarks(v[0]))) it.remove(); } cacheResult("retrans_" + clean.hashCode(), clean, chinese); }
@@ -987,41 +991,41 @@ public static void saveCache() {
         return null;
     }
 
-// 慢速模糊版（只准在后台线程用）：最长公共子串覆盖率≥0.8才认，防止翻错原文。
-public static String fuzzyForeignByChinese(String chinese) {
-    if (chinese == null) return null;
-    String clean = stripFlipMarks(chinese);
-    if (clean == null || clean.isEmpty()) return null;
-    String bestVal = null; int bestLen = 0;
-    for (Map.Entry<String, String> entry : chineseToForeign.entrySet()) {
-        String k = stripFlipMarks(entry.getKey());
-        if (k == null || k.isEmpty()) continue;
-        int maxL = Math.max(clean.length(), k.length());
-        int minL = Math.min(clean.length(), k.length());
-        if (maxL <= 0 || (double) minL / maxL < 0.7) continue; // 长度差太多直接跳过，省计算
-        int common = longestCommonSubstringLength(clean, k);
-        double coverage = (double) common / maxL;
-        if (coverage >= 0.8 && common > bestLen) { bestLen = common; bestVal = entry.getValue(); }
+    // 慢速模糊版（只准在后台线程用）：最长公共子串覆盖率≥0.8才认，防止翻错原文。
+    public static String fuzzyForeignByChinese(String chinese) {
+        if (chinese == null) return null;
+        String clean = stripFlipMarks(chinese);
+        if (clean == null || clean.isEmpty()) return null;
+        String bestVal = null; int bestLen = 0;
+        for (Map.Entry<String, String> entry : chineseToForeign.entrySet()) {
+            String k = stripFlipMarks(entry.getKey());
+            if (k == null || k.isEmpty()) continue;
+            int maxL = Math.max(clean.length(), k.length());
+            int minL = Math.min(clean.length(), k.length());
+            if (maxL <= 0 || (double) minL / maxL < 0.7) continue; // 长度差太多直接跳过，省计算
+            int common = longestCommonSubstringLength(clean, k);
+            double coverage = (double) common / maxL;
+            if (coverage >= 0.8 && common > bestLen) { bestLen = common; bestVal = entry.getValue(); }
+        }
+        return bestVal;
     }
-    return bestVal;
-}
 
-private static String squashWs(String s) {
-    return s.replaceAll("[\\s\\u00A0\\u3000\\u200B\\u200C\\u200D\\uFEFF]+", "");
-}
+    private static String squashWs(String s) {
+        return s.replaceAll("[\\s\\u00A0\\u3000\\u200B\\u200C\\u200D\\uFEFF]+", "");
+    }
 
-// ================= ★ v5.12 新增：防失败循环滚雪球 =================
-// 剥掉结尾所有翻转标记（任意个数的 🌐🔄🌀 和空白）。
-public static String stripAllFlipMarks(String s) {
-    if (s == null) return null;
-    return s.replaceAll("(\\s|🌐|🔄|🌀)+$", "").trim();
-}
+    // ================= ★ v5.12 新增：防失败循环滚雪球 =================
+    // 剥掉结尾所有翻转标记（任意个数的 🌐🔄🌀 和空白）。
+    public static String stripAllFlipMarks(String s) {
+        if (s == null) return null;
+        return s.replaceAll("(\\s|🌐|🔄|🌀)+$", "").trim();
+    }
 
-// 自动翻译失败过的消息不再自动重试（防止每次重渲染无限重试+浪费API），
-// 只留一个🌐给用户手动点；手动翻译成功后进缓存，之后就秒翻。
-public static final Set<String> translateFailedKeys = ConcurrentHashMap.newKeySet();
-public static final Set<String> renderTranslating = ConcurrentHashMap.newKeySet();
-// ================= ★ v5.10 新增结束 =================
+    // 自动翻译失败过的消息不再自动重试（防止每次重渲染无限重试+浪费API），
+    // 只留一个🌐给用户手动点；手动翻译成功后进缓存，之后就秒翻。
+    public static final Set<String> translateFailedKeys = ConcurrentHashMap.newKeySet();
+    public static final Set<String> renderTranslating = ConcurrentHashMap.newKeySet();
+    // ================= ★ v5.10 新增结束 =================
 
     public static String getChineseByForeign(String foreign) { if (foreign == null || foreign.trim().isEmpty()) return null; String clean = stripFlipMarks(foreign); String exact = foreignToChinese.get(clean); if (exact != null) return exact; exact = mySentDrafts.get(clean); if (exact != null) return exact; for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) { String k = stripFlipMarks(entry.getKey()), v = stripFlipMarks(entry.getValue()); if (clean.equals(k) || clean.contains(k) || k.contains(clean)) return v; } return null; }
     public static String getForeignFuzzy(String copiedText) { if (copiedText == null || copiedText.trim().isEmpty()) return null; String clean = stripFlipMarks(copiedText); if (mySentDrafts.containsKey(clean)) return clean; if (foreignToChinese.containsKey(clean)) return clean; if (chineseToForeign.containsKey(clean)) return chineseToForeign.get(clean); for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) { String f = stripFlipMarks(entry.getKey()), c = stripFlipMarks(entry.getValue()); if (clean.contains(c) || c.contains(clean) || clean.contains(f) || f.contains(clean)) return f; } return null; }
@@ -1065,13 +1069,13 @@ public static final Set<String> renderTranslating = ConcurrentHashMap.newKeySet(
                 JSONArray history = loadHistory(chatId); if (msgId != null && !msgId.isEmpty()) { for (int i = 0; i < history.length(); i++) if (msgId.equals(history.getJSONObject(i).optString("msgId"))) return; }
                 JSONObject entry = new JSONObject(); if (msgId != null) entry.put("msgId", msgId); entry.put("role", role); entry.put("timestamp", timestamp); entry.put("oneTime", oneTime); entry.put("seq", System.nanoTime()); entry.put("content", content.length() > 1000 ? content.substring(0, 1000) : content); history.put(entry);
                 List<JSONObject> list = new ArrayList<>(); for (int i = 0; i < history.length(); i++) list.add(history.getJSONObject(i)); Collections.sort(list, (a, b) -> {
-    long ta = a.optLong("timestamp", 0);
-    long tb = b.optLong("timestamp", 0);
-    if (Math.abs(ta - tb) < 2000) {
-        return Long.compare(a.optLong("seq", 0), b.optLong("seq", 0));
-    }
-    return Long.compare(ta, tb);
-}); JSONArray sortedHistory = new JSONArray(); for (JSONObject obj : list) sortedHistory.put(obj); history = sortedHistory;
+                    long ta = a.optLong("timestamp", 0);
+                    long tb = b.optLong("timestamp", 0);
+                    if (Math.abs(ta - tb) < 2000) {
+                        return Long.compare(a.optLong("seq", 0), b.optLong("seq", 0));
+                    }
+                    return Long.compare(ta, tb);
+                }); JSONArray sortedHistory = new JSONArray(); for (JSONObject obj : list) sortedHistory.put(obj); history = sortedHistory;
                 if (history.length() > HISTORY_HARD_CAP) { JSONArray trimmed = new JSONArray(); for (int i = history.length() - HISTORY_SOFT_CAP; i < history.length(); i++) trimmed.put(history.get(i)); writeHistoryLocked(chatId, trimmed); } else if (history.length() >= HISTORY_SOFT_CAP + DISTILL_BATCH_MIN) { int batchCount = history.length() - HISTORY_SOFT_CAP; distillBatch = new ArrayList<>(); for (int i = 0; i < batchCount; i++) distillBatch.add(history.getJSONObject(i)); writeHistoryLocked(chatId, history); } else { writeHistoryLocked(chatId, history); }
             } catch (Exception ignored) {}
         }
