@@ -167,8 +167,8 @@ public class ChatHook {
 
     public static void install(ClassLoader cl) {
         hostClassLoader = cl;
-        // ★ v5.8：版本号更新，方便你在日志里确认装的是新版
-        log("=== Hook v5.8 严格模式（括号历史过滤+翻转命中修复） ===");
+        // ★ v5.10：括号历史过滤 + 翻转命中修复 + 时间戳归一 + 图片记忆 + 长消息🔄修复
+        log("=== Hook v5.10（括号过滤+翻转修复+时间戳归一+图片记忆） ===");
 
         try {
             htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl);
@@ -577,6 +577,8 @@ public class ChatHook {
                     if (s.endsWith(" 🔄")) {
                         String clean = s.substring(0, s.length() - 2).trim();
                         String orig = AITranslator.chineseToForeign.get(clean);
+                        // ★ v5.10：宽容查找，长翻译结尾带奇怪空白也能配上对
+                        if (orig == null) orig = AITranslator.getForeignByChineseSmart(clean);
                         if (orig != null) rememberViewFlip((View) param.thisObject, orig, clean);
                         return;
                     }
@@ -604,7 +606,16 @@ public class ChatHook {
                         int len = (int) param.args[2];
                         if (chars == null || len <= 0 || len > 5000) return;
                         String s = new String(chars, start, len);
-                        if (s.endsWith(globeCycloneSuffix) || s.endsWith(" 🔄")) return;
+                        if (s.endsWith(globeCycloneSuffix)) return;
+                        if (s.endsWith(" 🔄")) {
+                            // ★ v5.10：char[] 路径以前直接 return 不记配对，长消息常走这条路导致🔄点不动。
+                            //   现在补记视图配对，和 CharSequence 路径对齐。
+                            String clean = s.substring(0, s.length() - 2).trim();
+                            String orig = AITranslator.chineseToForeign.get(clean);
+                            if (orig == null) orig = AITranslator.getForeignByChineseSmart(clean);
+                            if (orig != null) rememberViewFlip((View) param.thisObject, orig, clean);
+                            return;
+                        }
                         if (s.endsWith(" 🌐")) {
                             String clean = s.substring(0, s.length() - 2).trim();
                             boolean mine = AITranslator.getMyDraftFuzzy(clean) != null;
@@ -713,9 +724,26 @@ public class ChatHook {
                             if (cycle) {
                                 String orig = (pair != null && clean.equals(pair[1])) ? pair[0] : null;
                                 if (orig == null) orig = AITranslator.chineseToForeign.get(clean);
+                                // ★ v5.10：宽容查找（忽略各种空白差异），长消息命中率大幅提升
+                                if (orig == null) orig = AITranslator.getForeignByChineseSmart(clean);
                                 if (orig != null && !orig.equals(clean)) {
                                     boolean mine = AITranslator.getMyDraftFuzzy(orig) != null;
                                     tv.setText(orig + (mine ? " 🌐" : globeCycloneSuffix));
+                                } else {
+                                    // ★ v5.10：还找不到就放后台做慢速模糊匹配；再找不到也给提示，绝不静默没反应
+                                    final String fClean = clean;
+                                    final TextView fTv = tv;
+                                    final android.content.Context fCtx = tv.getContext();
+                                    new Thread(() -> {
+                                        String fuzzy = AITranslator.fuzzyForeignByChinese(fClean);
+                                        if (fuzzy != null && !fuzzy.equals(fClean)) {
+                                            boolean mine2 = AITranslator.getMyDraftFuzzy(fuzzy) != null;
+                                            String flipped = fuzzy + (mine2 ? " 🌐" : globeCycloneSuffix);
+                                            uiHandler.post(() -> fTv.setText(flipped));
+                                        } else {
+                                            uiHandler.post(() -> Toast.makeText(fCtx, "⚠️ 找不到这条的原文，点🌀可重新翻译", Toast.LENGTH_SHORT).show());
+                                        }
+                                    }).start();
                                 }
                             } else if (globe) {
                                 String zh = (pair != null && clean.equals(pair[0])) ? pair[1] : null;
@@ -865,7 +893,7 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ========== ✅ hookRecv：chatId=0 兜底 + 翻译线程异常日志 + ★v5.8括号问题不入历史 ==========
+    // ========== ✅ hookRecv：chatId=0 兜底 + 翻译线程异常日志 + 括号问题不入历史 + ★v5.10时间戳归一 ==========
     private static void hookRecv(ClassLoader cl) throws Exception {
         Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
         XposedHelpers.findAndHookMethod(hm, "getMessageContent", Class.class, boolean.class,
@@ -919,6 +947,20 @@ public class ChatHook {
                             long st = System.currentTimeMillis();
                             Object sto = invokeQuiet(mGetSendTime, msg);
                             if (sto instanceof Long) st = (Long) sto;
+                            // ★ v5.10：时间戳归一化。HelloTalk 的 sendTime 有时"秒"有时"毫秒"，
+                            //   混着排序遥控器顺序必乱。统一成毫秒；0/无效先试 senderTs，再不行用当前时间。
+                            if (st > 0 && st < 10000000000L) st = st * 1000L;
+                            if (st <= 0) {
+                                try {
+                                    Object ts2 = msg.getClass().getMethod("getSenderTs").invoke(msg);
+                                    if (ts2 instanceof Long && (Long) ts2 > 0) {
+                                        st = (Long) ts2;
+                                        if (st < 10000000000L) st = st * 1000L;
+                                    }
+                                } catch (Throwable ignored) {}
+                            }
+                            if (st <= 0) st = System.currentTimeMillis();
+
                             Object mio = invokeQuiet(mGetMsgId, msg);
                             String mid = (mio != null) ? String.valueOf(mio) : null;
                             if (mid == null || mid.isEmpty()) mid = "n_" + text.hashCode() + "_" + st;
@@ -1098,6 +1140,18 @@ public class ChatHook {
             long st = System.currentTimeMillis();
             Object sto = invokeQuiet(mGetSendTime, msg);
             if (sto instanceof Long) st = (Long) sto;
+            // ★ v5.10：同 hookRecv，时间戳统一成毫秒
+            if (st > 0 && st < 10000000000L) st = st * 1000L;
+            if (st <= 0) {
+                try {
+                    Object ts2 = msg.getClass().getMethod("getSenderTs").invoke(msg);
+                    if (ts2 instanceof Long && (Long) ts2 > 0) {
+                        st = (Long) ts2;
+                        if (st < 10000000000L) st = st * 1000L;
+                    }
+                } catch (Throwable ignored) {}
+            }
+            if (st <= 0) st = System.currentTimeMillis();
             final String fc = chatId, fm = mid, ft = text;
             final long fst = st;
             boolean isNew = recordedMsgIds.add(fc + "_" + fm);
@@ -1321,6 +1375,15 @@ public class ChatHook {
                 if (inner.startsWith("(") && inner.endsWith(")")) inner = inner.substring(1, inner.length() - 1).trim();
                 else if (inner.startsWith("（") && inner.endsWith("）")) inner = inner.substring(1, inner.length() - 1).trim();
                 AITranslator.markNoHistory(inner);
+            }
+
+            // ★ v5.10：这次提问如果引用了图片，就让 AI"看"完图后自动生成一句文字描述，
+            //   永久写进该好友历史。之后不选图问"她之前发过什么图片"，AI 看历史文字就能答。
+            if (pbm && qis != null) {
+                final String noteChat = cs;
+                final String notePath = qis;
+                final boolean noteMine = selectedReplyMine;
+                new Thread(() -> AITranslator.rememberImageNote(noteChat, notePath, noteMine)).start();
             }
 
             new Thread(() -> {
