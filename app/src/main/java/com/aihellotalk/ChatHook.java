@@ -165,8 +165,7 @@ public class ChatHook {
 
     public static void install(ClassLoader cl) {
         hostClassLoader = cl;
-        // ★ v5.11：删除🌀，翻转简化为 中文🔄 ⇄ 外文🌐 两态
-        log("=== Hook v5.11（删除🌀+两态翻转+缓存原子写） ===");
+        log("=== Hook v5.13（免滚动自动翻译+防滚雪球+删🌀+两态翻转+原子缓存） ===");
 
         try {
             htTextViewClass = XposedHelpers.findClassIfExists(HT_TEXT_VIEW_CLASS, cl);
@@ -206,7 +205,6 @@ public class ChatHook {
         return (s.startsWith("(") && s.endsWith(")")) || (s.startsWith("（") && s.endsWith("）"));
     }
 
-    // ★ v5.8：命中此判断的文本永不写入遥控器历史（通用规则+运行时标记，无写死例句）。
     private static boolean shouldSkipHistory(String text) {
         if (text == null) return false;
         String t = text.trim();
@@ -538,6 +536,7 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
+    // ★ v5.13：渲染时自动翻译未标记的外语，无需滚动刷新
     private static void hookTextViewRender(ClassLoader cl) {
         if (htTextViewClass == null) return;
         XC_MethodHook renderLogic = new XC_MethodHook() {
@@ -551,7 +550,6 @@ public class ChatHook {
                     String s = cs.toString();
                     if (s.isEmpty() || s.length() > 5000) return;
                     if (s.endsWith(" 🌐")) {
-                        // ★ v5.11：不再追加🌀。只记录"外文↔中文"配对，供🌐点击时秒翻回中文。
                         String clean = s.substring(0, s.length() - 2).trim();
                         boolean mine = AITranslator.getMyDraftFuzzy(clean) != null;
                         if (mine) {
@@ -571,6 +569,49 @@ public class ChatHook {
                         String orig = AITranslator.chineseToForeign.get(clean);
                         if (orig == null) orig = AITranslator.getForeignByChineseSmart(clean);
                         if (orig != null) rememberViewFlip((View) param.thisObject, orig, clean);
+                        return;
+                    }
+                    // ★ v5.13：未翻译的外语，直接在这里翻译并刷新TextView（不用等滚动）
+                    if (!s.endsWith(" 🌐") && !s.endsWith(" 🔄")
+                            && !AITranslator.isChineseOnly(s)
+                            && !AITranslator.containsJapanese(s)
+                            && AITranslator.needTranslateToChinese(s)) {
+                        String[] cached = AITranslator.getCachedByForeign(s);
+                        if (cached != null && cached[1] != null && AITranslator.isChineseOnly(cached[1])) {
+                            String translated = cached[1].replaceAll("[\\s🌐🔄]+$", "");
+                            param.args[0] = translated + " 🔄";
+                            rememberViewFlip((View) param.thisObject, s, cached[1]);
+                            return;
+                        }
+                        final View tv = (View) param.thisObject;
+                        final String foreignText = s;
+                        final String chatId = currentChatId;
+                        String transKey = "render_" + foreignText.hashCode();
+                        if (AITranslator.renderTranslating.add(transKey)) {
+                            new Thread(() -> {
+                                try {
+                                    String translated = AITranslator.toChinese(foreignText, chatId);
+                                    if (translated != null && !translated.isEmpty()
+                                            && !translated.equals(foreignText)
+                                            && AITranslator.isChineseOnly(translated)) {
+                                        AITranslator.cacheResult("auto_" + foreignText.hashCode(), foreignText, translated);
+                                        tv.post(() -> {
+                                            if (tv instanceof TextView) {
+                                                TextView textView = (TextView) tv;
+                                                String cur = textView.getText().toString();
+                                                if (cur.equals(foreignText)
+                                                        || cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
+                                                    textView.setText(translated.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
+                                                }
+                                            }
+                                        });
+                                    }
+                                } catch (Exception ignored) {
+                                } finally {
+                                    AITranslator.renderTranslating.remove(transKey);
+                                }
+                            }).start();
+                        }
                         return;
                     }
                     String d = AITranslator.getMyDraftFuzzy(s);
@@ -598,7 +639,6 @@ public class ChatHook {
                         if (chars == null || len <= 0 || len > 5000) return;
                         String s = new String(chars, start, len);
                         if (s.endsWith(" 🌐")) {
-                            // ★ v5.11：同 CharSequence 路径，只记配对不追加🌀
                             String clean = s.substring(0, s.length() - 2).trim();
                             boolean mine = AITranslator.getMyDraftFuzzy(clean) != null;
                             if (mine) {
@@ -618,6 +658,51 @@ public class ChatHook {
                             String orig = AITranslator.chineseToForeign.get(clean);
                             if (orig == null) orig = AITranslator.getForeignByChineseSmart(clean);
                             if (orig != null) rememberViewFlip((View) param.thisObject, orig, clean);
+                            return;
+                        }
+                        // ★ v5.13：char[] 路径同样自动翻译，不用等滚动
+                        if (!s.endsWith(" 🌐") && !s.endsWith(" 🔄")
+                                && !AITranslator.isChineseOnly(s)
+                                && !AITranslator.containsJapanese(s)
+                                && AITranslator.needTranslateToChinese(s)) {
+                            String[] cached = AITranslator.getCachedByForeign(s);
+                            if (cached != null && cached[1] != null && AITranslator.isChineseOnly(cached[1])) {
+                                String translated = cached[1].replaceAll("[\\s🌐🔄]+$", "");
+                                param.args[0] = (translated + " 🔄").toCharArray();
+                                param.args[1] = 0;
+                                param.args[2] = (translated + " 🔄").length();
+                                rememberViewFlip((View) param.thisObject, s, cached[1]);
+                                return;
+                            }
+                            final View tv = (View) param.thisObject;
+                            final String foreignText = s;
+                            final String chatId = currentChatId;
+                            String transKey = "render_" + foreignText.hashCode();
+                            if (AITranslator.renderTranslating.add(transKey)) {
+                                new Thread(() -> {
+                                    try {
+                                        String translated = AITranslator.toChinese(foreignText, chatId);
+                                        if (translated != null && !translated.isEmpty()
+                                                && !translated.equals(foreignText)
+                                                && AITranslator.isChineseOnly(translated)) {
+                                            AITranslator.cacheResult("auto_" + foreignText.hashCode(), foreignText, translated);
+                                            tv.post(() -> {
+                                                if (tv instanceof TextView) {
+                                                    TextView textView = (TextView) tv;
+                                                    String cur = textView.getText().toString();
+                                                    if (cur.equals(foreignText)
+                                                            || cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
+                                                        textView.setText(translated.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    } catch (Exception ignored) {
+                                    } finally {
+                                        AITranslator.renderTranslating.remove(transKey);
+                                    }
+                                }).start();
+                            }
                             return;
                         }
                         String d = AITranslator.getMyDraftFuzzy(s);
@@ -658,8 +743,6 @@ public class ChatHook {
         try { XposedHelpers.findAndHookMethod("android.content.ClipboardManager", cl, "setPrimaryClip", ClipData.class, h); } catch (Throwable ignored) {}
     }
 
-    // ★ v5.11：两态翻转。中文🔄 → 点🔄 → 外文🌐 → 点🌐 → 中文🔄（优先本地缓存，秒翻）。
-    //   🌐在"未自动翻译的外语消息"上点击 = 手动翻译成中文（保留原🌀想解决的需求）。
     private static void hookBubbleFlip(ClassLoader cl) throws Exception {
         XposedHelpers.findAndHookMethod(HT_TEXT_VIEW_CLASS, cl, "onTouchEvent", MotionEvent.class,
                 new XC_MethodHook() {
@@ -678,7 +761,6 @@ public class ChatHook {
                         if (lay == null) return;
                         int line = lay.getLineForVertical((int) ev.getY());
                         int off = lay.getOffsetForHorizontal(line, ev.getX());
-                        // ★ v5.11：命中区放宽1个字符，减少长消息点不中的情况
                         if (off < s.length() - 4) return;
                         final String clean = s.substring(0, s.length() - 2).trim();
                         final boolean globe = endsGlobe;
@@ -886,7 +968,6 @@ public class ChatHook {
                             long st = System.currentTimeMillis();
                             Object sto = invokeQuiet(mGetSendTime, msg);
                             if (sto instanceof Long) st = (Long) sto;
-                            // 时间戳归一化（秒→毫秒）；不可用时试 senderTs；再不行用当前时间并记日志方便排查
                             if (st > 0 && st < 10000000000L) st = st * 1000L;
                             if (st <= 0) {
                                 try {
@@ -986,10 +1067,9 @@ public class ChatHook {
                                 }
                                 return;
                             }
-// ★ v5.12：先剥掉结尾的翻转标记（任意个🌐🔄🌀），防止失败循环滚雪球
-text = AITranslator.stripAllFlipMarks(text);
-if (text == null || text.isEmpty()) return;
-
+                            // ★ v5.12：先剥掉结尾的翻转标记，防止失败循环滚雪球
+                            text = AITranslator.stripAllFlipMarks(text);
+                            if (text == null || text.isEmpty()) return;
 
                             String[] cached = AITranslator.getCached(mid);
                             if (cached == null) cached = AITranslator.getCachedByForeign(text);
@@ -1001,12 +1081,13 @@ if (text == null || text.isEmpty()) return;
                             }
 
                             String transKey = chatId + "_" + mid;
-// ★ v5.12：已经失败过的就不再自动重试，只留一个🌐给手动点
-if (AITranslator.translateFailedKeys.contains(transKey)) {
-    try { XposedHelpers.callMethod(bean, "setText", text + " 🌐"); } catch (Exception ignored) {}
-    return;
-}
-if (!translating.add(transKey)) return;
+                            // ★ v5.12：已经失败过的就不再自动重试，只留一个🌐给手动点
+                            if (AITranslator.translateFailedKeys.contains(transKey)) {
+                                try { XposedHelpers.callMethod(bean, "setText", text + " 🌐"); } catch (Exception ignored) {}
+                                return;
+                            }
+                            if (!translating.add(transKey)) return;
+
                             final String ft = text, fm = mid, fk = transKey;
                             final Object fb = bean;
 
@@ -1034,10 +1115,10 @@ if (!translating.add(transKey)) return;
                                     translating.remove(fk);
                                 }
                                 if (!ok) {
-    // ★ v5.12：记住失败，下次不再循环重试
-    AITranslator.translateFailedKeys.add(fk);
-    try { XposedHelpers.callMethod(fb, "setText", ft + " 🌐"); } catch (Exception ignored) {}
-}
+                                    // ★ v5.12：记住失败，下次不再循环重试
+                                    AITranslator.translateFailedKeys.add(fk);
+                                    try { XposedHelpers.callMethod(fb, "setText", ft + " 🌐"); } catch (Exception ignored) {}
+                                }
                             }).start();
                         } catch (Throwable ignored) {}
                     }
@@ -1321,7 +1402,6 @@ if (!translating.add(transKey)) return;
                 AITranslator.markNoHistory(inner);
             }
 
-            // ★ v5.10：引用图片提问时生成永久图片记忆
             if (pbm && qis != null) {
                 final String noteChat = cs;
                 final String notePath = qis;
