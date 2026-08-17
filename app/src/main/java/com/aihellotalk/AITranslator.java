@@ -969,29 +969,40 @@ public static void saveCache() {
         return null;
     }
 
-    // 慢速模糊版（只准在后台线程用）：最长公共子串覆盖率≥0.8才认，防止翻错原文。
-    public static String fuzzyForeignByChinese(String chinese) {
-        if (chinese == null) return null;
-        String clean = stripFlipMarks(chinese);
-        if (clean == null || clean.isEmpty()) return null;
-        String bestVal = null; int bestLen = 0;
-        for (Map.Entry<String, String> entry : chineseToForeign.entrySet()) {
-            String k = stripFlipMarks(entry.getKey());
-            if (k == null || k.isEmpty()) continue;
-            int maxL = Math.max(clean.length(), k.length());
-            int minL = Math.min(clean.length(), k.length());
-            if (maxL <= 0 || (double) minL / maxL < 0.7) continue; // 长度差太多直接跳过，省计算
-            int common = longestCommonSubstringLength(clean, k);
-            double coverage = (double) common / maxL;
-            if (coverage >= 0.8 && common > bestLen) { bestLen = common; bestVal = entry.getValue(); }
-        }
-        return bestVal;
+// 慢速模糊版（只准在后台线程用）：最长公共子串覆盖率≥0.8才认，防止翻错原文。
+public static String fuzzyForeignByChinese(String chinese) {
+    if (chinese == null) return null;
+    String clean = stripFlipMarks(chinese);
+    if (clean == null || clean.isEmpty()) return null;
+    String bestVal = null; int bestLen = 0;
+    for (Map.Entry<String, String> entry : chineseToForeign.entrySet()) {
+        String k = stripFlipMarks(entry.getKey());
+        if (k == null || k.isEmpty()) continue;
+        int maxL = Math.max(clean.length(), k.length());
+        int minL = Math.min(clean.length(), k.length());
+        if (maxL <= 0 || (double) minL / maxL < 0.7) continue; // 长度差太多直接跳过，省计算
+        int common = longestCommonSubstringLength(clean, k);
+        double coverage = (double) common / maxL;
+        if (coverage >= 0.8 && common > bestLen) { bestLen = common; bestVal = entry.getValue(); }
     }
+    return bestVal;
+}
 
-    private static String squashWs(String s) {
-        return s.replaceAll("[\\s\\u00A0\\u3000\\u200B\\u200C\\u200D\\uFEFF]+", "");
-    }
-    // ================= ★ v5.10 新增结束 =================
+private static String squashWs(String s) {
+    return s.replaceAll("[\\s\\u00A0\\u3000\\u200B\\u200C\\u200D\\uFEFF]+", "");
+}
+
+// ================= ★ v5.12 新增：防失败循环滚雪球 =================
+// 剥掉结尾所有翻转标记（任意个数的 🌐🔄🌀 和空白）。
+public static String stripAllFlipMarks(String s) {
+    if (s == null) return null;
+    return s.replaceAll("(\\s|🌐|🔄|🌀)+$", "").trim();
+}
+
+// 自动翻译失败过的消息不再自动重试（防止每次重渲染无限重试+浪费API），
+// 只留一个🌐给用户手动点；手动翻译成功后进缓存，之后就秒翻。
+public static final Set<String> translateFailedKeys = ConcurrentHashMap.newKeySet();
+// ================= ★ v5.10 新增结束 =================
 
     public static String getChineseByForeign(String foreign) { if (foreign == null || foreign.trim().isEmpty()) return null; String clean = stripFlipMarks(foreign); String exact = foreignToChinese.get(clean); if (exact != null) return exact; exact = mySentDrafts.get(clean); if (exact != null) return exact; for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) { String k = stripFlipMarks(entry.getKey()), v = stripFlipMarks(entry.getValue()); if (clean.equals(k) || clean.contains(k) || k.contains(clean)) return v; } return null; }
     public static String getForeignFuzzy(String copiedText) { if (copiedText == null || copiedText.trim().isEmpty()) return null; String clean = stripFlipMarks(copiedText); if (mySentDrafts.containsKey(clean)) return clean; if (foreignToChinese.containsKey(clean)) return clean; if (chineseToForeign.containsKey(clean)) return chineseToForeign.get(clean); for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) { String f = stripFlipMarks(entry.getKey()), c = stripFlipMarks(entry.getValue()); if (clean.contains(c) || c.contains(clean) || clean.contains(f) || f.contains(clean)) return f; } return null; }
