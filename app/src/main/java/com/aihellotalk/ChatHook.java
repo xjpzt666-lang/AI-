@@ -614,12 +614,9 @@ public class ChatHook {
                         }
                         return;
                     }
-                    String d = AITranslator.getMyDraftFuzzy(s);
-                    if (d != null && !d.equals(s)) {
-                        rememberViewFlip((View) param.thisObject, s, d);
-                        SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
-                        
-        };
+                            } catch (Throwable ignored) {}
+    }
+};
         try { XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText", CharSequence.class, TextView.BufferType.class, renderLogic); } catch (Throwable t) {}
         try { XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText", CharSequence.class, renderLogic); } catch (Throwable t) {}
         try {
