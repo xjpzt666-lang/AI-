@@ -934,10 +934,9 @@ public class ChatHook {
                             Object cidO = invokeQuiet(mGetChatId, msg);
                             if (cidO != null) eid = String.valueOf(cidO);
 
-                            if ("0".equals(eid) || "null".equals(eid) || eid.trim().isEmpty()) {
-                                if ("0".equals(currentChatId) || "null".equals(currentChatId) || currentChatId.isEmpty()) return;
-                                eid = currentChatId;
-                            }
+                           if ("0".equals(eid) || "null".equals(eid) || eid.trim().isEmpty()) {
+    return;
+}
                             final String chatId = eid;
 
                             String sn = null;
