@@ -618,11 +618,7 @@ public class ChatHook {
                     if (d != null && !d.equals(s)) {
                         rememberViewFlip((View) param.thisObject, s, d);
                         SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
-                        ssb.append(" 🌐");
-                        param.args[0] = ssb;
-                    }
-                } catch (Throwable ignored) {}
-            }
+                        
         };
         try { XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText", CharSequence.class, TextView.BufferType.class, renderLogic); } catch (Throwable t) {}
         try { XposedHelpers.findAndHookMethod("android.widget.TextView", null, "setText", CharSequence.class, renderLogic); } catch (Throwable t) {}
@@ -705,14 +701,7 @@ public class ChatHook {
                             }
                             return;
                         }
-                        String d = AITranslator.getMyDraftFuzzy(s);
-                        if (d != null && !d.equals(s)) {
-                            rememberViewFlip((View) param.thisObject, s, d);
-                            String ns = s + " 🌐";
-                            param.args[0] = ns.toCharArray();
-                            param.args[1] = 0;
-                            param.args[2] = ns.length();
-                        }
+                        
                     } catch (Throwable ignored) {}
                 }
             });
@@ -1181,8 +1170,9 @@ public class ChatHook {
             if (st <= 0) st = System.currentTimeMillis();
             final String fc = chatId, fm = mid, ft = text;
             final long fst = st;
+            final String fq = (selectedReplyValid && selectedReplyText != null && !selectedReplyText.isEmpty()) ? selectedReplyText : null;
             boolean isNew = recordedMsgIds.add(fc + "_" + fm);
-            if (isNew && !shouldSkipHistory(text)) historyExecutor.execute(() -> AITranslator.appendHistory(fc, fm, "assistant", ft, fst, null, false));
+            if (isNew && !shouldSkipHistory(text)) historyExecutor.execute(() -> AITranslator.appendHistory(fc, fm, "assistant", ft, fst, fq, false));
         } catch (Throwable ignored) {}
     }
 
