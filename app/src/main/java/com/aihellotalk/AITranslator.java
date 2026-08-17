@@ -809,13 +809,18 @@ public class AITranslator {
             if (!hasContext) scriptBuilder.append("（暂无有效上下文）\n");
             scriptBuilder.append("\n【用户的问题/要求】\n").append(cleanText);
 
-            messages.put(createMessageObj("user", scriptBuilder.toString()));
+                    messages.put(createMessageObj("user", scriptBuilder.toString()));
 
-            return refuseGuard(callChatMessages(messages), cleanText);
-        } catch (JSONException e) {
-            throw new IOException("构建Messages失败");
-        }
+        // ★ v5.9：这里不能再用 refuseGuard —— AI 诚实回答"不知道/没有相关信息"时
+        //   会被误判成安全拒绝，导致弹窗把你自己的问题原样重复一遍。
+        //   现在无论 AI 答什么（真答案或"不知道"）都原样展示。
+        String aiRawAnswer = callChatMessages(messages);
+        if (aiRawAnswer == null || aiRawAnswer.trim().isEmpty()) return "（AI 未返回任何内容，请检查模型配置或重试）";
+        return aiRawAnswer;
+    } catch (JSONException e) {
+        throw new IOException("构建Messages失败");
     }
+}
 
     public static String getSpanishRegionDirective(String nationality, int nativeLang, String chatId) {
         String nat = (nationality != null) ? nationality.toLowerCase() : ""; if (nat.isEmpty() && chatId != null) nat = getFriendNationality(chatId);
