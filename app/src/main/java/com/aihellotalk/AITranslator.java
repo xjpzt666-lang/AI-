@@ -1045,8 +1045,15 @@ public static final Set<String> renderTranslating = ConcurrentHashMap.newKeySet(
         synchronized (fileLock) {
             try {
                 JSONArray history = loadHistory(chatId); if (msgId != null && !msgId.isEmpty()) { for (int i = 0; i < history.length(); i++) if (msgId.equals(history.getJSONObject(i).optString("msgId"))) return; }
-                JSONObject entry = new JSONObject(); if (msgId != null) entry.put("msgId", msgId); entry.put("role", role); entry.put("timestamp", timestamp); entry.put("oneTime", oneTime); entry.put("content", content.length() > 1000 ? content.substring(0, 1000) : content); history.put(entry);
-                List<JSONObject> list = new ArrayList<>(); for (int i = 0; i < history.length(); i++) list.add(history.getJSONObject(i)); Collections.sort(list, (a, b) -> Long.compare(a.optLong("timestamp", 0), b.optLong("timestamp", 0))); JSONArray sortedHistory = new JSONArray(); for (JSONObject obj : list) sortedHistory.put(obj); history = sortedHistory;
+                JSONObject entry = new JSONObject(); if (msgId != null) entry.put("msgId", msgId); entry.put("role", role); entry.put("timestamp", timestamp); entry.put("oneTime", oneTime); entry.put("seq", System.nanoTime()); entry.put("content", content.length() > 1000 ? content.substring(0, 1000) : content); history.put(entry);
+                List<JSONObject> list = new ArrayList<>(); for (int i = 0; i < history.length(); i++) list.add(history.getJSONObject(i)); Collections.sort(list, (a, b) -> {
+    long ta = a.optLong("timestamp", 0);
+    long tb = b.optLong("timestamp", 0);
+    if (Math.abs(ta - tb) < 2000) {
+        return Long.compare(a.optLong("seq", 0), b.optLong("seq", 0));
+    }
+    return Long.compare(ta, tb);
+}); JSONArray sortedHistory = new JSONArray(); for (JSONObject obj : list) sortedHistory.put(obj); history = sortedHistory;
                 if (history.length() > HISTORY_HARD_CAP) { JSONArray trimmed = new JSONArray(); for (int i = history.length() - HISTORY_SOFT_CAP; i < history.length(); i++) trimmed.put(history.get(i)); writeHistoryLocked(chatId, trimmed); } else if (history.length() >= HISTORY_SOFT_CAP + DISTILL_BATCH_MIN) { int batchCount = history.length() - HISTORY_SOFT_CAP; distillBatch = new ArrayList<>(); for (int i = 0; i < batchCount; i++) distillBatch.add(history.getJSONObject(i)); writeHistoryLocked(chatId, history); } else { writeHistoryLocked(chatId, history); }
             } catch (Exception ignored) {}
         }
