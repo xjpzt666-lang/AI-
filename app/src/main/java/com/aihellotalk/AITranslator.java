@@ -583,6 +583,60 @@ public class AITranslator {
         return reverseTranslateClient;
     }
 
+    // ================= ★ v5.10 新增：图片长期记忆（看过一次，文字记一辈子） =================
+    // 用户用回复框引用图片问AI时，额外调一次AI生成一句话图片描述写进该好友历史。
+    // 按"文件名+文件时间"去重，同一张图只描述一次。措辞标注"存档、非当前话题"，避免污染后续无关对话。
+    public static void rememberImageNote(String chatId, String imagePath, boolean isMineImage) {
+        try {
+            if (chatId == null || chatId.isEmpty() || "0".equals(chatId) || "null".equals(chatId)) return;
+            if (apiKey == null || apiKey.isEmpty()) return;
+            if (imagePath == null || imagePath.isEmpty()) return;
+            File f = new File(imagePath);
+            if (!f.exists() || f.length() <= 0) return;
+
+            String dedupeMark = "[图片记忆:" + f.getName() + "_" + f.lastModified() + "]";
+            JSONArray hist = loadHistory(chatId);
+            for (int i = 0; i < hist.length(); i++) {
+                String c = hist.getJSONObject(i).optString("content", "");
+                if (c != null && c.contains(dedupeMark)) return;
+            }
+
+            String b64 = encodeFileToBase64(imagePath);
+            if (b64 == null || b64.isEmpty()) return;
+
+            JSONArray contentArr = new JSONArray();
+            contentArr.put(createTextPart("请用一句不超过60字的中文客观描述这张图片的内容（人物、场景、物体、文字等），只输出描述本身，不要任何前缀和解释。"));
+            contentArr.put(createImagePart(b64));
+            JSONObject userMsg = new JSONObject();
+            userMsg.put("role", "user");
+            userMsg.put("content", contentArr);
+            JSONArray messages = new JSONArray();
+            messages.put(userMsg);
+
+            JSONObject body = new JSONObject();
+            body.put("model", model);
+            body.put("max_tokens", 150);
+            body.put("temperature", 0.2);
+            body.put("messages", messages);
+
+            String desc = executeRequestWith(getReverseTranslateClient(), body);
+            if (desc == null) return;
+            desc = desc.trim().replaceAll("\\s+", " ").replace("*", "");
+            if (desc.isEmpty() || isRefusalResponse(desc)) return;
+            if (desc.length() > 120) desc = desc.substring(0, 120);
+
+            String who = isMineImage ? "我" : "对方";
+            String note = "[" + who + "发送了一张图片]（历史图片存档，仅作背景，非当前话题）" + dedupeMark + " 内容：" + desc;
+            String noteMsgId = "imgnote_" + Math.abs((imagePath + "_" + f.lastModified()).hashCode());
+            long ts = f.lastModified() > 0 ? f.lastModified() : System.currentTimeMillis();
+            appendHistory(chatId, noteMsgId, isMineImage ? "assistant" : "user", note, ts, null, false);
+            Log.i(TAG, "图片记忆已写入: " + dedupeMark);
+        } catch (Exception e) {
+            Log.w(TAG, "图片记忆失败: " + e.getMessage());
+        }
+    }
+    // ================= ★ v5.10 新增结束 =================
+
     public static String reverseTranslateMyForeign(String foreignText, String chatId) {
         if (foreignText == null || foreignText.trim().isEmpty()) return null;
         if (apiKey == null || apiKey.isEmpty()) return null;
@@ -809,18 +863,18 @@ public class AITranslator {
             if (!hasContext) scriptBuilder.append("（暂无有效上下文）\n");
             scriptBuilder.append("\n【用户的问题/要求】\n").append(cleanText);
 
-                    messages.put(createMessageObj("user", scriptBuilder.toString()));
+            messages.put(createMessageObj("user", scriptBuilder.toString()));
 
-        // ★ v5.9：这里不能再用 refuseGuard —— AI 诚实回答"不知道/没有相关信息"时
-        //   会被误判成安全拒绝，导致弹窗把你自己的问题原样重复一遍。
-        //   现在无论 AI 答什么（真答案或"不知道"）都原样展示。
-        String aiRawAnswer = callChatMessages(messages);
-        if (aiRawAnswer == null || aiRawAnswer.trim().isEmpty()) return "（AI 未返回任何内容，请检查模型配置或重试）";
-        return aiRawAnswer;
-    } catch (JSONException e) {
-        throw new IOException("构建Messages失败");
+            // ★ v5.9：这里不能再用 refuseGuard —— AI 诚实回答"不知道/没有相关信息"时
+            //   会被误判成安全拒绝，导致弹窗把你自己的问题原样重复一遍。
+            //   现在无论 AI 答什么（真答案或"不知道"）都原样展示。
+            String aiRawAnswer = callChatMessages(messages);
+            if (aiRawAnswer == null || aiRawAnswer.trim().isEmpty()) return "（AI 未返回任何内容，请检查模型配置或重试）";
+            return aiRawAnswer;
+        } catch (JSONException e) {
+            throw new IOException("构建Messages失败");
+        }
     }
-}
 
     public static String getSpanishRegionDirective(String nationality, int nativeLang, String chatId) {
         String nat = (nationality != null) ? nationality.toLowerCase() : ""; if (nat.isEmpty() && chatId != null) nat = getFriendNationality(chatId);
@@ -878,6 +932,49 @@ public class AITranslator {
     public static void replaceCacheByForeign(String foreign, String chinese) { String clean = stripFlipMarks(foreign); if (clean == null || clean.isEmpty()) return; Iterator<Map.Entry<String, String[]>> it = cache.entrySet().iterator(); while (it.hasNext()) { Map.Entry<String, String[]> e = it.next(); String[] v = e.getValue(); if (v != null && v.length >= 2 && clean.equals(stripFlipMarks(v[0]))) it.remove(); } cacheResult("retrans_" + clean.hashCode(), clean, chinese); }
     public static void cacheResult(String key, String foreign, String chinese) { foreign = stripFlipMarks(foreign); chinese = stripFlipMarks(chinese); cache.put(key, new String[]{foreign, chinese}); foreignToChinese.put(foreign, chinese); chineseToForeign.put(chinese, foreign); saveCache(); }
     public static String getForeignByChinese(String chinese) { if (chinese == null || chinese.trim().isEmpty()) return null; String clean = stripFlipMarks(chinese); String exact = chineseToForeign.get(clean); if (exact != null) return exact; for (Map.Entry<String, String> entry : chineseToForeign.entrySet()) { String k = stripFlipMarks(entry.getKey()), v = stripFlipMarks(entry.getValue()); if (clean.equals(k) || clean.contains(k) || k.contains(clean)) return v; } return null; }
+
+    // ================= ★ v5.10 新增：🔄翻转专用的宽容查找 =================
+    // 快速版（主线程用）：精确匹配失败后，把所有空白（含全角空格、不间断空格、零宽字符）压掉再匹配，
+    // 专治长翻译结尾带奇怪空白导致查不到原文。
+    public static String getForeignByChineseSmart(String chinese) {
+        if (chinese == null) return null;
+        String clean = stripFlipMarks(chinese);
+        if (clean == null || clean.isEmpty()) return null;
+        String exact = chineseToForeign.get(clean);
+        if (exact != null) return exact;
+        String norm = squashWs(clean);
+        if (norm.isEmpty()) return null;
+        for (Map.Entry<String, String> entry : chineseToForeign.entrySet()) {
+            String k = stripFlipMarks(entry.getKey());
+            if (k != null && !k.isEmpty() && squashWs(k).equals(norm)) return entry.getValue();
+        }
+        return null;
+    }
+
+    // 慢速模糊版（只准在后台线程用）：最长公共子串覆盖率≥0.8才认，防止翻错原文。
+    public static String fuzzyForeignByChinese(String chinese) {
+        if (chinese == null) return null;
+        String clean = stripFlipMarks(chinese);
+        if (clean == null || clean.isEmpty()) return null;
+        String bestVal = null; int bestLen = 0;
+        for (Map.Entry<String, String> entry : chineseToForeign.entrySet()) {
+            String k = stripFlipMarks(entry.getKey());
+            if (k == null || k.isEmpty()) continue;
+            int maxL = Math.max(clean.length(), k.length());
+            int minL = Math.min(clean.length(), k.length());
+            if (maxL <= 0 || (double) minL / maxL < 0.7) continue; // 长度差太多直接跳过，省计算
+            int common = longestCommonSubstringLength(clean, k);
+            double coverage = (double) common / maxL;
+            if (coverage >= 0.8 && common > bestLen) { bestLen = common; bestVal = entry.getValue(); }
+        }
+        return bestVal;
+    }
+
+    private static String squashWs(String s) {
+        return s.replaceAll("[\\s\\u00A0\\u3000\\u200B\\u200C\\u200D\\uFEFF]+", "");
+    }
+    // ================= ★ v5.10 新增结束 =================
+
     public static String getChineseByForeign(String foreign) { if (foreign == null || foreign.trim().isEmpty()) return null; String clean = stripFlipMarks(foreign); String exact = foreignToChinese.get(clean); if (exact != null) return exact; exact = mySentDrafts.get(clean); if (exact != null) return exact; for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) { String k = stripFlipMarks(entry.getKey()), v = stripFlipMarks(entry.getValue()); if (clean.equals(k) || clean.contains(k) || k.contains(clean)) return v; } return null; }
     public static String getForeignFuzzy(String copiedText) { if (copiedText == null || copiedText.trim().isEmpty()) return null; String clean = stripFlipMarks(copiedText); if (mySentDrafts.containsKey(clean)) return clean; if (foreignToChinese.containsKey(clean)) return clean; if (chineseToForeign.containsKey(clean)) return chineseToForeign.get(clean); for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) { String f = stripFlipMarks(entry.getKey()), c = stripFlipMarks(entry.getValue()); if (clean.contains(c) || c.contains(clean) || clean.contains(f) || f.contains(clean)) return f; } return null; }
 
