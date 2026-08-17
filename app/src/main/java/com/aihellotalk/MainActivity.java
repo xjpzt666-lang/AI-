@@ -220,7 +220,6 @@ public class MainActivity extends Activity {
                     prefs.edit().putString("model", selected).apply();
                     TextView ml = (TextView) drawerLayout.findViewWithTag("modelLabel");
                     if (ml != null) ml.setText(selected);
-
                     updateModelInConfig(selected);
                     Toast.makeText(MainActivity.this, "底层翻译模型已实时切换为: " + selected, Toast.LENGTH_SHORT).show();
                 }
@@ -372,7 +371,7 @@ public class MainActivity extends Activity {
         Toast.makeText(this, "正在恢复主账号记忆...", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             runRoot("mkdir -p " + MAIN_FILES_DIR);
-            fixHtaiDirOwner(MAIN_FILES_DIR); // ★ v5.9
+            fixHtaiDirOwner(MAIN_FILES_DIR);
             runRoot("cp " + STORE_DIR + "/htai_* " + MAIN_FILES_DIR + "/ 2>/dev/null");
             runRoot("chmod 666 " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
             runRoot("chown $(stat -c %u:%g " + MAIN_FILES_DIR + ") " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
@@ -389,7 +388,7 @@ public class MainActivity extends Activity {
     private void claimTemp() {
         new Thread(() -> {
             runRoot("mkdir -p " + TEMP_FILES_DIR);
-            fixHtaiDirOwner(TEMP_FILES_DIR); // ★ v5.9
+            fixHtaiDirOwner(TEMP_FILES_DIR);
             runRoot("echo temp > " + MARKER_FILE + " && chmod 644 " + MARKER_FILE);
             runOnUiThread(() -> {
                 updateMemStatus("temp");
@@ -466,7 +465,7 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             runRoot("rm -rf " + TEMP_FILES_DIR + " 2>/dev/null");
             runRoot("mkdir -p " + TEMP_FILES_DIR);
-            fixHtaiDirOwner(TEMP_FILES_DIR); // ★ v5.9：关键修复，目录是root重建的，属主必须还给HelloTalk
+            fixHtaiDirOwner(TEMP_FILES_DIR);
             runOnUiThread(() -> {
                 refreshDrawerList();
                 Toast.makeText(MainActivity.this, "🗑 一次性记忆已清空", Toast.LENGTH_LONG).show();
@@ -524,7 +523,7 @@ public class MainActivity extends Activity {
             }
 
             runRoot("mkdir -p " + TEMP_FILES_DIR);
-            fixHtaiDirOwner(TEMP_FILES_DIR); // ★ v5.9
+            fixHtaiDirOwner(TEMP_FILES_DIR);
             runRoot("echo temp > " + MARKER_FILE + " && chmod 644 " + MARKER_FILE);
             runRoot("am force-stop com.hellotalk");
             runOnUiThread(() -> {
@@ -543,7 +542,7 @@ public class MainActivity extends Activity {
 
             if (!sandboxHas) {
                 runRoot("mkdir -p " + MAIN_FILES_DIR);
-                fixHtaiDirOwner(MAIN_FILES_DIR); // ★ v5.9
+                fixHtaiDirOwner(MAIN_FILES_DIR);
                 runRoot("cp " + STORE_DIR + "/htai_* " + MAIN_FILES_DIR + "/ 2>/dev/null");
                 runRoot("chmod 666 " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
                 runRoot("chown $(stat -c %u:%g " + MAIN_FILES_DIR + ") " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
@@ -566,7 +565,6 @@ public class MainActivity extends Activity {
             String mainBox = runRoot("ls -la " + MAIN_FILES_DIR + "/ 2>/dev/null | grep htai");
             String tempBox = runRoot("ls -la " + TEMP_FILES_DIR + "/ 2>/dev/null | grep htai");
             String store = runRoot("ls -la " + STORE_DIR + "/ 2>/dev/null | grep htai");
-            // ★ v5.9：诊断里顺便显示目录属主，属主是 root 就说明写不进文件
             String tempOwner = runRoot("ls -ld " + TEMP_FILES_DIR + " 2>/dev/null");
 
             StringBuilder sb = new StringBuilder();
@@ -768,9 +766,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // ★ v5.9：凡是用 root 在 HelloTalk 数据目录里创建/重建的目录，
-    //   必须把属主改回 HelloTalk 应用自己的 uid，否则 HelloTalk 进程无法在里面写文件，
-    //   导致翻译缓存、好友列表、聊天记录全部静默保存失败。
     private void fixHtaiDirOwner(String dir) {
         runRoot("OWN=$(stat -c %u:%g /data/data/com.hellotalk 2>/dev/null); "
                 + "if [ -n \"$OWN\" ]; then chown $OWN " + dir + " 2>/dev/null; fi; "
@@ -892,6 +887,7 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ★ 修改点1：排序逻辑改为 timestamp + seq 双保险
     private void loadHTMessagesRoot(String chatId) {
         messageContainer.removeAllViews();
         new Thread(() -> {
@@ -901,10 +897,16 @@ public class MainActivity extends Activity {
                 try {
                     if (jsonStr != null && !jsonStr.trim().isEmpty()) {
                         JSONArray history = new JSONArray(jsonStr);
-                        // ★ v5.10：显示前按时间戳排序——越早的消息越靠上，越近的越靠下，不再受检测先后影响
                         java.util.List<JSONObject> tmpList = new java.util.ArrayList<>();
                         for (int i = 0; i < history.length(); i++) tmpList.add(history.getJSONObject(i));
-                        java.util.Collections.sort(tmpList, (x, y) -> Long.compare(x.optLong("timestamp", 0), y.optLong("timestamp", 0)));
+                        java.util.Collections.sort(tmpList, (x, y) -> {
+                            long tx = x.optLong("timestamp", 0);
+                            long ty = y.optLong("timestamp", 0);
+                            if (Math.abs(tx - ty) < 2000) {
+                                return Long.compare(x.optLong("seq", 0), y.optLong("seq", 0));
+                            }
+                            return Long.compare(tx, ty);
+                        });
                         for (JSONObject obj : tmpList) {
                             String role = obj.optString("role", "");
                             String content = obj.optString("content", "");
@@ -928,6 +930,7 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    // ★ 修改点2：注入指令时加 seq 字段，与 appendHistory 的排序保持一致
     private void sendMessage() {
         if (currentChatId.isEmpty()) {
             Toast.makeText(this, "请先在左侧选择要调教的好友", Toast.LENGTH_SHORT).show();
@@ -965,7 +968,8 @@ public class MainActivity extends Activity {
                 JSONObject entry = new JSONObject();
                 entry.put("role", "system");
                 entry.put("content", contentToInject);
-                entry.put("timestamp", System.currentTimeMillis()); // ★ v5.10：排序需要时间，否则注入的指令会被排到最顶上
+                entry.put("timestamp", System.currentTimeMillis());
+                entry.put("seq", System.nanoTime());
                 history.put(entry);
 
                 File tempFile = new File(getCacheDir(), "htai_temp.json");
@@ -977,7 +981,7 @@ public class MainActivity extends Activity {
                 runRoot("chmod 666 " + path);
 
                 mainHandler.post(() -> {
-                    displayMessage("system", "✅ 指令及附件已静默注入底层！\n切回 HelloTalk 再次点击“译”按钮即可生效。");
+                    displayMessage("system", "✅ 指令及附件已静默注入底层！\n切回 HelloTalk 再次点击\"译\"按钮即可生效。");
                     messageScrollView.post(() -> messageScrollView.fullScroll(View.FOCUS_DOWN));
                 });
             } catch (Exception e) {
