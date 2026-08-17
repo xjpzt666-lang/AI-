@@ -986,7 +986,11 @@ public class ChatHook {
                                 }
                                 return;
                             }
+// ★ v5.12：先剥掉结尾的翻转标记（任意个🌐🔄🌀），防止失败循环滚雪球
+text = AITranslator.stripAllFlipMarks(text);
+if (text == null || text.isEmpty()) return;
 
+String[] cached = AITranslator.getCached(mid);
                             String[] cached = AITranslator.getCached(mid);
                             if (cached == null) cached = AITranslator.getCachedByForeign(text);
                             if (cached != null) {
@@ -997,8 +1001,12 @@ public class ChatHook {
                             }
 
                             String transKey = chatId + "_" + mid;
-                            if (!translating.add(transKey)) return;
-
+// ★ v5.12：已经失败过的就不再自动重试，只留一个🌐给手动点
+if (AITranslator.translateFailedKeys.contains(transKey)) {
+    try { XposedHelpers.callMethod(bean, "setText", text + " 🌐"); } catch (Exception ignored) {}
+    return;
+}
+if (!translating.add(transKey)) return;
                             final String ft = text, fm = mid, fk = transKey;
                             final Object fb = bean;
 
@@ -1026,8 +1034,11 @@ public class ChatHook {
                                     translating.remove(fk);
                                 }
                                 if (!ok) {
-                                    try { XposedHelpers.callMethod(fb, "setText", ft + " 🌐"); } catch (Exception ignored) {}
-                                }
+ if (!ok) {
+    // ★ v5.12：记住失败，下次不再循环重试
+    AITranslator.translateFailedKeys.add(fk);
+    try { XposedHelpers.callMethod(fb, "setText", ft + " 🌐"); } catch (Exception ignored) {}
+}
                             }).start();
                         } catch (Throwable ignored) {}
                     }
