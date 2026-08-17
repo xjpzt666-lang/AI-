@@ -990,7 +990,7 @@ public class ChatHook {
 text = AITranslator.stripAllFlipMarks(text);
 if (text == null || text.isEmpty()) return;
 
-String[] cached = AITranslator.getCached(mid);
+
                             String[] cached = AITranslator.getCached(mid);
                             if (cached == null) cached = AITranslator.getCachedByForeign(text);
                             if (cached != null) {
@@ -1034,7 +1034,6 @@ if (!translating.add(transKey)) return;
                                     translating.remove(fk);
                                 }
                                 if (!ok) {
- if (!ok) {
     // ★ v5.12：记住失败，下次不再循环重试
     AITranslator.translateFailedKeys.add(fk);
     try { XposedHelpers.callMethod(fb, "setText", ft + " 🌐"); } catch (Exception ignored) {}
