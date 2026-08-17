@@ -77,6 +77,8 @@ public class ChatHook {
     private static volatile String selectedReplySenderName = null;
     private static volatile String selectedReplyChatId = null;
     private static volatile ClassLoader hostClassLoader = null;
+private static volatile String pendingSendQuote = null;
+private static volatile String pendingSendChatId = null;
 private static final long SELECTED_REPLY_FALLBACK_WINDOW_MS = 120000L;
     private static final java.util.Map<View, String[]> viewFlipMap =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<View, String[]>());
@@ -182,6 +184,7 @@ private static final long SELECTED_REPLY_FALLBACK_WINDOW_MS = 120000L;
         try { hookStartChat(cl); } catch (Throwable ignored) {}
         try { hookRecv(cl); } catch (Throwable ignored) {}
         try { hookOutgoingSetMsg(cl); } catch (Throwable ignored) {}
+        try { hookSendMessage(cl); } catch (Throwable ignored) {}
         try { hookLang(cl); } catch (Throwable ignored) {}
         try { hookBtnOld(cl); } catch (Throwable ignored) {}
         try { hookBtnNew(cl); } catch (Throwable ignored) {}
@@ -753,7 +756,7 @@ if (myDraftZh != null && !myDraftZh.equals(s)) {
                                                     TextView textView = (TextView) tv;
                                                     String cur = textView.getText().toString();
                                                     if (cur.equals(foreignText)
-                                                            || cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
+        || cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
                                                         textView.setText(translated.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
                                                     }
                                                 }
@@ -1202,6 +1205,76 @@ if (myDraftZh != null && !myDraftZh.equals(s)) {
         } catch (Throwable ignored) {}
     }
 
+private static void hookSendMessage(ClassLoader cl) {
+    try {
+        Class<?> vm = XposedHelpers.findClass(
+                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
+                cl
+        );
+
+        Class<?> messageClass = XposedHelpers.findClass(
+                "com.hellotalk.lib.im.entity.HTIMMessage",
+                cl
+        );
+
+        XposedHelpers.findAndHookMethod(
+                vm,
+                "sendMessage",
+                String.class,
+                Object.class,
+                org.json.JSONArray.class,
+                messageClass,
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) {
+                        try {
+                            if (p.args == null || p.args.length < 4) return;
+
+                            Object replyInfo = p.args[3];
+                            if (replyInfo == null) return;
+
+                            String quote = extractSelectedReplyText(replyInfo);
+                            if (quote == null || quote.trim().isEmpty()) return;
+
+                            pendingSendQuote = quote.trim();
+                            pendingSendChatId = currentChatId;
+
+                            log("捕获发送引用: " + pendingSendQuote);
+                        } catch (Throwable t) {
+                            log("sendMessage引用捕获失败: " + t.getMessage());
+                        }
+                    }
+                }
+        );
+    } catch (Throwable t) {
+        log("hookSendMessage失败: " + t.getMessage());
+    }
+}
+
+private static String extractSelectedReplyText(Object replyInfo) {
+    if (replyInfo == null) return null;
+
+    try {
+        Object typeObj = invokeQuiet(mGetMsgType, replyInfo);
+        String type = typeObj == null ? "" : String.valueOf(typeObj);
+
+        if ("text".equals(type) || "translate".equals(type)) {
+            String text = extractMessageTextByType(replyInfo, type);
+            if (text != null && !text.trim().isEmpty()) {
+                return text.trim();
+            }
+        }
+
+        if (type != null && !type.isEmpty()) {
+            return describeNonTextMessage(
+                    type,
+                    Boolean.TRUE.equals(invokeQuiet(mIsSender, replyInfo))
+            );
+        }
+    } catch (Throwable ignored) {}
+
+    return null;
+}
     private static void recordOutgoingIfNeeded(Object msg, Object bean) {
     try {
         if (msg == null || bean == null) return;
@@ -1256,7 +1329,17 @@ if (myDraftZh != null && !myDraftZh.equals(s)) {
         final String fm = mid;
         final String ft = text;
         final long fst = st;
-        final String fq = extractQuoteForHistory(msg, chatId, true);
+        String capturedQuote = null;
+
+if (pendingSendChatId != null && pendingSendChatId.equals(chatId)) {
+    capturedQuote = pendingSendQuote;
+    pendingSendQuote = null;
+    pendingSendChatId = null;
+}
+
+final String fq = capturedQuote != null
+        ? capturedQuote
+        : extractQuoteForHistory(msg, chatId, true);
 
         boolean isNew = recordedMsgIds.add(fc + "_" + fm);
         if (isNew && !shouldSkipHistory(text)) {
