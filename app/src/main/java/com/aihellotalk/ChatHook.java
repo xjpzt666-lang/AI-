@@ -598,7 +598,7 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    // ★ v5.13：渲染时自动翻译未标记的外语，无需滚动刷新
+    // ★ v5.13：渲染时自动翻译未标记的外语，无需滚动刷新 (已彻底清理产生Unreachable Statement的死代码)
     private static void hookTextViewRender(ClassLoader cl) {
         if (htTextViewClass == null) return;
         XC_MethodHook renderLogic = new XC_MethodHook() {
@@ -611,6 +611,7 @@ public class ChatHook {
                     if (cs == null) return;
                     String s = cs.toString();
                     if (s.isEmpty() || s.length() > 5000) return;
+                    
                     if (s.endsWith(" 🌐")) {
                         String clean = s.substring(0, s.length() - 2).trim();
                         boolean mine = AITranslator.getMyDraftFuzzy(clean) != null;
@@ -626,74 +627,13 @@ public class ChatHook {
                         }
                         return;
                     }
+                    
                     if (s.endsWith(" 🔄")) {
                         String clean = s.substring(0, s.length() - 2).trim();
                         String orig = AITranslator.chineseToForeign.get(clean);
                         if (orig == null) orig = AITranslator.getForeignByChineseSmart(clean);
                         if (orig != null) rememberViewFlip((View) param.thisObject, orig, clean);
                         return;
-                    }
-                    
-                    return;
-
-                    String myDraftZh = AITranslator.getMyDraftFuzzy(s);
-                    if (myDraftZh != null && !myDraftZh.equals(s)) {
-                        rememberViewFlip((View) param.thisObject, s, myDraftZh);
-                        SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
-                        ssb.append(" 🌐");
-                        param.args[0] = ssb;
-                        return;
-                    }
-
-                    // ★ v5.13：未翻译的外语，直接在这里翻译并刷新TextView（不用等滚动）
-                    if (!s.endsWith(" 🌐") && !s.endsWith(" 🔄")
-                            && !AITranslator.isChineseOnly(s)
-                            && !AITranslator.containsJapanese(s)
-                            && AITranslator.needTranslateToChinese(s)) {
-                        String[] cached = AITranslator.getCachedByForeign(s);
-                        if (cached != null && cached[1] != null && AITranslator.isChineseOnly(cached[1])) {
-                            String translated = cached[1].replaceAll("[\\s🌐🔄]+$", "");
-                            param.args[0] = translated + " 🔄";
-                            rememberViewFlip((View) param.thisObject, s, cached[1]);
-                            return;
-                        }
-                        final View tv = (View) param.thisObject;
-                        final String foreignText = s;
-                        final String chatId = currentChatId;
-                        String transKey = "render_" + foreignText.hashCode();
-                        if (AITranslator.renderTranslating.add(transKey)) {
-                            new Thread(() -> {
-                                try {
-                                    String translated = AITranslator.toChinese(foreignText, chatId);
-                                    if (translated != null && !translated.isEmpty()
-                                            && !translated.equals(foreignText)
-                                            && AITranslator.isChineseOnly(translated)) {
-                                        AITranslator.cacheResult("auto_" + foreignText.hashCode(), foreignText, translated);
-                                        tv.post(() -> {
-                                            if (tv instanceof TextView) {
-                                                TextView textView = (TextView) tv;
-                                                String cur = textView.getText().toString();
-                                                if (cur.equals(foreignText)
-                                                        || cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
-                                                    textView.setText(translated.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
-                                                }
-                                            }
-                                        });
-                                    }
-                                } catch (Exception ignored) {
-                                } finally {
-                                    AITranslator.renderTranslating.remove(transKey);
-                                }
-                            }).start();
-                        }
-                        return;
-                    }
-                    String d = AITranslator.getMyDraftFuzzy(s);
-                    if (d != null && !d.equals(s)) {
-                        rememberViewFlip((View) param.thisObject, s, d);
-                        SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
-                        ssb.append(" 🌐");
-                        param.args[0] = ssb;
                     }
                 } catch (Throwable ignored) {}
             }
@@ -712,6 +652,7 @@ public class ChatHook {
                         int len = (int) param.args[2];
                         if (chars == null || len <= 0 || len > 5000) return;
                         String s = new String(chars, start, len);
+                        
                         if (s.endsWith(" 🌐")) {
                             String clean = s.substring(0, s.length() - 2).trim();
                             boolean mine = AITranslator.getMyDraftFuzzy(clean) != null;
@@ -727,78 +668,13 @@ public class ChatHook {
                             }
                             return;
                         }
+                        
                         if (s.endsWith(" 🔄")) {
                             String clean = s.substring(0, s.length() - 2).trim();
                             String orig = AITranslator.chineseToForeign.get(clean);
                             if (orig == null) orig = AITranslator.getForeignByChineseSmart(clean);
                             if (orig != null) rememberViewFlip((View) param.thisObject, orig, clean);
                             return;
-                        }
-
-                        return;
-
-                        String myDraftZh = AITranslator.getMyDraftFuzzy(s);
-                        if (myDraftZh != null && !myDraftZh.equals(s)) {
-                            rememberViewFlip((View) param.thisObject, s, myDraftZh);
-                            String ns = s + " 🌐";
-                            param.args[0] = ns.toCharArray();
-                            param.args[1] = 0;
-                            param.args[2] = ns.length();
-                            return;
-                        }
-
-                        // ★ v5.13：char[] 路径同样自动翻译，不用等滚动
-                        if (!s.endsWith(" 🌐") && !s.endsWith(" 🔄")
-                                && !AITranslator.isChineseOnly(s)
-                                && !AITranslator.containsJapanese(s)
-                                && AITranslator.needTranslateToChinese(s)) {
-                            String[] cached = AITranslator.getCachedByForeign(s);
-                            if (cached != null && cached[1] != null && AITranslator.isChineseOnly(cached[1])) {
-                                String translated = cached[1].replaceAll("[\\s🌐🔄]+$", "");
-                                param.args[0] = (translated + " 🔄").toCharArray();
-                                param.args[1] = 0;
-                                param.args[2] = (translated + " 🔄").length();
-                                rememberViewFlip((View) param.thisObject, s, cached[1]);
-                                return;
-                            }
-                            final View tv = (View) param.thisObject;
-                            final String foreignText = s;
-                            final String chatId = currentChatId;
-                            String transKey = "render_" + foreignText.hashCode();
-                            if (AITranslator.renderTranslating.add(transKey)) {
-                                new Thread(() -> {
-                                    try {
-                                        String translated = AITranslator.toChinese(foreignText, chatId);
-                                        if (translated != null && !translated.isEmpty()
-                                                && !translated.equals(foreignText)
-                                                && AITranslator.isChineseOnly(translated)) {
-                                            AITranslator.cacheResult("auto_" + foreignText.hashCode(), foreignText, translated);
-                                            tv.post(() -> {
-                                                if (tv instanceof TextView) {
-                                                    TextView textView = (TextView) tv;
-                                                    String cur = textView.getText().toString();
-                                                    if (cur.equals(foreignText)
-                                                            || cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
-                                                        textView.setText(translated.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    } catch (Exception ignored) {
-                                    } finally {
-                                        AITranslator.renderTranslating.remove(transKey);
-                                    }
-                                }).start();
-                            }
-                            return;
-                        }
-                        String d = AITranslator.getMyDraftFuzzy(s);
-                        if (d != null && !d.equals(s)) {
-                            rememberViewFlip((View) param.thisObject, s, d);
-                            String ns = s + " 🌐";
-                            param.args[0] = ns.toCharArray();
-                            param.args[1] = 0;
-                            param.args[2] = ns.length();
                         }
                     } catch (Throwable ignored) {}
                 }
