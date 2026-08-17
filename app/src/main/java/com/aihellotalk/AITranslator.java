@@ -917,8 +917,13 @@ public class AITranslator {
 }
 
 private static String callChatMessages(JSONArray messages, int maxTokens) throws IOException {
-    if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
-    if (client == null) throw new IOException("未初始化");
+    if (apiKey == null || apiKey.isEmpty()) {
+        throw new IOException("Key未配置");
+    }
+    if (client == null) {
+        throw new IOException("未初始化");
+    }
+
     try {
         JSONObject body = new JSONObject();
         body.put("model", model);
@@ -929,7 +934,7 @@ private static String callChatMessages(JSONArray messages, int maxTokens) throws
     } catch (JSONException e) {
         throw new IOException("构建失败");
     }
-} if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置"); if (client == null) throw new IOException("未初始化"); try { JSONObject body = new JSONObject(); body.put("model", model); body.put("max_tokens", 8000); body.put("temperature", getTemperature()); body.put("messages", messages); return executeRequest(body); } catch (JSONException e) { throw new IOException("构建失败"); } }
+}
     private static String callChatMessagesWith(OkHttpClient useClient, JSONArray messages) throws IOException { if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置"); if (useClient == null) throw new IOException("未初始化"); try { JSONObject body = new JSONObject(); body.put("model", model); body.put("max_tokens", 8000); body.put("temperature", getTemperature()); body.put("messages", messages); return executeRequestWith(useClient, body); } catch (JSONException e) { throw new IOException("构建失败"); } }
 
     private static String executeRequest(JSONObject body) throws IOException { return executeRequestWith(client, body); }
