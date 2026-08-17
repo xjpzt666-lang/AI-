@@ -901,8 +901,11 @@ public class MainActivity extends Activity {
                 try {
                     if (jsonStr != null && !jsonStr.trim().isEmpty()) {
                         JSONArray history = new JSONArray(jsonStr);
-                        for (int i = 0; i < history.length(); i++) {
-                            JSONObject obj = history.getJSONObject(i);
+                        // ★ v5.10：显示前按时间戳排序——越早的消息越靠上，越近的越靠下，不再受检测先后影响
+                        java.util.List<JSONObject> tmpList = new java.util.ArrayList<>();
+                        for (int i = 0; i < history.length(); i++) tmpList.add(history.getJSONObject(i));
+                        java.util.Collections.sort(tmpList, (x, y) -> Long.compare(x.optLong("timestamp", 0), y.optLong("timestamp", 0)));
+                        for (JSONObject obj : tmpList) {
                             String role = obj.optString("role", "");
                             String content = obj.optString("content", "");
 
@@ -962,6 +965,7 @@ public class MainActivity extends Activity {
                 JSONObject entry = new JSONObject();
                 entry.put("role", "system");
                 entry.put("content", contentToInject);
+                entry.put("timestamp", System.currentTimeMillis()); // ★ v5.10：排序需要时间，否则注入的指令会被排到最顶上
                 history.put(entry);
 
                 File tempFile = new File(getCacheDir(), "htai_temp.json");
