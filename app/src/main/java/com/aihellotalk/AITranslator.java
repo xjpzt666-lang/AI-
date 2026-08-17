@@ -926,7 +926,25 @@ public class AITranslator {
     public static List<String> fetchModels(String key, String baseUrl) throws IOException { List<String> result = new ArrayList<>(); String url = baseUrl; if (url.endsWith("/chat/completions")) url = url.substring(0, url.length() - "/chat/completions".length()); int idx = url.indexOf("/v1"); if (idx >= 0) url = url.substring(0, idx); if (!url.endsWith("/")) url += "/"; url += "v1/models"; initForFetch(key, url); Request req = new Request.Builder().url(url).header("Authorization", "Bearer " + key).get().build(); try (Response resp = client.newCall(req).execute()) { if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code()); JSONArray data = new JSONObject(resp.body().string()).getJSONArray("data"); for (int i = 0; i < data.length(); i++) result.add(data.getJSONObject(i).getString("id")); } catch (JSONException e) { throw new IOException("解析失败"); } return result; }
 
     private static void loadCache() { if (cacheFile == null || !cacheFile.exists()) return; try (BufferedReader r = new BufferedReader(new FileReader(cacheFile))) { String line; while ((line = r.readLine()) != null) { String[] parts = line.split("\\|\\|\\|"); if (parts.length >= 3) { String foreign = stripFlipMarks(parts[1]).replace("\\n", "\n"); String chinese = stripFlipMarks(parts[2]).replace("\\n", "\n"); cache.put(parts[0], new String[]{foreign, chinese}); foreignToChinese.put(foreign, chinese); chineseToForeign.put(chinese, foreign); } } } catch (Exception ignored) {} }
-    public static void saveCache() { try { if (cacheFile == null) return; cacheFile.getParentFile().mkdirs(); try (BufferedWriter w = new BufferedWriter(new FileWriter(cacheFile))) { for (Map.Entry<String, String[]> e : cache.entrySet()) { w.write(e.getKey() + "|||" + stripFlipMarks(e.getValue()[0]).replace("\n", "\\n") + "|||" + stripFlipMarks(e.getValue()[1]).replace("\n", "\\n")); w.newLine(); } } } catch (Exception ignored) {} }
+    // ★ v5.11：原子写——先写临时文件再改名，防止 HelloTalk 进程被杀时把缓存文件写坏，
+//   导致重启后"中文→原文"映射丢失、点🔄提示找不到原文。
+public static void saveCache() {
+    try {
+        if (cacheFile == null) return;
+        cacheFile.getParentFile().mkdirs();
+        File tmp = new File(cacheFile.getParentFile(), cacheFile.getName() + ".tmp");
+        try (BufferedWriter w = new BufferedWriter(new FileWriter(tmp))) {
+            for (Map.Entry<String, String[]> e : cache.entrySet()) {
+                w.write(e.getKey() + "|||" + stripFlipMarks(e.getValue()[0]).replace("\n", "\\n") + "|||" + stripFlipMarks(e.getValue()[1]).replace("\n", "\\n"));
+                w.newLine();
+            }
+        }
+        if (!tmp.renameTo(cacheFile)) {
+            cacheFile.delete();
+            tmp.renameTo(cacheFile);
+        }
+    } catch (Exception ignored) {}
+}
     public static String[] getCached(String key) { return cache.get(key); }
     public static String[] getCachedByForeign(String foreign) { if (foreign == null || foreign.trim().isEmpty()) return null; String clean = stripFlipMarks(foreign); if (clean == null) return null; for (Map.Entry<String, String[]> e : cache.entrySet()) { String[] v = e.getValue(); if (v != null && v.length >= 2 && clean.equals(stripFlipMarks(v[0]))) return v; } return null; }
     public static void replaceCacheByForeign(String foreign, String chinese) { String clean = stripFlipMarks(foreign); if (clean == null || clean.isEmpty()) return; Iterator<Map.Entry<String, String[]>> it = cache.entrySet().iterator(); while (it.hasNext()) { Map.Entry<String, String[]> e = it.next(); String[] v = e.getValue(); if (v != null && v.length >= 2 && clean.equals(stripFlipMarks(v[0]))) it.remove(); } cacheResult("retrans_" + clean.hashCode(), clean, chinese); }
