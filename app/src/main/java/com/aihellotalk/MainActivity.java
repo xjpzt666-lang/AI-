@@ -372,6 +372,7 @@ public class MainActivity extends Activity {
         Toast.makeText(this, "正在恢复主账号记忆...", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             runRoot("mkdir -p " + MAIN_FILES_DIR);
+            fixHtaiDirOwner(MAIN_FILES_DIR); // ★ v5.9
             runRoot("cp " + STORE_DIR + "/htai_* " + MAIN_FILES_DIR + "/ 2>/dev/null");
             runRoot("chmod 666 " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
             runRoot("chown $(stat -c %u:%g " + MAIN_FILES_DIR + ") " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
@@ -388,6 +389,7 @@ public class MainActivity extends Activity {
     private void claimTemp() {
         new Thread(() -> {
             runRoot("mkdir -p " + TEMP_FILES_DIR);
+            fixHtaiDirOwner(TEMP_FILES_DIR); // ★ v5.9
             runRoot("echo temp > " + MARKER_FILE + " && chmod 644 " + MARKER_FILE);
             runOnUiThread(() -> {
                 updateMemStatus("temp");
@@ -464,6 +466,7 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             runRoot("rm -rf " + TEMP_FILES_DIR + " 2>/dev/null");
             runRoot("mkdir -p " + TEMP_FILES_DIR);
+            fixHtaiDirOwner(TEMP_FILES_DIR); // ★ v5.9：关键修复，目录是root重建的，属主必须还给HelloTalk
             runOnUiThread(() -> {
                 refreshDrawerList();
                 Toast.makeText(MainActivity.this, "🗑 一次性记忆已清空", Toast.LENGTH_LONG).show();
@@ -521,6 +524,7 @@ public class MainActivity extends Activity {
             }
 
             runRoot("mkdir -p " + TEMP_FILES_DIR);
+            fixHtaiDirOwner(TEMP_FILES_DIR); // ★ v5.9
             runRoot("echo temp > " + MARKER_FILE + " && chmod 644 " + MARKER_FILE);
             runRoot("am force-stop com.hellotalk");
             runOnUiThread(() -> {
@@ -539,6 +543,7 @@ public class MainActivity extends Activity {
 
             if (!sandboxHas) {
                 runRoot("mkdir -p " + MAIN_FILES_DIR);
+                fixHtaiDirOwner(MAIN_FILES_DIR); // ★ v5.9
                 runRoot("cp " + STORE_DIR + "/htai_* " + MAIN_FILES_DIR + "/ 2>/dev/null");
                 runRoot("chmod 666 " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
                 runRoot("chown $(stat -c %u:%g " + MAIN_FILES_DIR + ") " + MAIN_FILES_DIR + "/htai_* 2>/dev/null");
@@ -561,9 +566,12 @@ public class MainActivity extends Activity {
             String mainBox = runRoot("ls -la " + MAIN_FILES_DIR + "/ 2>/dev/null | grep htai");
             String tempBox = runRoot("ls -la " + TEMP_FILES_DIR + "/ 2>/dev/null | grep htai");
             String store = runRoot("ls -la " + STORE_DIR + "/ 2>/dev/null | grep htai");
+            // ★ v5.9：诊断里顺便显示目录属主，属主是 root 就说明写不进文件
+            String tempOwner = runRoot("ls -ld " + TEMP_FILES_DIR + " 2>/dev/null");
 
             StringBuilder sb = new StringBuilder();
             sb.append("【模式标记】\n").append(marker == null ? "读取失败" : marker.trim())
+              .append("\n\n【一次性沙盒目录属主】\n").append(tempOwner == null ? "读取失败" : tempOwner.trim())
               .append("\n\n【主账号沙箱】\n").append(mainBox == null ? "读取失败" : mainBox.trim())
               .append("\n\n【一次性沙箱】\n").append(tempBox == null ? "读取失败" : tempBox.trim())
               .append("\n\n【保险箱】\n").append(store == null ? "读取失败" : store.trim());
@@ -758,6 +766,15 @@ public class MainActivity extends Activity {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // ★ v5.9：凡是用 root 在 HelloTalk 数据目录里创建/重建的目录，
+    //   必须把属主改回 HelloTalk 应用自己的 uid，否则 HelloTalk 进程无法在里面写文件，
+    //   导致翻译缓存、好友列表、聊天记录全部静默保存失败。
+    private void fixHtaiDirOwner(String dir) {
+        runRoot("OWN=$(stat -c %u:%g /data/data/com.hellotalk 2>/dev/null); "
+                + "if [ -n \"$OWN\" ]; then chown $OWN " + dir + " 2>/dev/null; fi; "
+                + "chmod 755 " + dir + " 2>/dev/null");
     }
 
     private void deleteHTChatRoot(ChatSession s) {
