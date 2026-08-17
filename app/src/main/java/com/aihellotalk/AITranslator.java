@@ -902,7 +902,7 @@ public class AITranslator {
             int maxChatMessages = 60; int startIdx = Math.max(0, fullHistory.length() - maxChatMessages); int visibleIndex = 0;
             for (int i = startIdx; i < fullHistory.length(); i++) { JSONObject msg = fullHistory.getJSONObject(i); String role = msg.optString("role", ""); String content = msg.optString("content", ""); String prefix = msg.optBoolean("oneTime", false) ? "[一次性上下文] " : ""; visibleIndex++; if ("user".equals(role)) { scriptBuilder.append("[").append(visibleIndex).append("] ").append(prefix).append(scriptLine("对方", content, "中文意思")); } else if ("assistant".equals(role)) { scriptBuilder.append("[").append(visibleIndex).append("] ").append(prefix).append(scriptLine("我", content, "中文原意")); } }
             scriptBuilder.append("\n<translate>\n").append(text).append("\n</translate>"); messages.put(createMessageObj("user", scriptBuilder.toString()));
-            try { return callChatMessages(messages, 3600); } catch (IOException e) { if (e.getMessage() != null && e.getMessage().contains("400")) return fallbackToPureTextRequest(messages); else throw e; }
+            try { return callChatMessages(messages); } catch (IOException e) { if (e.getMessage() != null && e.getMessage().contains("400")) return fallbackToPureTextRequest(messages); else throw e; }
         } catch (JSONException e) { throw new IOException("构建Messages失败"); }
     }
 
@@ -912,11 +912,7 @@ public class AITranslator {
     private static String fallbackToPureTextRequest(JSONArray originalMessages) throws IOException { try { JSONArray cleanMessages = new JSONArray(); for (int i = 0; i < originalMessages.length(); i++) { JSONObject msg = originalMessages.getJSONObject(i); String role = msg.getString("role"); Object contentObj = msg.get("content"); JSONObject cleanMsg = new JSONObject(); cleanMsg.put("role", role); if (contentObj instanceof JSONArray) { JSONArray arr = (JSONArray) contentObj; StringBuilder textSb = new StringBuilder(); for (int j = 0; j < arr.length(); j++) { JSONObject item = arr.getJSONObject(j); if ("text".equals(item.optString("type"))) textSb.append(item.optString("text")).append("\n"); } cleanMsg.put("content", textSb.toString().replaceAll("\\n{3,}", "\n\n").trim()); } else { cleanMsg.put("content", contentObj.toString()); } cleanMessages.put(cleanMsg); } return callChatMessages(cleanMessages); } catch (JSONException e) { throw new IOException("降级解析失败"); } }
 
     private static String callChatSimple(String prompt) throws IOException { if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置"); if (client == null) throw new IOException("未初始化"); try { JSONObject body = new JSONObject(); body.put("model", model); body.put("max_tokens", 8000); body.put("temperature", getTemperature()); JSONArray msgs = new JSONArray(); JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt); msgs.put(m); body.put("messages", msgs); return executeRequest(body); } catch (JSONException e) { throw new IOException("构建失败"); } }
-    private static String callChatMessages(JSONArray messages) throws IOException {
-    return callChatMessages(messages, 8000);
-}
-
-private static String callChatMessages(JSONArray messages, int maxTokens) throws IOException {
+private static String callChatMessages(JSONArray messages) throws IOException {
     if (apiKey == null || apiKey.isEmpty()) {
         throw new IOException("Key未配置");
     }
@@ -927,7 +923,7 @@ private static String callChatMessages(JSONArray messages, int maxTokens) throws
     try {
         JSONObject body = new JSONObject();
         body.put("model", model);
-        body.put("max_tokens", maxTokens);
+        body.put("max_tokens", 8000);
         body.put("temperature", getTemperature());
         body.put("messages", messages);
         return executeRequest(body);
