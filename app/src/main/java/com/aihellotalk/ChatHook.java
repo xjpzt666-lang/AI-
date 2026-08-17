@@ -77,7 +77,7 @@ public class ChatHook {
     private static volatile String selectedReplySenderName = null;
     private static volatile String selectedReplyChatId = null;
     private static volatile ClassLoader hostClassLoader = null;
-
+private static final long SELECTED_REPLY_FALLBACK_WINDOW_MS = 120000L;
     private static final java.util.Map<View, String[]> viewFlipMap =
             java.util.Collections.synchronizedMap(new java.util.WeakHashMap<View, String[]>());
 
@@ -212,6 +212,49 @@ public class ChatHook {
         if (AITranslator.isNoHistoryText(t)) return true;
         return isPureBracketQuery(t);
     }
+    
+    private static String extractQuoteForHistory(Object msg, String chatId, boolean isMine) {
+    try {
+        Object ri = invokeQuiet(mGetReplyInfo, msg);
+        if (ri != null) {
+            Object rIs = invokeQuiet(mIsSender, ri);
+            boolean replyIsMine = (rIs instanceof Boolean) && ((Boolean) rIs);
+
+            Object rmt = invokeQuiet(mGetMsgType, ri);
+            String rmtS = (rmt != null) ? String.valueOf(rmt) : null;
+
+            if ("text".equals(rmtS) || "translate".equals(rmtS)) {
+                String rq = extractMessageTextByType(ri, rmtS);
+                if (rq != null && !rq.trim().isEmpty()) {
+                    if (replyIsMine) {
+                        String mc = AITranslator.getChineseByForeign(rq);
+                        if (mc == null) mc = AITranslator.getDraftFuzzy(rq);
+                        if (mc != null && !mc.trim().isEmpty()) return mc.trim();
+                    }
+                    return rq.trim();
+                }
+            }
+
+            if (rmtS != null && !rmtS.isEmpty()) {
+                return "[" + rmtS + "]";
+            }
+        }
+
+        if (isMine
+                && chatId != null
+                && selectedReplyValid
+                && selectedReplyChatId != null
+                && selectedReplyChatId.equals(chatId)
+                && selectedReplyText != null
+                && !selectedReplyText.trim().isEmpty()
+                && selectedReplySendTime > 0
+                && System.currentTimeMillis() - selectedReplySendTime <= SELECTED_REPLY_FALLBACK_WINDOW_MS) {
+            return selectedReplyText.trim();
+        }
+    } catch (Throwable ignored) {}
+
+    return null;
+}
 
     private static String safeCallString(Object obj, String methodName) {
         if (obj == null) return null;
@@ -386,7 +429,7 @@ public class ChatHook {
                                 currentQuotedImagePath = lp;
                                 currentQuotedImageMissing = false;
                             } else if ("image".equals(selectedReplyMsgType)
-                                    || "photo".equals(selectedReplyMsgType)) {
+        || "photo".equals(selectedReplyMsgType)) {
                                 currentQuotedImagePath = null;
                                 currentQuotedImageMissing = true;
                             }
@@ -571,6 +614,15 @@ public class ChatHook {
                         if (orig != null) rememberViewFlip((View) param.thisObject, orig, clean);
                         return;
                     }
+                    
+                    String myDraftZh = AITranslator.getMyDraftFuzzy(s);
+if (myDraftZh != null && !myDraftZh.equals(s)) {
+    rememberViewFlip((View) param.thisObject, s, myDraftZh);
+    SpannableStringBuilder ssb = new SpannableStringBuilder(cs);
+    ssb.append(" 🌐");
+    param.args[0] = ssb;
+    return;
+}
                     // ★ v5.13：未翻译的外语，直接在这里翻译并刷新TextView（不用等滚动）
                     if (!s.endsWith(" 🌐") && !s.endsWith(" 🔄")
                             && !AITranslator.isChineseOnly(s)
@@ -600,7 +652,7 @@ public class ChatHook {
                                                 TextView textView = (TextView) tv;
                                                 String cur = textView.getText().toString();
                                                 if (cur.equals(foreignText)
-                                                        || cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
+        || cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
                                                     textView.setText(translated.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
                                                 }
                                             }
@@ -660,6 +712,16 @@ public class ChatHook {
                             if (orig != null) rememberViewFlip((View) param.thisObject, orig, clean);
                             return;
                         }
+                        
+                        String myDraftZh = AITranslator.getMyDraftFuzzy(s);
+if (myDraftZh != null && !myDraftZh.equals(s)) {
+    rememberViewFlip((View) param.thisObject, s, myDraftZh);
+    String ns = s + " 🌐";
+    param.args[0] = ns.toCharArray();
+    param.args[1] = 0;
+    param.args[2] = ns.length();
+    return;
+}
                         // ★ v5.13：char[] 路径同样自动翻译，不用等滚动
                         if (!s.endsWith(" 🌐") && !s.endsWith(" 🔄")
                                 && !AITranslator.isChineseOnly(s)
@@ -1141,50 +1203,69 @@ public class ChatHook {
     }
 
     private static void recordOutgoingIfNeeded(Object msg, Object bean) {
-        try {
-            if (msg == null || bean == null) return;
-            ensureMsgMethods(msg);
-            Object iso = invokeQuiet(mIsSender, msg);
-            if (!(iso instanceof Boolean) || !((Boolean) iso)) return;
-            Object cidO = invokeQuiet(mGetChatId, msg);
-            String chatId = (cidO != null) ? String.valueOf(cidO) : null;
-            if (chatId == null || chatId.isEmpty() || "0".equals(chatId) || "null".equals(chatId)) return;
-            Object mto = invokeQuiet(mGetMsgType, msg);
-            String mt = (mto != null) ? String.valueOf(mto) : null;
-            String text = null;
-            if (bean instanceof String) text = (String) bean;
-            else {
-                Method gtm = ensureBeanGetText(bean);
-                Object to = invokeQuiet(gtm, bean);
-                if (to != null) text = String.valueOf(to);
-                if (text == null) text = extractMessageTextByType(msg, mt);
-            }
-            if (text == null || text.trim().isEmpty()) return;
-            text = text.trim();
-            if (text.startsWith("[") || AITranslator.isChineseOnly(text)) return;
-            Object mio = invokeQuiet(mGetMsgId, msg);
-            String mid = (mio != null) ? String.valueOf(mio) : null;
-            if (mid == null || mid.isEmpty()) return;
-            long st = System.currentTimeMillis();
-            Object sto = invokeQuiet(mGetSendTime, msg);
-            if (sto instanceof Long) st = (Long) sto;
-            if (st > 0 && st < 10000000000L) st = st * 1000L;
-            if (st <= 0) {
-                try {
-                    Object ts2 = msg.getClass().getMethod("getSenderTs").invoke(msg);
-                    if (ts2 instanceof Long && (Long) ts2 > 0) {
-                        st = (Long) ts2;
-                        if (st < 10000000000L) st = st * 1000L;
-                    }
-                } catch (Throwable ignored) {}
-            }
-            if (st <= 0) st = System.currentTimeMillis();
-            final String fc = chatId, fm = mid, ft = text;
-            final long fst = st;
-            boolean isNew = recordedMsgIds.add(fc + "_" + fm);
-            if (isNew && !shouldSkipHistory(text)) historyExecutor.execute(() -> AITranslator.appendHistory(fc, fm, "assistant", ft, fst, null, false));
-        } catch (Throwable ignored) {}
-    }
+    try {
+        if (msg == null || bean == null) return;
+        ensureMsgMethods(msg);
+
+        Object iso = invokeQuiet(mIsSender, msg);
+        if (!(iso instanceof Boolean) || !((Boolean) iso)) return;
+
+        Object cidO = invokeQuiet(mGetChatId, msg);
+        String chatId = (cidO != null) ? String.valueOf(cidO) : null;
+        if (chatId == null || chatId.isEmpty() || "0".equals(chatId) || "null".equals(chatId)) return;
+
+        Object mto = invokeQuiet(mGetMsgType, msg);
+        String mt = (mto != null) ? String.valueOf(mto) : null;
+
+        String text = null;
+        if (bean instanceof String) {
+            text = (String) bean;
+        } else {
+            Method gtm = ensureBeanGetText(bean);
+            Object to = invokeQuiet(gtm, bean);
+            if (to != null) text = String.valueOf(to);
+            if (text == null) text = extractMessageTextByType(msg, mt);
+        }
+
+        if (text == null || text.trim().isEmpty()) return;
+        text = text.trim();
+        if (text.startsWith("[") || AITranslator.isChineseOnly(text)) return;
+
+        Object mio = invokeQuiet(mGetMsgId, msg);
+        String mid = (mio != null) ? String.valueOf(mio) : null;
+        if (mid == null || mid.isEmpty()) return;
+
+        long st = System.currentTimeMillis();
+        Object sto = invokeQuiet(mGetSendTime, msg);
+        if (sto instanceof Long) st = (Long) sto;
+        if (st > 0 && st < 10000000000L) st = st * 1000L;
+
+        if (st <= 0) {
+            try {
+                Object ts2 = msg.getClass().getMethod("getSenderTs").invoke(msg);
+                if (ts2 instanceof Long && (Long) ts2 > 0) {
+                    st = (Long) ts2;
+                    if (st < 10000000000L) st = st * 1000L;
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        if (st <= 0) st = System.currentTimeMillis();
+
+        final String fc = chatId;
+        final String fm = mid;
+        final String ft = text;
+        final long fst = st;
+        final String fq = extractQuoteForHistory(msg, chatId, true);
+
+        boolean isNew = recordedMsgIds.add(fc + "_" + fm);
+        if (isNew && !shouldSkipHistory(text)) {
+            historyExecutor.execute(() ->
+                    AITranslator.appendHistory(fc, fm, "assistant", ft, fst, fq, false)
+            );
+        }
+    } catch (Throwable ignored) {}
+}
 
     private static void hookBtnOld(ClassLoader cl) throws Exception {
         Class<?> bc = XposedHelpers.findClass("com.hellotalk.chat.ui.ChatInputBoxView", cl);
