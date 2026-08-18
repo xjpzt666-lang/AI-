@@ -296,7 +296,7 @@ private static String getReasoningEffort() {
             File f = new File(imagePath);
             if (!f.exists() || f.length() <= 0) return;
 
-            String dedupeMark = "[图片记忆:" + f.getName() + "_" + f.lastModified() + "]";
+            String dedupeMark = "[图片识别:" + f.getName() + "_" + f.length() + "]";
             JSONArray hist = loadHistory(chatId);
             for (int i = 0; i < hist.length(); i++) {
                 String c = hist.getJSONObject(i).optString("content", "");
@@ -307,7 +307,7 @@ private static String getReasoningEffort() {
             if (b64 == null || b64.isEmpty()) return;
 
             JSONArray contentArr = new JSONArray();
-            contentArr.put(createTextPart("请用一句不超过60字的中文客观描述这张图片的内容（人物、场景、物体、文字等），只输出描述本身，不要任何前缀和解释。"));
+            contentArr.put(createTextPart("请仔细观察这张图片，用一段中文客观、详细地描述图片中的核心内容、场景、人物动作或物体特征。字数控制在100字左右，直接输出描述，不要前缀。"));
             contentArr.put(createImagePart(b64));
             JSONObject userMsg = new JSONObject();
             userMsg.put("role", "user");
@@ -317,7 +317,7 @@ private static String getReasoningEffort() {
 
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 150);
+            body.put("max_tokens", 200);
             body.put("temperature", 0.2);
             body.put("messages", messages);
 
@@ -325,12 +325,12 @@ private static String getReasoningEffort() {
             if (desc == null) return;
             desc = desc.trim().replaceAll("\\s+", " ").replace("*", "");
             if (desc.isEmpty() || isRefusalResponse(desc)) return;
-            if (desc.length() > 120) desc = desc.substring(0, 120);
+            if (desc.length() > 200) desc = desc.substring(0, 200);
 
             String who = isMineImage ? "我" : "对方";
-            String note = "[" + who + "发送了一张图片]（历史图片存档，仅作背景，非当前话题）" + dedupeMark + " 内容：" + desc;
-            String noteMsgId = "imgnote_" + Math.abs((imagePath + "_" + f.lastModified()).hashCode());
-            long ts = f.lastModified() > 0 ? f.lastModified() : System.currentTimeMillis();
+            String note = "【图片视觉存档】" + who + "发送了一张图片，AI识别内容：" + desc + " " + dedupeMark;
+            String noteMsgId = "imgnote_" + Math.abs((imagePath + "_" + f.length()).hashCode());
+            long ts = System.currentTimeMillis();
             appendHistory(chatId, noteMsgId, isMineImage ? "assistant" : "user", note, ts, null, false);
             Log.i(TAG, "图片记忆已写入: " + dedupeMark);
         } catch (Exception e) {
@@ -891,6 +891,22 @@ private static String getReasoningEffort() {
 
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
+
+            StringBuilder imgMemories = new StringBuilder();
+            int imgCount = 1;
+            for (int i = 0; i < fullHistory.length(); i++) {
+                String c = fullHistory.getJSONObject(i).optString("content", "");
+                if (c != null && (c.contains("【图片视觉存档】") || c.contains("[图片记忆:"))) {
+                    imgMemories.append("第").append(imgCount).append("张图片: ").append(c).append("\n");
+                    imgCount++;
+                }
+            }
+            if (imgMemories.length() > 0) {
+                scriptBuilder.append("【历史图片全局记忆（按发送先后顺序）】\n")
+                             .append("说明：以下是聊天中出现过的所有图片，AI已将其转换为文字存档。如果用户提到以前的图片（如“刚才那只猫”），请参考这里：\n")
+                             .append(imgMemories.toString()).append("\n");
+            }
+
             scriptBuilder.append("【对话上下文】\n");
             int maxChatMessages = getMaxChatMessages();
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
@@ -1598,6 +1614,21 @@ private static String getReasoningEffort() {
 
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
+
+            StringBuilder imgMemories = new StringBuilder();
+            int imgCount = 1;
+            for (int i = 0; i < fullHistory.length(); i++) {
+                String c = fullHistory.getJSONObject(i).optString("content", "");
+                if (c != null && (c.contains("【图片视觉存档】") || c.contains("[图片记忆:"))) {
+                    imgMemories.append("第").append(imgCount).append("张图片: ").append(c).append("\n");
+                    imgCount++;
+                }
+            }
+            if (imgMemories.length() > 0) {
+                scriptBuilder.append("【历史图片全局记忆（按发送先后顺序）】\n")
+                             .append("说明：以下是聊天中出现过的所有图片，AI已将其转换为文字存档。如果用户提到以前的图片（如“刚才那只猫”），请参考这里：\n")
+                             .append(imgMemories.toString()).append("\n");
+            }
 
             int maxChatMessages = getMaxChatMessages();
 
