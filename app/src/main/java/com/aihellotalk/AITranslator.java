@@ -1391,7 +1391,7 @@ public class AITranslator {
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
 
-            int maxChatMessages = 60;
+            int maxChatMessages = 40;
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
 
             int visibleIndex = 0;
@@ -1418,7 +1418,7 @@ public class AITranslator {
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
             try {
-                return callChatMessages(messages);
+                return callChatMessages(messages, 2500);
             } catch (IOException e) {
                 if (e.getMessage() != null && e.getMessage().contains("400")) {
                     return fallbackToPureTextRequest(messages);
@@ -1489,6 +1489,21 @@ public class AITranslator {
             return executeRequest(body);
         } catch (JSONException e) { throw new IOException("构建失败"); }
     }
+    
+    private static String callChatMessages(JSONArray messages, int maxTokens) throws IOException {
+    if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
+    if (client == null) throw new IOException("未初始化");
+    try {
+        JSONObject body = new JSONObject();
+        body.put("model", model);
+        body.put("max_tokens", maxTokens);
+        body.put("temperature", getTemperature());
+        body.put("messages", messages);
+        return executeRequest(body);
+    } catch (JSONException e) {
+        throw new IOException("构建失败");
+    }
+}
 
     private static String executeRequest(JSONObject body) throws IOException { return executeRequestWith(client, body); }
 
