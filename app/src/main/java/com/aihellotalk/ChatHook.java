@@ -887,7 +887,7 @@ if (ts.endsWith(" 🌐") || ts.endsWith(" 🔄")) {
                                     final boolean isMineDraft = (pair != null);
                                     final android.content.Context ctx = tv.getContext();
                                     new Thread(() -> {
-                                        String newZh = null; Exception lastErr = null;
+                                        
 String newZh = null; Exception lastErr = null;
 try { newZh = AITranslator.reverseTranslateMyForeign(needTrans, currentChatId); } catch (Exception e) { lastErr = e; }
                                         final String result = newZh; final Exception err = lastErr;
