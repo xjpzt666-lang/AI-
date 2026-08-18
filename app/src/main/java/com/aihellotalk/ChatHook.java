@@ -624,6 +624,10 @@ public class ChatHook {
 
                 if (s.endsWith(" 🌐")) {
                     String clean = s.substring(0, s.length() - 2).trim();
+                    if (clean.endsWith(" 🌐")) {
+                        param.args[0] = clean;
+                        return;
+                    }
                     String[] c = AITranslator.getCachedByForeign(clean);
                     if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) {
                         rememberViewFlip((View) param.thisObject, clean, c[1]);
@@ -636,6 +640,10 @@ public class ChatHook {
 
                 if (s.endsWith(" 🔄")) {
                     String clean = s.substring(0, s.length() - 2).trim();
+                    if (clean.endsWith(" 🔄")) {
+                        param.args[0] = clean;
+                        return;
+                    }
                     String orig = AITranslator.chineseToForeign.get(clean);
                     if (orig == null) orig = AITranslator.getForeignByChineseSmart(clean);
                     if (orig != null) rememberViewFlip((View) param.thisObject, orig, clean);
@@ -705,6 +713,13 @@ public class ChatHook {
 
                     if (s.endsWith(" 🌐")) {
                         String clean = s.substring(0, s.length() - 2).trim();
+                        if (clean.endsWith(" 🌐")) {
+                            String single = clean.substring(0, clean.length() - 2).trim();
+                            param.args[0] = single.toCharArray();
+                            param.args[1] = 0;
+                            param.args[2] = single.length();
+                            return;
+                        }
                         String[] c = AITranslator.getCachedByForeign(clean);
                         if (c != null && c[1] != null && AITranslator.isChineseOnly(c[1])) {
                             rememberViewFlip((View) param.thisObject, clean, c[1]);
@@ -717,6 +732,13 @@ public class ChatHook {
 
                     if (s.endsWith(" 🔄")) {
                         String clean = s.substring(0, s.length() - 2).trim();
+                        if (clean.endsWith(" 🔄")) {
+                            String single = clean.substring(0, clean.length() - 2).trim();
+                            param.args[0] = single.toCharArray();
+                            param.args[1] = 0;
+                            param.args[2] = single.length();
+                            return;
+                        }
                         String orig = AITranslator.chineseToForeign.get(clean);
                         if (orig == null) orig = AITranslator.getForeignByChineseSmart(clean);
                         if (orig != null) rememberViewFlip((View) param.thisObject, orig, clean);
@@ -785,9 +807,14 @@ public class ChatHook {
                         String ts = t.toString();
                         String label = (cd.getDescription() != null) ? String.valueOf(cd.getDescription().getLabel()) : null;
                         if (label != null && label.startsWith("HT_AI")) return;
-                        String cleaned = ts.replaceAll("[\\s🌐🔄]+$", "").trim();
-if (!cleaned.equals(ts)) {
-    p.args[0] = ClipData.newPlainText("HT_AI", cleaned);
+if (ts.endsWith(" 🌐") || ts.endsWith(" 🔄")) {
+    String cleaned = ts.replaceAll("[\\s🌐🔄]+$", "").trim();
+    String orig = AITranslator.getForeignByChineseSmart(cleaned);
+    if (orig != null && !orig.isEmpty() && !orig.equals(cleaned)) {
+        p.args[0] = ClipData.newPlainText("HT_AI", orig);
+    } else {
+        p.args[0] = ClipData.newPlainText("HT_AI", cleaned);
+    }
     return;
 }
                         if (!ts.endsWith(" 🌐") && !ts.endsWith(" 🔄") && !ts.matches(".*[\\u4e00-\\u9fa5]+.*")) return;
@@ -861,10 +888,8 @@ if (!cleaned.equals(ts)) {
                                     final android.content.Context ctx = tv.getContext();
                                     new Thread(() -> {
                                         String newZh = null; Exception lastErr = null;
+String newZh = null; Exception lastErr = null;
 try { newZh = AITranslator.reverseTranslateMyForeign(needTrans, currentChatId); } catch (Exception e) { lastErr = e; }
-                                        if (newZh == null || newZh.trim().isEmpty() || newZh.equals(needTrans)) {
-                                            try { newZh = AITranslator.reverseTranslateMyForeign(needTrans, currentChatId); lastErr = null; } catch (Exception e) { if (lastErr == null) lastErr = e; }
-                                        }
                                         final String result = newZh; final Exception err = lastErr;
                                         uiHandler.post(() -> {
                                             if (result != null && !result.trim().isEmpty() && !result.equals(needTrans)) {
