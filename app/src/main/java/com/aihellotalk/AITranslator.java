@@ -866,7 +866,7 @@ messages.put(createRawMessage("user", sb.toString()));
         text = text.trim();
         if (text.isEmpty()) return text;
 
-        String cleanText = text.replaceAll("(?i)\$$PURE_BRACKET_MODE\$$\\s*", "").trim();
+        String cleanText = text.replaceAll("(?i)\\[PURE_BRACKET_MODE\\]\\s*", "").trim();
         if (cleanText.isEmpty()) return text;
 
         try {
