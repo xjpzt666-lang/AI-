@@ -530,6 +530,7 @@ public class MainActivity extends Activity {
             String tempStr = prefs.getString("temperature", "0.7");
             String maxChat = prefs.getString("max_chat_messages", "30");
             String maxT = prefs.getString("max_tokens", "8000"); 
+            String banned = prefs.getString("banned_words", "");
             String effort = prefs.getString("reasoning_effort", "default");
 
             String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
@@ -540,6 +541,7 @@ public class MainActivity extends Activity {
                     + "temperature=" + tempStr + "\n"
                     + "max_chat_messages=" + maxChat + "\n"
                     + "max_tokens=" + maxT + "\n"
+                    + "banned_words=" + banned + "\n"
                     + "reasoning_effort=" + effort + "\n"
                     + "EOF\n";
             runRoot(cfg);
