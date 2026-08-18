@@ -528,6 +528,7 @@ public class MainActivity extends Activity {
             String url = prefs.getString("api_url", "https://api.openai.com/v1/chat/completions");
             String mList = prefs.getString("model_list", "");
             String tempStr = prefs.getString("temperature", "0.7");
+            String maxChat = prefs.getString("max_chat_messages", "30");
             String maxT = prefs.getString("max_tokens", "8000"); 
             String effort = prefs.getString("reasoning_effort", "default");
 
@@ -537,6 +538,7 @@ public class MainActivity extends Activity {
                     + "model=" + newModel + "\n"
                     + "model_list=" + mList + "\n"
                     + "temperature=" + tempStr + "\n"
+                    + "max_chat_messages=" + maxChat + "\n"
                     + "max_tokens=" + maxT + "\n"
                     + "reasoning_effort=" + effort + "\n"
                     + "EOF\n";
