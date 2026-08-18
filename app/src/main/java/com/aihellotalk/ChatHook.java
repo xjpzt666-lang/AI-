@@ -1549,8 +1549,6 @@ public class ChatHook {
     }
 
     private static void showPicker(EditText edit, Button btn, String result, String origChinese, String pn, boolean oneTime) {
-
-    private static void showPicker(EditText edit, Button btn, String result, String origChinese, String pn, boolean oneTime) {
         android.content.Context ctx = edit.getContext();
 
         String at = AITranslator.extractAnalysis(result);
