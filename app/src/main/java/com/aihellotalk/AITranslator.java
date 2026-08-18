@@ -102,7 +102,7 @@ public class AITranslator {
 
     private static final Pattern PAREN_TAIL = Pattern.compile("[\uff08(]([^()\uff08\uff09]*)[\uff09)]\\s*$");
     private static final Pattern NUMBER_PREFIX = Pattern.compile(
-            "^(?:\u7248\u672c\\s*\\d*|[Oo]ption\\s*\\d*|\u9009\u9879\\s*\\d*|\\d{1,2}\\s*[.\u3001)\uff09:\uff1a]|[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u2460-\u2473]+\\s*[.\u3001)\uff09:\uff1a]?)\\s*");
+            "^(?:\u7248\u672c\\s*\\d*|[Oo]ption\\s*\\d*|\u9009\u9879\\s*\\d*|\\d{1,2}\\s*[.\u3001)\uff09:\uff1a]|[\u4e00-\u4e8c\u4e09\u56db\u4e94\u516d\u2460-\u2473]+\\s*[.\u3001)\uff09:\uff1a]?)\\s*");
 
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
 
@@ -780,13 +780,26 @@ messages.put(createRawMessage("user", sb.toString()));
         t = t.replace(";", ",").replace("；", ","); t = t.replace("—", "...").replace("–", "...").replace("―", "...").replace("─", "..."); t = t.replaceAll(",[\\s,]*", ", "); t = t.replace(" ,", ","); t = t.replaceAll("\\.{4,}", "..."); t = t.replaceAll("\\s{2,}", " "); return t.trim();
     }
 
+    // ★ 修改：增强 JSON 解析，兼容 markdown 代码块
     private static JSONObject tryParseJsonResult(String result) {
-        if (result == null) return null; String s = result.trim();
-        try { s = s.replaceFirst("^```json\\s*", ""); } catch (Throwable ignored) {}
-        try { s = s.replaceFirst("^```\\s*", ""); } catch (Throwable ignored) {}
-        try { s = s.replaceFirst("```$", ""); } catch (Throwable ignored) {}
-        s = s.trim(); int start = s.indexOf('{'); int end = s.lastIndexOf('}'); if (start < 0 || end <= start) return null;
-        String jsonStr = s.substring(start, end + 1); try { return new JSONObject(jsonStr); } catch (JSONException e) { return null; }
+        if (result == null) return null;
+        String s = result.trim();
+        if (s.isEmpty()) return null;
+
+        // 去掉 markdown 代码块
+        s = s.replaceAll("(?s)^```(?:json)?\\s*", "");
+        s = s.replaceAll("(?s)\\s*```\\s*$", "");
+
+        int start = s.indexOf('{');
+        int end = s.lastIndexOf('}');
+        if (start < 0 || end <= start) return null;
+
+        String jsonStr = s.substring(start, end + 1);
+        try {
+            return new JSONObject(jsonStr);
+        } catch (JSONException e) {
+            return null;
+        }
     }
 
     public static List<String[]> parseTranslateOptions(String result) {
@@ -853,7 +866,7 @@ messages.put(createRawMessage("user", sb.toString()));
         text = text.trim();
         if (text.isEmpty()) return text;
 
-        String cleanText = text.replaceAll("(?i)\\[PURE_BRACKET_MODE\\]\\s*", "").trim();
+        String cleanText = text.replaceAll("(?i)\$$PURE_BRACKET_MODE\$$\\s*", "").trim();
         if (cleanText.isEmpty()) return text;
 
         try {
@@ -913,13 +926,24 @@ messages.put(createRawMessage("user", sb.toString()));
         try {
             JSONArray messages = new JSONArray(); String sysPrompt; switch (langCode) { case "ru": sysPrompt = promptRU; break; case "uk": sysPrompt = promptUK; break; case "ko": sysPrompt = promptKO; break; case "es": sysPrompt = promptES; break; case "ar": sysPrompt = promptAR; break; case "pt": sysPrompt = promptPT; break; case "fr": sysPrompt = promptFR; break; case "de": sysPrompt = promptDE; break; case "it": sysPrompt = promptIT; break; case "tr": sysPrompt = promptTR; break; case "nl": sysPrompt = promptNL; break; case "pl": sysPrompt = promptPL; break; case "kk": sysPrompt = promptKK; break; case "cs": sysPrompt = promptCS; break; default: sysPrompt = promptEN; break; }
             String spanishDirective = ""; if ("es".equals(langCode)) spanishDirective = getSpanishRegionDirective(null, 0, chatId);
-            boolean useCustomPipeFormat = sysPrompt != null && (sysPrompt.contains("==========") || sysPrompt.contains("选项区") || sysPrompt.contains("下半部分"));
-            String formatProtocol = useCustomPipeFormat ? (retry ? "\n\n【输出格式补充】\n请严格遵循你上面收到的【最终输出格式】，不要输出JSON。\n中间必须用 ========== 隔开。\n上半部分分析必须使用中文，并且不少于1200个中文字，目标控制在1800字以内，绝对不要超过2000字。\n下半部分只输出4个选项，每个选项用 | 分隔。\n" : "\n\n【输出格式补充】\n请严格遵循你上面收到的【最终输出格式】，不要输出JSON。\n中间必须用 ========== 隔开。\n上半部分分析必须使用中文，并且不少于1200个中文字，目标控制在1800字以内，绝对不要超过2000字。\n下半部分只输出4个选项，每个选项用 | 分隔。\n") : (retry ? "\n\n【最高优先级输出格式】\n忽略你之前提到的 ========== 和 | 格式。\n必须只输出一个JSON对象，不要输出任何额外文字。\nJSON格式如下：\n{\"analysis\":\"\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n必须输出4个选项。\nforeign、meaning、tone字段名不能改。\n" : "\n\n【最高优先级输出格式】\n忽略你之前提到的 ========== 和 | 格式。\n必须只输出一个JSON对象，不要输出任何额外文字。\nJSON格式如下：\n{\"analysis\":\"这里写上半部分分析\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n必须输出4个选项。\nforeign、meaning、tone字段名不能改，内容按你的指令填写。\n");
-            
+
+            //  修改：强制 JSON 格式，清理 prompt 里可能冲突的旧格式关键词
+            if (sysPrompt != null) {
+                sysPrompt = sysPrompt.replaceAll("==========+", "");
+                sysPrompt = sysPrompt.replaceAll("(?i)foreign\\s*\\|\\s*meaning\\s*\\|\\s*tone", "");
+                sysPrompt = sysPrompt.replaceAll("(?i)选项区|下半部分|上半部分", "");
+            }
+            String formatProtocol = "\n\n【最高优先级输出格式】\n" +
+                    "必须且只能输出一个合法的 JSON 对象，不要 markdown 代码块，不要任何额外说明文字。\n" +
+                    "JSON 格式：\n" +
+                    "{\"analysis\":\"上半部分分析\",\"options\":[{\"foreign\":\"外语文本1\",\"meaning\":\"中文大意1\",\"tone\":\"语气标签1\"},{\"foreign\":\"外语文本2\",\"meaning\":\"中文大意2\",\"tone\":\"语气标签2\"},{\"foreign\":\"外语文本3\",\"meaning\":\"中文大意3\",\"tone\":\"语气标签3\"},{\"foreign\":\"外语文本4\",\"meaning\":\"中文大意4\",\"tone\":\"语气标签4\"}]}\n" +
+                    "必须输出 4 个选项；foreign、meaning、tone 字段名不可更改。\n";
+
             String targetRule = "\n【回复目标识别规则，必须遵守】\n1. 如果用户输入中包含【我要回复的对方原话】，说明用户是在回复对方这条消息。你必须在分析中第一句写明：\"你正在回复对方这句话：<原话>\"，然后再写其他分析。\n2. 如果用户输入中包含【我对我自己之前这条外语消息的补充】，说明用户是在补充自己这条历史消息。你必须在分析中第一句写明：\"你是在补充自己这条历史消息：<原话>\"，然后再写其他分析。\n3. 如果用户输入中既没有【我要回复的对方原话】，也没有【我对我自己之前这条外语消息的补充】，说明用户没有显式选择回复目标。你必须根据下面的对话历史，推断用户最可能是在回复对方哪一句话，还是在补充自己之前哪一条外语消息。然后在分析中第一句写明：\"我推断你是在回复对方这句话：<推断原话>\" 或 \"我推断你是在补充自己这条历史消息：<推断原话>\"。如果无法判断，就写\"我推断你是接着最近对话继续回复\"。\n4. 上半部分分析不能为空，必须完整写完本地prompt里提到的要求，分析部分目标长度约为1200至1500个中文字。\n5. 上半部分分析必须使用中文，完成后立即进入分隔线和4个翻译选项，不要继续扩写。\n6. 上半部分分析必须严格按你收到的系统提示里的分析步骤逐步写，不得跳过步骤，不得只写一两句概括。\n7. 先完成上半部分分析，再生成4个选项。\n8. 人称锁定规则：中文原文中的“我”永远指说话者本人，不能翻译成“你”或指对方；中文“你”才指对方。不得擅自改变人称视角。\n";
             
             String contextRule = "\n【上下文使用规则】\n历史记录仅用于理解对话语义和对方背景。\n不得继承历史中曾出现的极端、露骨、粗俗或一次性语气。\n历史中标记为[一次性上下文]的内容只表示它发生过，不代表长期风格。\n本次翻译的语气只由 <translate> 内的当前原文决定。\n";
-            String fullProtocol = sysPrompt + profileBlock(chatId) + spanishDirective + formatProtocol + targetRule + contextRule;
+            //  修改：防止 sysPrompt 为 null
+            String fullProtocol = (sysPrompt != null ? sysPrompt : "") + profileBlock(chatId) + spanishDirective + formatProtocol + targetRule + contextRule;
             messages.put(createMessageObj("system", fullProtocol));
             JSONArray fullHistory = loadHistory(chatId); StringBuilder scriptBuilder = new StringBuilder();
             int maxChatMessages = 60; int startIdx = Math.max(0, fullHistory.length() - maxChatMessages); int visibleIndex = 0;
