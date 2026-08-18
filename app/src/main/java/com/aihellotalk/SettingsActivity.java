@@ -42,6 +42,12 @@ public class SettingsActivity extends Activity {
 
     private ScrollView settingsScroll;
     private LinearLayout settingsContent;
+    
+    // 新增：用于控制折叠面板的容器和标题
+    private LinearLayout advContentLayout;
+    private TextView advHeaderTitle;
+    private LinearLayout promptContentLayout;
+    private TextView promptHeaderTitle;
 
     private SharedPreferences prefs;
 
@@ -59,10 +65,10 @@ public class SettingsActivity extends Activity {
         settingsScroll = sv;
         settingsContent = ll;
 
-        ll.addView(tip("HT AI翻译 v5.13\n接收自动翻译 + 点[文A]按钮选版本"));
+        ll.addView(tip("HT AI翻译 v5.14 (带智能折叠)\n接收自动翻译 + 点[文A]按钮选版本"));
 
         etSearchPrompt = edit("");
-        etSearchPrompt.setHint("🔍 搜索语言跳转，例如：阿拉伯、葡萄牙、法语、捷克");
+        etSearchPrompt.setHint("🔍 搜索语言跳转，例如：阿拉伯、葡萄牙、法语");
         etSearchPrompt.setSingleLine(true);
         ll.addView(etSearchPrompt);
 
@@ -75,6 +81,7 @@ public class SettingsActivity extends Activity {
 
         ll.addView(div());
 
+        // ================= 常驻显示区：API 基础配置 =================
         ll.addView(lab("API Key:"));
         etKey = edit(prefs.getString("api_key", ""));
         etKey.setHint("输入你的 API Key");
@@ -93,110 +100,137 @@ public class SettingsActivity extends Activity {
         etModel.setHint("先获取后选择，或手动输入");
         ll.addView(etModel);
 
-        ll.addView(lab("Temperature (模型发散温度):"));
+        // ================= 折叠区 1：高级与安全设置 =================
+        LinearLayout advHeaderLayout = createHeaderLayout();
+        advHeaderTitle = new TextView(this);
+        styleHeaderTitle(advHeaderTitle, "▶ ⚙️ 高级与安全设置 (点击展开)");
+        advHeaderLayout.addView(advHeaderTitle);
+        ll.addView(advHeaderLayout);
+
+        advContentLayout = new LinearLayout(this);
+        advContentLayout.setOrientation(LinearLayout.VERTICAL);
+        advContentLayout.setVisibility(View.GONE); // 默认折叠收起
+        advContentLayout.setPadding(20, 10, 0, 10);
+
+        advContentLayout.addView(lab("Temperature (模型发散温度):"));
         etTemperature = edit(prefs.getString("temperature", "0.7"));
         etTemperature.setHint("0.0 到 2.0 之间，推荐 0.7");
-        ll.addView(etTemperature);
+        advContentLayout.addView(etTemperature);
 
-        ll.addView(lab("上下文消息数 (Max Chat Messages):"));
+        advContentLayout.addView(lab("上下文消息数 (Max Chat Messages):"));
         etMaxChat = edit(prefs.getString("max_chat_messages", "30"));
         etMaxChat.setHint("建议 20~60，越大越慢但记忆越久");
-        ll.addView(etMaxChat);
+        advContentLayout.addView(etMaxChat);
 
-        ll.addView(lab("最大输出长度 (Max Tokens):"));
+        advContentLayout.addView(lab("最大输出长度 (Max Tokens):"));
         etMaxTokens = edit(prefs.getString("max_tokens", "8000"));
         etMaxTokens.setHint("建议设置 2000 到 8000，防止回答被截断");
-        ll.addView(etMaxTokens);
+        advContentLayout.addView(etMaxTokens);
 
-        ll.addView(lab("全局违禁词库 (Banned Words & Symbols):"));
+        advContentLayout.addView(lab("全局违禁词库 (Banned Words & Symbols):"));
         etBannedWords = bigEdit(prefs.getString("banned_words", ""));
         etBannedWords.setHint("输入千万不能出现的词或标点，如：lol,破折号,;");
-        ll.addView(etBannedWords);
+        advContentLayout.addView(etBannedWords);
 
-        ll.addView(div());
-
-        ll.addView(lab("思考深度 (Reasoning Effort):"));
+        advContentLayout.addView(lab("思考深度 (Reasoning Effort):"));
         spinnerReasoning = new android.widget.Spinner(this);
         String[] efforts = {"默认(不干预)", "轻度思考", "中度思考", "深度思考"};
         android.widget.ArrayAdapter<String> effortAdapter = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts);
         effortAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spinnerReasoning.setAdapter(effortAdapter);
         String savedEffort = prefs.getString("reasoning_effort", "default");
-        
         int selectedIndex = 0;
         if ("low".equals(savedEffort)) selectedIndex = 1;
         else if ("medium".equals(savedEffort)) selectedIndex = 2;
         else if ("high".equals(savedEffort)) selectedIndex = 3;
         spinnerReasoning.setSelection(selectedIndex);
-        ll.addView(spinnerReasoning);
+        advContentLayout.addView(spinnerReasoning);
 
-        ll.addView(div());
+        ll.addView(advContentLayout);
+        setupToggle(advHeaderLayout, advHeaderTitle, advContentLayout, "⚙️ 高级与安全设置");
 
-        ll.addView(lab("接收翻译 Prompt (外语→中文):"));
+        // ================= 折叠区 2：语言专属指令 =================
+        LinearLayout promptHeaderLayout = createHeaderLayout();
+        promptHeaderTitle = new TextView(this);
+        styleHeaderTitle(promptHeaderTitle, "▶ 🌐 语言专属指令设置 (点击展开)");
+        promptHeaderLayout.addView(promptHeaderTitle);
+        ll.addView(promptHeaderLayout);
+
+        promptContentLayout = new LinearLayout(this);
+        promptContentLayout.setOrientation(LinearLayout.VERTICAL);
+        promptContentLayout.setVisibility(View.GONE); // 默认折叠收起
+        promptContentLayout.setPadding(20, 10, 0, 10);
+
+        promptContentLayout.addView(lab("接收翻译 Prompt (外语→中文):"));
         etPromptZH = bigEdit(prefs.getString("prompt_zh", ""));
-        ll.addView(etPromptZH);
+        promptContentLayout.addView(etPromptZH);
 
-        ll.addView(lab("英语 Prompt (发送):"));
+        promptContentLayout.addView(lab("英语 Prompt (发送):"));
         etPromptEN = bigEdit(prefs.getString("prompt_en", ""));
-        ll.addView(etPromptEN);
+        promptContentLayout.addView(etPromptEN);
 
-        ll.addView(lab("俄语 Prompt (发送):"));
+        promptContentLayout.addView(lab("俄语 Prompt (发送):"));
         etPromptRU = bigEdit(prefs.getString("prompt_ru", ""));
-        ll.addView(etPromptRU);
+        promptContentLayout.addView(etPromptRU);
 
-        ll.addView(lab("乌克兰语 Prompt (发送):"));
+        promptContentLayout.addView(lab("乌克兰语 Prompt (发送):"));
         etPromptUK = bigEdit(prefs.getString("prompt_uk", ""));
-        ll.addView(etPromptUK);
+        promptContentLayout.addView(etPromptUK);
 
-        ll.addView(lab("韩语 Prompt (发送):"));
+        promptContentLayout.addView(lab("韩语 Prompt (发送):"));
         etPromptKO = bigEdit(prefs.getString("prompt_ko", ""));
-        ll.addView(etPromptKO);
+        promptContentLayout.addView(etPromptKO);
 
-        ll.addView(lab("西班牙语 Prompt (发送):"));
+        promptContentLayout.addView(lab("西班牙语 Prompt (发送):"));
         etPromptES = bigEdit(prefs.getString("prompt_es", ""));
-        ll.addView(etPromptES);
+        promptContentLayout.addView(etPromptES);
+
+        promptContentLayout.addView(div());
+
+        promptContentLayout.addView(lab("阿拉伯语 Prompt (发送):"));
+        etPromptAR = bigEdit(prefs.getString("prompt_ar", ""));
+        promptContentLayout.addView(etPromptAR);
+
+        promptContentLayout.addView(lab("葡萄牙语 Prompt (发送):"));
+        etPromptPT = bigEdit(prefs.getString("prompt_pt", ""));
+        promptContentLayout.addView(etPromptPT);
+
+        promptContentLayout.addView(lab("法语 Prompt (发送):"));
+        etPromptFR = bigEdit(prefs.getString("prompt_fr", ""));
+        promptContentLayout.addView(etPromptFR);
+
+        promptContentLayout.addView(lab("德语 Prompt (发送):"));
+        etPromptDE = bigEdit(prefs.getString("prompt_de", ""));
+        promptContentLayout.addView(etPromptDE);
+
+        promptContentLayout.addView(lab("意大利语 Prompt (发送):"));
+        etPromptIT = bigEdit(prefs.getString("prompt_it", ""));
+        promptContentLayout.addView(etPromptIT);
+
+        promptContentLayout.addView(lab("土耳其语 Prompt (发送):"));
+        etPromptTR = bigEdit(prefs.getString("prompt_tr", ""));
+        promptContentLayout.addView(etPromptTR);
+
+        promptContentLayout.addView(lab("荷兰语 Prompt (发送):"));
+        etPromptNL = bigEdit(prefs.getString("prompt_nl", ""));
+        promptContentLayout.addView(etPromptNL);
+
+        promptContentLayout.addView(lab("波兰语 Prompt (发送):"));
+        etPromptPL = bigEdit(prefs.getString("prompt_pl", ""));
+        promptContentLayout.addView(etPromptPL);
+
+        promptContentLayout.addView(lab("哈萨克语 Prompt (发送):"));
+        etPromptKK = bigEdit(prefs.getString("prompt_kk", ""));
+        promptContentLayout.addView(etPromptKK);
+
+        promptContentLayout.addView(lab("捷克语 Prompt (发送):"));
+        etPromptCS = bigEdit(prefs.getString("prompt_cs", ""));
+        promptContentLayout.addView(etPromptCS);
+
+        ll.addView(promptContentLayout);
+        setupToggle(promptHeaderLayout, promptHeaderTitle, promptContentLayout, "🌐 语言专属指令设置");
 
         ll.addView(div());
-
-        ll.addView(lab("阿拉伯语 Prompt (发送):"));
-        etPromptAR = bigEdit(prefs.getString("prompt_ar", ""));
-        ll.addView(etPromptAR);
-
-        ll.addView(lab("葡萄牙语 Prompt (发送):"));
-        etPromptPT = bigEdit(prefs.getString("prompt_pt", ""));
-        ll.addView(etPromptPT);
-
-        ll.addView(lab("法语 Prompt (发送):"));
-        etPromptFR = bigEdit(prefs.getString("prompt_fr", ""));
-        ll.addView(etPromptFR);
-
-        ll.addView(lab("德语 Prompt (发送):"));
-        etPromptDE = bigEdit(prefs.getString("prompt_de", ""));
-        ll.addView(etPromptDE);
-
-        ll.addView(lab("意大利语 Prompt (发送):"));
-        etPromptIT = bigEdit(prefs.getString("prompt_it", ""));
-        ll.addView(etPromptIT);
-
-        ll.addView(lab("土耳其语 Prompt (发送):"));
-        etPromptTR = bigEdit(prefs.getString("prompt_tr", ""));
-        ll.addView(etPromptTR);
-
-        ll.addView(lab("荷兰语 Prompt (发送):"));
-        etPromptNL = bigEdit(prefs.getString("prompt_nl", ""));
-        ll.addView(etPromptNL);
-
-        ll.addView(lab("波兰语 Prompt (发送):"));
-        etPromptPL = bigEdit(prefs.getString("prompt_pl", ""));
-        ll.addView(etPromptPL);
-
-        ll.addView(lab("哈萨克语 Prompt (发送):"));
-        etPromptKK = bigEdit(prefs.getString("prompt_kk", ""));
-        ll.addView(etPromptKK);
-
-        ll.addView(lab("捷克语 Prompt (发送):"));
-        etPromptCS = bigEdit(prefs.getString("prompt_cs", ""));
-        ll.addView(etPromptCS);
 
         btnSave = btn("保存全部配置");
         btnSave.setOnClickListener(v -> saveAll());
@@ -208,6 +242,37 @@ public class SettingsActivity extends Activity {
 
         sv.addView(ll);
         setContentView(sv);
+    }
+
+    // ================= 辅助 UI 方法 =================
+
+    private LinearLayout createHeaderLayout() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setBackgroundColor(Color.parseColor("#E9ECEF"));
+        layout.setPadding(30, 30, 30, 30);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, 20, 0, 10);
+        layout.setLayoutParams(lp);
+        return layout;
+    }
+
+    private void styleHeaderTitle(TextView tv, String text) {
+        tv.setText(text);
+        tv.setTextSize(15f);
+        tv.setTextColor(Color.parseColor("#0B5ED7"));
+        tv.setTypeface(null, android.graphics.Typeface.BOLD);
+    }
+
+    private void setupToggle(View headerLayout, TextView headerText, View contentLayout, String title) {
+        headerLayout.setOnClickListener(v -> {
+            if (contentLayout.getVisibility() == View.GONE) {
+                contentLayout.setVisibility(View.VISIBLE);
+                headerText.setText("▼ " + title + " (点击折叠)");
+            } else {
+                contentLayout.setVisibility(View.GONE);
+                headerText.setText("▶ " + title + " (点击展开)");
+            }
+        });
     }
 
     private TextView lab(String text) {
@@ -266,6 +331,12 @@ public class SettingsActivity extends Activity {
         }
 
         String s = q.trim().toLowerCase();
+
+        // 智能联动：搜索时自动展开折叠面板
+        if (promptContentLayout != null && promptContentLayout.getVisibility() == View.GONE) {
+            promptContentLayout.setVisibility(View.VISIBLE);
+            if (promptHeaderTitle != null) promptHeaderTitle.setText("▼ 🌐 语言专属指令设置 (点击折叠)");
+        }
 
         if (s.contains("接收") || s.contains("中文")) {
             scrollToView(etPromptZH);
@@ -357,45 +428,6 @@ public class SettingsActivity extends Activity {
         } catch (Exception e) {
             return null;
         }
-    }
-
-    private String readCfg(String key, String def) {
-        String all = runRoot("cat /data/local/tmp/htai_config.txt 2>/dev/null");
-        if (all == null || all.isEmpty()) return def;
-        for (String line : all.split("\n")) {
-            if (line.startsWith(key + "=")) {
-                return line.substring(key.length() + 1).trim();
-            }
-        }
-        return def;
-    }
-
-    private String readPrompt(String section) {
-        String all = runRoot("cat /data/local/tmp/htai_prompts.txt 2>/dev/null");
-        if (all == null || all.isEmpty()) return "";
-        String[] parts = all.split("###");
-        StringBuilder sb = new StringBuilder();
-        boolean inSection = false;
-        for (String part : parts) {
-            if (part.startsWith(section + "###")) {
-                inSection = true;
-                continue;
-            }
-            if (inSection) {
-                if (part.startsWith("EN###") || part.startsWith("RU###")
-                        || part.startsWith("UK###") || part.startsWith("ZH###")
-                        || part.startsWith("KO###") || part.startsWith("ES###")
-                        || part.startsWith("AR###") || part.startsWith("PT###")
-                        || part.startsWith("FR###") || part.startsWith("DE###")
-                        || part.startsWith("IT###") || part.startsWith("TR###")
-                        || part.startsWith("NL###") || part.startsWith("PL###")
-                        || part.startsWith("KK###") || part.startsWith("CS###")) {
-                    break;
-                }
-                sb.append(part);
-            }
-        }
-        return sb.toString().trim();
     }
 
     private void fetchModels() {
