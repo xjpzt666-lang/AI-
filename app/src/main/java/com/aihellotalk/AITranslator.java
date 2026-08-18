@@ -148,6 +148,25 @@ public class AITranslator {
         return n;
     }
 
+    private static String getBannedWords() {
+        String bw = "";
+        try {
+            File f = new File("/data/local/tmp/htai_config.txt");
+            if (f.exists()) {
+                BufferedReader r = new BufferedReader(new FileReader(f));
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (line.trim().startsWith("banned_words=")) {
+                        bw = line.substring(13).trim();
+                        break;
+                    }
+                }
+                r.close();
+            }
+        } catch (Exception ignored) {}
+        return bw;
+    }
+
     private static int getMaxTokens() {
         int tokens = 8000;
         try {
@@ -1456,8 +1475,15 @@ private static String getReasoningEffort() {
                 if ("user".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("\u5bf9\u65b9", content, "\u4e2d\u6587\u610f\u601d")); hasContext = true; }
                 else if ("assistant".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("\u6211", content, "\u4e2d\u6587\u539f\u610f")); hasContext = true; }
             }
+            String bannedWords = getBannedWords();
+            String bannedRule = bannedWords.isEmpty() ? "" : "3. 【全局黑名单】：绝对禁止在输出中包含以下词汇或符号：" + bannedWords + "。\n";
+
             if (!hasContext) scriptBuilder.append("\uff08\u6682\u65e0\u6709\u6548\u4e0a\u4e0b\u6587\uff09\n");
-            scriptBuilder.append("\n\u3010\u7cfb\u7edf\u6307\u4ee4\u3011\u4e0b\u65b9\u53ea\u6709<<<\u548c>>>\u6807\u8bb0\u5185\u7684\u539f\u6587\u624d\u662f\u8981\u7ffb\u8bd1\u7684\u5185\u5bb9\uff0c\u4e0a\u9762\u5bf9\u8bdd\u5267\u672c\u4ec5\u4f9b\u7406\u89e3\u8bed\u5883\u53c2\u8003\uff0c\u4e25\u7981\u7ffb\u8bd1\u6216\u590d\u8ff0\u5267\u672c\u91cc\u5df2\u6709\u7684\u5185\u5bb9\uff1a\n<<<\n").append(text).append("\n>>>");
+            scriptBuilder.append("\n\u3010\u7cfb\u7edf\u6307\u4ee4\u3011\n"
+                    + "1. 下方只有<<<和>>>标记内的原文才是要翻译的内容，上面对话剧本仅供理解语境参考，严禁翻译或复述剧本里已有的内容。\n"
+                    + "2. 【视角隔离】：你是一个客观的翻译引擎。提到任何国家一律直译全称，绝对不许使用“我国”、“国产”、“你们国家”等代词，提到日本时也绝对不要翻译成“这里”或“我们这里”。\n"
+                    + bannedRule
+                    + "<<<\n").append(text).append("\n>>>");
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
             try { String r = callChatMessages(messages); return refuseGuard(r, text); }
@@ -1555,19 +1581,20 @@ private static String getReasoningEffort() {
             String formatProtocol;
             if (useCustomPipeFormat) {
                 if (retry) {
-                    formatProtocol = "\n\n【输出格式补充】\n"
-                            + "请严格遵循你上面收到的【最终输出格式】，不要输出JSON。\n"
-                            + "中间必须用 ========== 隔开。\n"
-                            + "上半部分分析必须使用中文，并且不少于1200个中文字，不超过1800个中文字。宁多勿少。\n"
-                            + "下半部分只输出4个选项，每个选项用 | 分隔。\n";
+                    formatProtocol = "\n\n【！！！格式警告：最高优先级！！！】\n"
+                            + "你刚才的回复格式完全错误！导致系统解析崩溃！现在请你：\n"
+                            + "1. 绝对不许输出 JSON 代码块！\n"
+                            + "2. 必须且只能用 ========== 作为上下部分的唯一分割线！\n"
+                            + "3. 下半部分只允许有4行，每行就是一个翻译选项，必须严格用 | 分隔（外语 | 中文大意 | 标签）！\n"
+                            + "4. 严格遵守上面的格式，不允许有任何其他的废话、前缀或后缀！\n";
                 } else {
                     formatProtocol = "\n\n【输出格式补充】\n"
                             + "请严格遵循你上面收到的【最终输出格式】，不要输出JSON。\n"
                             + "中间必须用 ========== 隔开。\n"
-                            + "上半部分分析必须使用中文，并且不少于1200个中文字，不超过1800个中文字。宁多勿少。\n"
                             + "下半部分只输出4个选项，每个选项用 | 分隔。\n";
                 }
-            } else {
+            }
+ else {
                 if (retry) {
                     formatProtocol = "\n\n【最高优先级输出格式】\n"
                             + "忽略你之前提到的 ========== 和 | 格式。\n"
@@ -1587,6 +1614,9 @@ private static String getReasoningEffort() {
                 }
             }
 
+            String bannedWords = getBannedWords();
+            String bannedRule = bannedWords.isEmpty() ? "" : "\n9. 【全局黑名单强制执行】：绝对禁止在你的分析或翻译结果中出现以下词汇或标点：" + bannedWords + "。一旦出现将导致系统崩溃，请严格审查你的输出！\n";
+
             String targetRule = "\n【回复目标识别规则，必须遵守】\n"
                     + "1. 如果用户输入中包含【我要回复的对方原话】，说明用户是在回复对方这条消息。"
                     + "你必须在分析中第一句写明：\"你正在回复对方这句话：<原话>\"，然后再写其他分析。\n"
@@ -1597,10 +1627,12 @@ private static String getReasoningEffort() {
                     + "还是在补充自己之前哪一条外语消息。然后在分析中第一句写明："
                     + "\"我推断你是在回复对方这句话：<推断原话>\" 或 \"我推断你是在补充自己这条历史消息：<推断原话>\"。"
                     + "如果无法判断，就写\"我推断你是接着最近对话继续回复\"。\n"
-                    + "4. 上半部分分析不能为空。\n"
-                    + "5. 上半部分分析必须使用中文，并且不少于1200个中文字，不超过1800个中文字。宁多勿少。\n"
-                    + "6. 上半部分分析必须严格按你收到的系统提示里的分析步骤逐步写，不得跳过步骤，不得只写一两句概括。\n"
-                    + "7. 先完成上半部分分析，再生成4个选项。\n";
+                    + "4. 上半部分分析不能为空，必须完整写完本地prompt里提到的要求。\n"
+                    + "5. 上半部分分析完成后立即进入分隔线和4个翻译选项，不要继续扩写。\n"
+                    + "6. 上半部分分析必须严格按要求写，不得只写一两句敷衍了事（除非用户明确要求简短）。\n"
+                    + "7. 先完成上半部分分析，再生成4个选项。\n"
+                    + "8. 【绝对视角隔离】：你只是一个客观的翻译工具。提到“中国”时绝对不许翻译成“我国的/国产的”；提到外国时也不许翻译成“你们国家”。即使语境中用户是日本人，提到“日本”时也绝对不要翻译成“这里/我们这里”。所有国家名一律保持客观的字面直译。\n"
+                    + bannedRule;
 
             String contextRule = "\n【上下文使用规则】\n"
                     + "历史记录仅用于理解对话语义和对方背景。\n"
