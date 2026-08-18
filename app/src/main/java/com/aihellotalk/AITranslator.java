@@ -139,24 +139,28 @@ public class AITranslator {
         return tokens;
     }
 
-    private static String getReasoningEffort() {
-        String effort = "default";
-        try {
-            File f = new File("/data/local/tmp/htai_config.txt");
-            if (f.exists()) {
-                BufferedReader r = new BufferedReader(new FileReader(f));
-                String line;
-                while ((line = r.readLine()) != null) {
-                    if (line.trim().startsWith("reasoning_effort=")) {
-                        effort = line.substring(17).trim();
-                        break;
-                    }
+private static String getReasoningEffort() {
+    String effort = "default";
+    try {
+        File f = new File("/data/local/tmp/htai_config.txt");
+        if (f.exists()) {
+            BufferedReader r = new BufferedReader(new FileReader(f));
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.trim().startsWith("reasoning_effort=")) {
+                    effort = line.substring(17).trim();
+                    break;
                 }
-                r.close();
             }
-        } catch (Exception ignored) {}
-        return effort;
-    }
+            r.close();
+        }
+    } catch (Exception ignored) {}
+    if (effort.contains("默认") || effort.contains("不干预")) effort = "none";
+    else if (effort.contains("轻度")) effort = "low";
+    else if (effort.contains("中度")) effort = "medium";
+    else if (effort.contains("深度")) effort = "high";
+    return effort;
+}
 
     public static void dumpDebug(String name, String text) {
         try {
