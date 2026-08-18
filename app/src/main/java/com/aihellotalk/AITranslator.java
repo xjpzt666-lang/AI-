@@ -72,6 +72,16 @@ public class AITranslator {
     public static String promptUK = "";
     public static String promptKO = "";
     public static String promptES = "";
+    public static String promptAR = "";
+    public static String promptPT = "";
+    public static String promptFR = "";
+    public static String promptDE = "";
+    public static String promptIT = "";
+    public static String promptTR = "";
+    public static String promptNL = "";
+    public static String promptPL = "";
+    public static String promptKK = "";
+    public static String promptCS = "";
 
     private static final File friendsFile = new File("/data/data/com.hellotalk/files/htai_friends.json");
     private static JSONObject friendsData = new JSONObject();
@@ -250,6 +260,82 @@ private static String getReasoningEffort() {
         t = t.trim();
         if (t.isEmpty()) return false;
         return oneTimeSentSuppress.remove(t);
+    }
+
+    private static final Set<String> noHistoryTexts = ConcurrentHashMap.newKeySet();
+
+    public static void markNoHistory(String s) {
+        if (s == null) return;
+        String t = stripFlipMarks(s);
+        if (t == null) return;
+        t = t.trim();
+        if (t.isEmpty()) return;
+        noHistoryTexts.add(t);
+        if (noHistoryTexts.size() > 300) noHistoryTexts.clear();
+    }
+
+    public static boolean isNoHistoryText(String s) {
+        if (s == null) return false;
+        String t = stripFlipMarks(s);
+        if (t == null) return false;
+        t = t.trim();
+        if (t.isEmpty()) return false;
+        if (noHistoryTexts.contains(t)) return true;
+        if ((t.startsWith("（") && t.endsWith("）")) || (t.startsWith("(") && t.endsWith(")"))) {
+            String inner = t.substring(1, t.length() - 1).trim();
+            if (!inner.isEmpty() && noHistoryTexts.contains(inner)) return true;
+        }
+        return false;
+    }
+
+    public static void rememberImageNote(String chatId, String imagePath, boolean isMineImage) {
+        try {
+            if (chatId == null || chatId.isEmpty() || "0".equals(chatId) || "null".equals(chatId)) return;
+            if (apiKey == null || apiKey.isEmpty()) return;
+            if (imagePath == null || imagePath.isEmpty()) return;
+            File f = new File(imagePath);
+            if (!f.exists() || f.length() <= 0) return;
+
+            String dedupeMark = "[图片记忆:" + f.getName() + "_" + f.lastModified() + "]";
+            JSONArray hist = loadHistory(chatId);
+            for (int i = 0; i < hist.length(); i++) {
+                String c = hist.getJSONObject(i).optString("content", "");
+                if (c != null && c.contains(dedupeMark)) return;
+            }
+
+            String b64 = encodeFileToBase64(imagePath);
+            if (b64 == null || b64.isEmpty()) return;
+
+            JSONArray contentArr = new JSONArray();
+            contentArr.put(createTextPart("请用一句不超过60字的中文客观描述这张图片的内容（人物、场景、物体、文字等），只输出描述本身，不要任何前缀和解释。"));
+            contentArr.put(createImagePart(b64));
+            JSONObject userMsg = new JSONObject();
+            userMsg.put("role", "user");
+            userMsg.put("content", contentArr);
+            JSONArray messages = new JSONArray();
+            messages.put(userMsg);
+
+            JSONObject body = new JSONObject();
+            body.put("model", model);
+            body.put("max_tokens", 150);
+            body.put("temperature", 0.2);
+            body.put("messages", messages);
+
+            String desc = executeRequestWith(getReverseTranslateClient(), body);
+            if (desc == null) return;
+            desc = desc.trim().replaceAll("\\s+", " ").replace("*", "");
+            if (desc.isEmpty() || isRefusalResponse(desc)) return;
+            if (desc.length() > 120) desc = desc.substring(0, 120);
+
+            String who = isMineImage ? "我" : "对方";
+            String note = "[" + who + "发送了一张图片]（历史图片存档，仅作背景，非当前话题）" + dedupeMark + " 内容：" + desc;
+            String noteMsgId = "imgnote_" + Math.abs((imagePath + "_" + f.lastModified()).hashCode());
+            long ts = f.lastModified() > 0 ? f.lastModified() : System.currentTimeMillis();
+            appendHistory(chatId, noteMsgId, isMineImage ? "assistant" : "user", note, ts, null, false);
+            Log.i(TAG, "图片记忆已写入: " + dedupeMark);
+        } catch (Exception e) {
+            Log.w(TAG, "图片记忆失败: " + e.getMessage());
+        }
     }
 
     private static final String STORE_DIR = "/data/local/tmp/htai_store";
@@ -782,6 +868,52 @@ private static String getReasoningEffort() {
             }
         }
         return reverseTranslateClient;
+    }
+
+    public static String askAiQuestion(String text, String chatId) throws IOException {
+        maybeRecheckMode();
+        text = text.trim();
+        if (text.isEmpty()) return text;
+
+        String cleanText = text.replaceAll("(?i)\\[PURE_BRACKET_MODE\\]\\s*", "").trim();
+        if (cleanText.isEmpty()) return text;
+
+        try {
+            JSONArray messages = new JSONArray();
+            String sysPrompt = "你是聊天助手。用户正在和一个外国朋友聊天。"
+                    + "用户用中文向你提问（用括号括起来的），请直接回答用户的问题。"
+                    + "请结合对话历史和对方背景档案，用中文详细、完整地回答。"
+                    + "如果问题涉及翻译，请直接把翻译结果写在回答里。"
+                    + "如果上下文里没有相关信息，就诚实说不知道，禁止编造。"
+                    + "请给出详细、完整的回答，尽量全面分析，不要只回答一两句话。不要使用Markdown格式。"
+                    + profileBlock(chatId);
+            messages.put(createMessageObj("system", sysPrompt));
+
+            JSONArray fullHistory = loadHistory(chatId);
+            StringBuilder scriptBuilder = new StringBuilder();
+            scriptBuilder.append("【对话上下文】\n");
+            int maxChatMessages = getMaxChatMessages();
+            int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
+            boolean hasContext = false;
+            for (int i = startIdx; i < fullHistory.length(); i++) {
+                JSONObject msg = fullHistory.getJSONObject(i);
+                String role = msg.optString("role", "");
+                String content = msg.optString("content", "");
+                String prefix = msg.optBoolean("oneTime", false) ? "[一次性上下文] " : "";
+                if ("user".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("对方", content, "中文意思")); hasContext = true; }
+                else if ("assistant".equals(role)) { scriptBuilder.append(prefix).append(scriptLine("我", content, "中文原意")); hasContext = true; }
+            }
+            if (!hasContext) scriptBuilder.append("（暂无有效上下文）\n");
+            scriptBuilder.append("\n【用户的问题/要求】\n").append(cleanText);
+
+            messages.put(createMessageObj("user", scriptBuilder.toString()));
+
+            String aiRawAnswer = callChatMessages(messages);
+            if (aiRawAnswer == null || aiRawAnswer.trim().isEmpty()) return "（AI 未返回任何内容，请检查模型配置或重试）";
+            return aiRawAnswer;
+        } catch (JSONException e) {
+            throw new IOException("构建Messages失败");
+        }
     }
 
     public static String reverseTranslateMyForeign(String foreignText, String chatId) {
@@ -1383,6 +1515,16 @@ private static String getReasoningEffort() {
                 case "uk": sysPrompt = promptUK; break;
                 case "ko": sysPrompt = promptKO; break;
                 case "es": sysPrompt = promptES; break;
+                case "ar": sysPrompt = promptAR; break;
+                case "pt": sysPrompt = promptPT; break;
+                case "fr": sysPrompt = promptFR; break;
+                case "de": sysPrompt = promptDE; break;
+                case "it": sysPrompt = promptIT; break;
+                case "tr": sysPrompt = promptTR; break;
+                case "nl": sysPrompt = promptNL; break;
+                case "pl": sysPrompt = promptPL; break;
+                case "kk": sysPrompt = promptKK; break;
+                case "cs": sysPrompt = promptCS; break;
                 default: sysPrompt = promptEN; break;
             }
 
@@ -1745,6 +1887,16 @@ private static String getReasoningEffort() {
                     else if (line.startsWith("###UK###")) { if (cur.equals("RU")) promptRU = sb.toString().trim(); cur = "UK"; sb.setLength(0); }
                     else if (line.startsWith("###KO###")) { if (cur.equals("UK")) promptUK = sb.toString().trim(); cur = "KO"; sb.setLength(0); }
                     else if (line.startsWith("###ES###")) { if (cur.equals("KO")) promptKO = sb.toString().trim(); cur = "ES"; sb.setLength(0); }
+                    else if (line.startsWith("###AR###")) { if (cur.equals("ES")) promptES = sb.toString().trim(); cur = "AR"; sb.setLength(0); }
+                    else if (line.startsWith("###PT###")) { if (cur.equals("AR")) promptAR = sb.toString().trim(); cur = "PT"; sb.setLength(0); }
+                    else if (line.startsWith("###FR###")) { if (cur.equals("PT")) promptPT = sb.toString().trim(); cur = "FR"; sb.setLength(0); }
+                    else if (line.startsWith("###DE###")) { if (cur.equals("FR")) promptFR = sb.toString().trim(); cur = "DE"; sb.setLength(0); }
+                    else if (line.startsWith("###IT###")) { if (cur.equals("DE")) promptDE = sb.toString().trim(); cur = "IT"; sb.setLength(0); }
+                    else if (line.startsWith("###TR###")) { if (cur.equals("IT")) promptIT = sb.toString().trim(); cur = "TR"; sb.setLength(0); }
+                    else if (line.startsWith("###NL###")) { if (cur.equals("TR")) promptTR = sb.toString().trim(); cur = "NL"; sb.setLength(0); }
+                    else if (line.startsWith("###PL###")) { if (cur.equals("NL")) promptNL = sb.toString().trim(); cur = "PL"; sb.setLength(0); }
+                    else if (line.startsWith("###KK###")) { if (cur.equals("PL")) promptPL = sb.toString().trim(); cur = "KK"; sb.setLength(0); }
+                    else if (line.startsWith("###CS###")) { if (cur.equals("KK")) promptKK = sb.toString().trim(); cur = "CS"; sb.setLength(0); }
                     else { sb.append(line).append("\n"); }
                 }
                 if (cur.equals("EN")) promptEN = sb.toString().trim();
@@ -1760,7 +1912,17 @@ private static String getReasoningEffort() {
         if (promptRU.isEmpty()) promptRU = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u4fc4\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
         if (promptUK.isEmpty()) promptUK = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u4e4c\u514b\u5170\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
         if (promptKO.isEmpty()) promptKO = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u97e9\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
-        if (promptES.isEmpty()) promptES = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u897f\u73ed\u7259\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
+        if (promptES.isEmpty()) promptES = "你是社交嘴替。把中文转成地道西班牙语口语，4版本。格式：外文|中文大意|标签。";
+        if (promptAR.isEmpty()) promptAR = "你是社交嘴替。把中文转成地道阿拉伯语口语，4版本。格式：外文|中文大意|标签。";
+        if (promptPT.isEmpty()) promptPT = "你是社交嘴替。把中文转成地道葡萄牙语口语，4版本。格式：外文|中文大意|标签。";
+        if (promptFR.isEmpty()) promptFR = "你是社交嘴替。把中文转成地道法语口语，4版本。格式：外文|中文大意|标签。";
+        if (promptDE.isEmpty()) promptDE = "你是社交嘴替。把中文转成地道德语口语，4版本。格式：外文|中文大意|标签。";
+        if (promptIT.isEmpty()) promptIT = "你是社交嘴替。把中文转成地道意大利语口语，4版本。格式：外文|中文大意|标签。";
+        if (promptTR.isEmpty()) promptTR = "你是社交嘴替。把中文转成地道土耳其语口语，4版本。格式：外文|中文大意|标签。";
+        if (promptNL.isEmpty()) promptNL = "你是社交嘴替。把中文转成地道荷兰语口语，4版本。格式：外文|中文大意|标签。";
+        if (promptPL.isEmpty()) promptPL = "你是社交嘴替。把中文转成地道波兰语口语，4版本。格式：外文|中文大意|标签。";
+        if (promptKK.isEmpty()) promptKK = "你是社交嘴替。把中文转成地道哈萨克语口语，4版本。格式：外文|中文大意|标签。";
+        if (promptCS.isEmpty()) promptCS = "你是社交嘴替。把中文转成地道捷克语口语，4版本。格式：外文|中文大意|标签。";
     }
 
     public static void savePrompts(String zh, String en, String ru, String uk) {
@@ -1768,6 +1930,9 @@ private static String getReasoningEffort() {
     }
     public static void savePrompts(String zh, String en, String ru, String uk, String ko, String es) {
         receivePrompt = zh; promptEN = en; promptRU = ru; promptUK = uk; promptKO = ko; promptES = es;
+    }
+    public static void savePrompts(String zh, String en, String ru, String uk, String ko, String es, String ar, String pt, String fr, String de, String it, String tr, String nl, String pl, String kk, String cs) {
+        receivePrompt = zh; promptEN = en; promptRU = ru; promptUK = uk; promptKO = ko; promptES = es; promptAR = ar; promptPT = pt; promptFR = fr; promptDE = de; promptIT = it; promptTR = tr; promptNL = nl; promptPL = pl; promptKK = kk; promptCS = cs;
     }
 
     private static File historyFile(String chatId) {
