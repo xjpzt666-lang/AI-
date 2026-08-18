@@ -103,13 +103,14 @@ public class SettingsActivity extends Activity {
         // ================= 折叠区 1：高级与安全设置 =================
         LinearLayout advHeaderLayout = createHeaderLayout();
         advHeaderTitle = new TextView(this);
-        styleHeaderTitle(advHeaderTitle, "▶ ⚙️ 高级与安全设置 (点击展开)");
+        boolean isAdvExpanded = prefs.getBoolean("adv_expanded", false); // 读取记忆
+        styleHeaderTitle(advHeaderTitle, isAdvExpanded ? "▼ ⚙️ 高级与安全设置 (点击折叠)" : "▶ ⚙️ 高级与安全设置 (点击展开)");
         advHeaderLayout.addView(advHeaderTitle);
         ll.addView(advHeaderLayout);
 
         advContentLayout = new LinearLayout(this);
         advContentLayout.setOrientation(LinearLayout.VERTICAL);
-        advContentLayout.setVisibility(View.GONE); // 默认折叠收起
+        advContentLayout.setVisibility(isAdvExpanded ? View.VISIBLE : View.GONE); // 恢复记忆状态
         advContentLayout.setPadding(20, 10, 0, 10);
 
         advContentLayout.addView(lab("Temperature (模型发散温度):"));
@@ -147,18 +148,19 @@ public class SettingsActivity extends Activity {
         advContentLayout.addView(spinnerReasoning);
 
         ll.addView(advContentLayout);
-        setupToggle(advHeaderLayout, advHeaderTitle, advContentLayout, "⚙️ 高级与安全设置");
+        setupToggle(advHeaderLayout, advHeaderTitle, advContentLayout, "⚙️ 高级与安全设置", "adv_expanded");
 
         // ================= 折叠区 2：语言专属指令 =================
         LinearLayout promptHeaderLayout = createHeaderLayout();
         promptHeaderTitle = new TextView(this);
-        styleHeaderTitle(promptHeaderTitle, "▶ 🌐 语言专属指令设置 (点击展开)");
+        boolean isPromptExpanded = prefs.getBoolean("prompt_expanded", false); // 读取记忆
+        styleHeaderTitle(promptHeaderTitle, isPromptExpanded ? "▼ 🌐 语言专属指令设置 (点击折叠)" : "▶ 🌐 语言专属指令设置 (点击展开)");
         promptHeaderLayout.addView(promptHeaderTitle);
         ll.addView(promptHeaderLayout);
 
         promptContentLayout = new LinearLayout(this);
         promptContentLayout.setOrientation(LinearLayout.VERTICAL);
-        promptContentLayout.setVisibility(View.GONE); // 默认折叠收起
+        promptContentLayout.setVisibility(isPromptExpanded ? View.VISIBLE : View.GONE); // 恢复记忆状态
         promptContentLayout.setPadding(20, 10, 0, 10);
 
         promptContentLayout.addView(lab("接收翻译 Prompt (外语→中文):"));
@@ -228,7 +230,7 @@ public class SettingsActivity extends Activity {
         promptContentLayout.addView(etPromptCS);
 
         ll.addView(promptContentLayout);
-        setupToggle(promptHeaderLayout, promptHeaderTitle, promptContentLayout, "🌐 语言专属指令设置");
+        setupToggle(promptHeaderLayout, promptHeaderTitle, promptContentLayout, "🌐 语言专属指令设置", "prompt_expanded");
 
         ll.addView(div());
 
@@ -263,14 +265,16 @@ public class SettingsActivity extends Activity {
         tv.setTypeface(null, android.graphics.Typeface.BOLD);
     }
 
-    private void setupToggle(View headerLayout, TextView headerText, View contentLayout, String title) {
+    private void setupToggle(View headerLayout, TextView headerText, View contentLayout, String title, String prefKey) {
         headerLayout.setOnClickListener(v -> {
             if (contentLayout.getVisibility() == View.GONE) {
                 contentLayout.setVisibility(View.VISIBLE);
                 headerText.setText("▼ " + title + " (点击折叠)");
+                prefs.edit().putBoolean(prefKey, true).apply(); // 保存为展开状态
             } else {
                 contentLayout.setVisibility(View.GONE);
                 headerText.setText("▶ " + title + " (点击展开)");
+                prefs.edit().putBoolean(prefKey, false).apply(); // 保存为折叠状态
             }
         });
     }
@@ -336,6 +340,7 @@ public class SettingsActivity extends Activity {
         if (promptContentLayout != null && promptContentLayout.getVisibility() == View.GONE) {
             promptContentLayout.setVisibility(View.VISIBLE);
             if (promptHeaderTitle != null) promptHeaderTitle.setText("▼ 🌐 语言专属指令设置 (点击折叠)");
+            prefs.edit().putBoolean("prompt_expanded", true).apply(); // 同步记录展开状态
         }
 
         if (s.contains("接收") || s.contains("中文")) {
