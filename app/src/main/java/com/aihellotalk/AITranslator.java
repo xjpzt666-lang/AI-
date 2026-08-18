@@ -117,6 +117,27 @@ public class AITranslator {
         return temp;
     }
 
+    private static int getMaxChatMessages() {
+        int n = 30;
+        try {
+            File f = new File("/data/local/tmp/htai_config.txt");
+            if (f.exists()) {
+                BufferedReader r = new BufferedReader(new FileReader(f));
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (line.trim().startsWith("max_chat_messages=")) {
+                        n = Integer.parseInt(line.substring(18).trim());
+                        break;
+                    }
+                }
+                r.close();
+            }
+        } catch (Exception ignored) {}
+        if (n < 5) n = 5;
+        if (n > 200) n = 200;
+        return n;
+    }
+
     private static int getMaxTokens() {
         int tokens = 8000;
         try {
@@ -706,7 +727,7 @@ private static String getReasoningEffort() {
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
             scriptBuilder.append("\u3010\u6700\u8fd1\u5bf9\u8bdd\u4e0a\u4e0b\u6587\u3011\n");
-            int maxChatMessages = 15;
+            int maxChatMessages = getMaxChatMessages();
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
             boolean hasContext = false;
             for (int i = startIdx; i < fullHistory.length(); i++) {
@@ -1275,7 +1296,7 @@ private static String getReasoningEffort() {
 
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
-            int maxChatMessages = 15;
+            int maxChatMessages = getMaxChatMessages();
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
             boolean hasContext = false;
             for (int i = startIdx; i < fullHistory.length(); i++) {
@@ -1436,7 +1457,8 @@ private static String getReasoningEffort() {
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
 
-            int maxChatMessages = 60;
+            int maxChatMessages = getMaxChatMessages();
+
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
 
             int visibleIndex = 0;
