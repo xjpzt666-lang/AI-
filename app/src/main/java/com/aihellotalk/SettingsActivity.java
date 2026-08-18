@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 
 public class SettingsActivity extends Activity {
 
-    private EditText etKey, etUrl, etModel, etTemperature, etMaxTokens, etMaxChat;
+    private EditText etKey, etUrl, etModel, etTemperature, etMaxTokens, etMaxChat, etBannedWords;
     private android.widget.Spinner spinnerReasoning;
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
     private EditText etPromptAR, etPromptPT, etPromptFR, etPromptDE, etPromptIT;
@@ -107,6 +107,11 @@ public class SettingsActivity extends Activity {
         etMaxTokens = edit(prefs.getString("max_tokens", "8000"));
         etMaxTokens.setHint("建议设置 2000 到 8000，防止回答被截断");
         ll.addView(etMaxTokens);
+
+        ll.addView(lab("全局违禁词库 (Banned Words & Symbols):"));
+        etBannedWords = bigEdit(prefs.getString("banned_words", ""));
+        etBannedWords.setHint("输入千万不能出现的词或标点，如：lol,破折号,;");
+        ll.addView(etBannedWords);
 
         ll.addView(div());
 
@@ -590,6 +595,7 @@ public class SettingsActivity extends Activity {
         }
 
         String maxTokensStr = etMaxTokens.getText().toString().trim();
+        String bannedStr = etBannedWords.getText().toString().trim();
         if (maxTokensStr.isEmpty()) {
             maxTokensStr = "8000";
         }
@@ -613,6 +619,7 @@ public class SettingsActivity extends Activity {
         editor.putString("temperature", tempStr);
         editor.putString("max_chat_messages", maxChatStr);
         editor.putString("max_tokens", maxTokensStr);
+        editor.putString("banned_words", bannedStr);
         editor.putString("prompt_zh", zh);
         editor.putString("prompt_en", en);
         editor.putString("prompt_ru", ru);
@@ -635,6 +642,7 @@ public class SettingsActivity extends Activity {
         String finalMaxTokensStr = maxTokensStr;
         String finalEffortStr = effortStr;
         String finalMaxChatStr = maxChatStr;
+        String finalBannedStr = bannedStr;
         new Thread(() -> {
             try {
                 String modelList = prefs.getString("model_list", "");
@@ -646,6 +654,7 @@ public class SettingsActivity extends Activity {
                         + "temperature=" + finalTempStr + "\n"
                         + "max_chat_messages=" + finalMaxChatStr + "\n"
                         + "max_tokens=" + finalMaxTokensStr + "\n"
+                        + "banned_words=" + finalBannedStr + "\n"
                         + "reasoning_effort=" + finalEffortStr + "\n"
                         + "EOF\n";
                 runRoot(cfg);
