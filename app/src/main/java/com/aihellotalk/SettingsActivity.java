@@ -30,7 +30,6 @@ import java.util.concurrent.TimeUnit;
 
 public class SettingsActivity extends Activity {
 
-    private EditText etKey, etUrl, etModel, etTemperature, etMaxTokens;
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
     private Button btnFetch, btnSave, btnTest;
 
@@ -76,6 +75,23 @@ public class SettingsActivity extends Activity {
         etMaxTokens = edit(prefs.getString("max_tokens", "8000"));
         etMaxTokens.setHint("建议设置 2000 到 8000，防止回答被截断");
         ll.addView(etMaxTokens);
+
+        ll.addView(div());
+
+        ll.addView(lab("思考深度 (Reasoning Effort):"));
+        spinnerReasoning = new android.widget.Spinner(this);
+        String[] efforts = {"default", "low", "medium", "high"};
+        android.widget.ArrayAdapter<String> effortAdapter = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts);
+        effortAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinnerReasoning.setAdapter(effortAdapter);
+        String savedEffort = prefs.getString("reasoning_effort", "default");
+        for (int i = 0; i < efforts.length; i++) {
+            if (efforts[i].equals(savedEffort)) {
+                spinnerReasoning.setSelection(i);
+                break;
+            }
+        }
+        ll.addView(spinnerReasoning);
 
         ll.addView(div());
 
@@ -406,9 +422,11 @@ public class SettingsActivity extends Activity {
             maxTokensStr = "8000";
         }
 
+        String effortStr = spinnerReasoning.getSelectedItem().toString();
         SharedPreferences.Editor editor = prefs.edit();
+        editor.putString("reasoning_effort", effortStr);
         editor.putString("api_key", key);
-        editor.putString("api_url", url);
+       editor.putString("api_url", url);
         editor.putString("model", mdl);
         editor.putString("temperature", tempStr);
         editor.putString("max_tokens", maxTokensStr);
@@ -422,7 +440,8 @@ public class SettingsActivity extends Activity {
 
         String finalTempStr = tempStr;
         String finalMaxTokensStr = maxTokensStr;
-        new Thread(() -> {
+        String finalEffortStr = effortStr;
+       new Thread(() -> {
             try {
                 String modelList = prefs.getString("model_list", "");
                 String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
@@ -432,8 +451,9 @@ public class SettingsActivity extends Activity {
                         + "model_list=" + modelList + "\n"
                         + "temperature=" + finalTempStr + "\n"
                         + "max_tokens=" + finalMaxTokensStr + "\n"
+                        + "reasoning_effort=" + finalEffortStr + "\n"
                         + "EOF\n";
-                runRoot(cfg);
+               runRoot(cfg);
 
                 String prompts = "cat > /data/local/tmp/htai_prompts.txt << 'EOF'\n"
                         + "###ZH###\n" + zh + "\n"
