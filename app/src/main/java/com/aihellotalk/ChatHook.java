@@ -1406,7 +1406,7 @@ public class ChatHook {
                 AITranslator.markNoHistory(inner);
             }
 
-            if (pbm && qis != null) {
+            if (qis != null) {
                 final String noteChat = cs;
                 final String notePath = qis;
                 final boolean noteMine = selectedReplyMine;
