@@ -139,6 +139,25 @@ public class AITranslator {
         return tokens;
     }
 
+    private static String getReasoningEffort() {
+        String effort = "default";
+        try {
+            File f = new File("/data/local/tmp/htai_config.txt");
+            if (f.exists()) {
+                BufferedReader r = new BufferedReader(new FileReader(f));
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (line.trim().startsWith("reasoning_effort=")) {
+                        effort = line.substring(17).trim();
+                        break;
+                    }
+                }
+                r.close();
+            }
+        } catch (Exception ignored) {}
+        return effort;
+    }
+
     public static void dumpDebug(String name, String text) {
         try {
             File f = new File("/data/data/com.hellotalk/files/htai_debug_" + name + ".txt");
@@ -1492,6 +1511,10 @@ public class AITranslator {
             body.put("model", model);
             body.put("max_tokens", getMaxTokens());
             body.put("temperature", getTemperature());
+            String effort = getReasoningEffort();
+            if (!"default".equals(effort)) {
+                body.put("reasoning_effort", effort);
+            }
             JSONArray msgs = new JSONArray();
             JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
             msgs.put(m); body.put("messages", msgs);
@@ -1507,6 +1530,10 @@ public class AITranslator {
             body.put("model", model);
             body.put("max_tokens", getMaxTokens());
             body.put("temperature", getTemperature());
+            String effort = getReasoningEffort();
+            if (!"default".equals(effort)) {
+                body.put("reasoning_effort", effort);
+            }
             body.put("messages", messages);
             return executeRequest(body);
         } catch (JSONException e) { throw new IOException("构建失败"); }
@@ -1520,6 +1547,10 @@ public class AITranslator {
         body.put("model", model);
         body.put("max_tokens", maxTokens);
         body.put("temperature", getTemperature());
+        String effort = getReasoningEffort();
+        if (!"default".equals(effort)) {
+            body.put("reasoning_effort", effort);
+        }
         body.put("messages", messages);
         return executeRequest(body);
     } catch (JSONException e) {
