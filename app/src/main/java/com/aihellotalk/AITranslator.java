@@ -155,7 +155,7 @@ private static String getReasoningEffort() {
             r.close();
         }
     } catch (Exception ignored) {}
-    if (effort.contains("默认") || effort.contains("不干预")) effort = "none";
+    if (effort.contains("默认") || effort.contains("不干预")) return "default";
     else if (effort.contains("轻度")) effort = "low";
     else if (effort.contains("中度")) effort = "medium";
     else if (effort.contains("深度")) effort = "high";
