@@ -644,8 +644,29 @@ public class AITranslator {
         if (isChineseOnly(foreignText)) return null;
         try {
             JSONArray messages = new JSONArray();
-            messages.put(createRawMessage("system", "把以下外语句子翻译成中文，只输出一句中文翻译，不要任何解释。"));
-            messages.put(createRawMessage("user", foreignText));
+            messages.put(createRawMessage("system",
+        "你是聊天翻译助手。下方会提供对话历史作为语境参考。"
+        + "请把<<<和>>>之间的外语翻译成中文。"
+        + "要求：1.必须符合当前对话语境。"
+        + "2.必须还原这句话原本的语气、口癖和说话风格，不要机械直译。"
+        + "3.只输出一句中文翻译，不要任何解释，不要括号，不要潜台词。"));
+            JSONArray fullHistory = loadHistory(chatId);
+StringBuilder sb = new StringBuilder();
+sb.append("【对话历史】\n");
+int maxChatMessages = 10;
+int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
+for (int i = startIdx; i < fullHistory.length(); i++) {
+    JSONObject msg = fullHistory.getJSONObject(i);
+    String role = msg.optString("role", "");
+    String content = msg.optString("content", "");
+    if ("user".equals(role)) {
+        sb.append("对方: ").append(content).append("\n");
+    } else if ("assistant".equals(role)) {
+        sb.append("我: ").append(content).append("\n");
+    }
+}
+sb.append("\n【需要还原成中文的外语】\n<<<\n").append(foreignText).append("\n>>>");
+messages.put(createRawMessage("user", sb.toString()));
             JSONObject body = new JSONObject(); body.put("model", model); body.put("max_tokens", 300); body.put("temperature", 0.2); body.put("messages", messages);
             String result = executeRequestWith(getReverseTranslateClient(), body);
             if (result != null && !result.trim().isEmpty() && !result.trim().equals(foreignText)) { String clean = result.trim(); if (clean.length() > 200) clean = clean.substring(0, 200); return clean; }
