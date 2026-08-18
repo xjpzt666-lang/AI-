@@ -528,12 +528,15 @@ public class MainActivity extends Activity {
             String url = prefs.getString("api_url", "https://api.openai.com/v1/chat/completions");
             String mList = prefs.getString("model_list", "");
             String tempStr = prefs.getString("temperature", "0.7");
+            String maxT = prefs.getString("max_tokens", "8000"); 
+
             String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
                     + "api_key=" + key + "\n"
                     + "api_url=" + url + "\n"
                     + "model=" + newModel + "\n"
                     + "model_list=" + mList + "\n"
                     + "temperature=" + tempStr + "\n"
+                    + "max_tokens=" + maxT + "\n"
                     + "EOF\n";
             runRoot(cfg);
             runRoot("chmod 644 /data/local/tmp/htai_config.txt");
@@ -657,9 +660,6 @@ public class MainActivity extends Activity {
         sendMessage();
     }
 
-    // ==========================================
-    // ★ 找回被遗漏的 runRoot 方法
-    // ==========================================
     private String runRoot(String cmd) {
         try {
             Process p = Runtime.getRuntime().exec(new String[]{"su", "-c", cmd});
