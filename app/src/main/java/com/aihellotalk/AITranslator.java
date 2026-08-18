@@ -117,6 +117,28 @@ public class AITranslator {
         return temp;
     }
 
+    private static int getMaxTokens() {
+        int tokens = 8000;
+        try {
+            File f = new File("/data/local/tmp/htai_config.txt");
+            if (f.exists()) {
+                BufferedReader r = new BufferedReader(new FileReader(f));
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (line.trim().startsWith("max_tokens=")) {
+                        tokens = Integer.parseInt(line.substring(11).trim());
+                        break;
+                    }
+                }
+                r.close();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Read max_tokens failed: " + e.getMessage());
+        }
+        if (tokens < 100) tokens = 8000;
+        return tokens;
+    }
+
     public static void dumpDebug(String name, String text) {
         try {
             File f = new File("/data/data/com.hellotalk/files/htai_debug_" + name + ".txt");
@@ -1323,13 +1345,45 @@ public class AITranslator {
             String spanishDirective = "";
             if ("es".equals(langCode)) spanishDirective = getSpanishRegionDirective(null, 0, chatId);
 
-            String formatProtocol = "\n\n【最高优先级输出格式】\n"
-                    + "绝对不要输出 JSON 格式。请严格遵循以下结构，中间必须用 ========== 隔开：\n"
-                    + "上半部分分析：必须使用中文，并且不少于1200个中文字，不超过1800个中文字。宁多勿少。\n"
-                    + "==========\n"
-                    + "下半部分翻译选项：只输出4个选项，不要带多余说明。每个选项用 | 分隔，格式为：\n"
-                    + "外语文本 | 中文大意 | 语气标签\n"
-                    + "（必须严格输出4个选项，不能多也不能少）\n";
+            boolean useCustomPipeFormat = sysPrompt != null && (
+                    sysPrompt.contains("==========")
+                            || sysPrompt.contains("选项区")
+                            || sysPrompt.contains("下半部分"));
+
+            String formatProtocol;
+            if (useCustomPipeFormat) {
+                if (retry) {
+                    formatProtocol = "\n\n【输出格式补充】\n"
+                            + "请严格遵循你上面收到的【最终输出格式】，不要输出JSON。\n"
+                            + "中间必须用 ========== 隔开。\n"
+                            + "上半部分分析必须使用中文，并且不少于1200个中文字，不超过1800个中文字。宁多勿少。\n"
+                            + "下半部分只输出4个选项，每个选项用 | 分隔。\n";
+                } else {
+                    formatProtocol = "\n\n【输出格式补充】\n"
+                            + "请严格遵循你上面收到的【最终输出格式】，不要输出JSON。\n"
+                            + "中间必须用 ========== 隔开。\n"
+                            + "上半部分分析必须使用中文，并且不少于1200个中文字，不超过1800个中文字。宁多勿少。\n"
+                            + "下半部分只输出4个选项，每个选项用 | 分隔。\n";
+                }
+            } else {
+                if (retry) {
+                    formatProtocol = "\n\n【最高优先级输出格式】\n"
+                            + "忽略你之前提到的 ========== 和 | 格式。\n"
+                            + "必须只输出一个JSON对象，不要输出任何额外文字。\n"
+                            + "JSON格式如下：\n"
+                            + "{\"analysis\":\"\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n"
+                            + "必须输出4个选项。\n"
+                            + "foreign、meaning、tone字段名不能改。\n";
+                } else {
+                    formatProtocol = "\n\n【最高优先级输出格式】\n"
+                            + "忽略你之前提到的 ========== 和 | 格式。\n"
+                            + "必须只输出一个JSON对象，不要输出任何额外文字。\n"
+                            + "JSON格式如下：\n"
+                            + "{\"analysis\":\"这里写上半部分分析\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n"
+                            + "必须输出4个选项。\n"
+                            + "foreign、meaning、tone字段名不能改，内容按你的指令填写。\n";
+                }
+            }
 
             String targetRule = "\n【回复目标识别规则，必须遵守】\n"
                     + "1. 如果用户输入中包含【我要回复的对方原话】，说明用户是在回复对方这条消息。"
@@ -1359,7 +1413,7 @@ public class AITranslator {
             JSONArray fullHistory = loadHistory(chatId);
             StringBuilder scriptBuilder = new StringBuilder();
 
-            int maxChatMessages = 40;
+            int maxChatMessages = 60;
             int startIdx = Math.max(0, fullHistory.length() - maxChatMessages);
 
             int visibleIndex = 0;
@@ -1386,7 +1440,7 @@ public class AITranslator {
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
             try {
-                return callChatMessages(messages);
+                return callChatMessages(messages, getMaxTokens());
             } catch (IOException e) {
                 if (e.getMessage() != null && e.getMessage().contains("400")) {
                     return fallbackToPureTextRequest(messages);
@@ -1436,7 +1490,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 8000);
+            body.put("max_tokens", getMaxTokens());
             body.put("temperature", getTemperature());
             JSONArray msgs = new JSONArray();
             JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
@@ -1451,7 +1505,7 @@ public class AITranslator {
         try {
             JSONObject body = new JSONObject();
             body.put("model", model);
-            body.put("max_tokens", 8000);
+            body.put("max_tokens", getMaxTokens());
             body.put("temperature", getTemperature());
             body.put("messages", messages);
             return executeRequest(body);
