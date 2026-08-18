@@ -1553,12 +1553,36 @@ public class AITranslator {
 
     private static String fixUrl(String url) {
         if (url == null || url.isEmpty()) return "https://api.openai.com/v1/chat/completions";
-        if (url.endsWith("/chat/completions")) return url;
-        if (!url.endsWith("/")) url += "/";
-        int idx = url.indexOf("/v1");
-        if (idx >= 0) url = url.substring(0, idx);
-        if (!url.endsWith("/")) url += "/";
-        return url + "v1/chat/completions";
+        
+        // 如果用户自己填写了完整的完整路径（包含 chat/completions），直接信任并原样返回
+        if (url.endsWith("/chat/completions")) {
+            return url;
+        }
+
+        // 如果没有包含 chat/completions，我们需要帮它补全
+        if (!url.endsWith("/")) {
+            url += "/";
+        }
+        
+        // 关键改动：对于 Gemini 等特殊接口，如果地址里已经有 openai/v1/，就不要瞎切了
+        if (url.contains("generativelanguage.googleapis.com")) {
+             // 针对 Gemini 官方接口的特殊补全
+             if (!url.contains("chat/completions")) {
+                  return url + "chat/completions";
+             }
+        }
+
+        // 保留对普通中转 API 的宽容处理（如果不是 Gemini，才执行旧的切割逻辑）
+        int idx = url.indexOf("/v1/");
+        if (idx >= 0 && !url.contains("generativelanguage.googleapis.com")) {
+            url = url.substring(0, idx + 4);
+        }
+        
+        // 最后确保以完整的 completions 结尾
+        if (!url.endsWith("chat/completions")) {
+            return url + "chat/completions";
+        }
+        return url;
     }
 
     public static List<String> fetchModels(String key, String baseUrl) throws IOException {
