@@ -49,6 +49,7 @@ public class ChatHook {
 
     private static final Set<String> translating = ConcurrentHashMap.newKeySet();
     private static final Set<String> recordedMsgIds = ConcurrentHashMap.newKeySet();
+    private static final ConcurrentHashMap<String, String> chatLangOverride = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, String> chatRequestMap = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<String, Integer> chatRetryCountMap = new ConcurrentHashMap<>();
 
@@ -205,6 +206,13 @@ public class ChatHook {
         if (text == null) return false;
         String s = text.trim();
         return (s.startsWith("(") && s.endsWith(")")) || (s.startsWith("（") && s.endsWith("）"));
+    }
+    private static boolean shouldSkipHistory(String text) {
+        if (text == null) return false;
+        String t = text.trim();
+        if (t.isEmpty()) return false;
+        if (AITranslator.isNoHistoryText(t)) return true;
+        return isPureBracketQuery(t);
     }
 
     private static String safeCallString(Object obj, String methodName) {
@@ -957,7 +965,7 @@ public class ChatHook {
 
                             final boolean isPureSymbol = !AITranslator.hasAnyLetterOrDigit(text);
                             boolean isNew = recordedMsgIds.add(chatId + "_" + mid);
-                            if (isNew) {
+                            if (isNew && !shouldSkipHistory(text)) {
                                 final String fm = mid;
                                 final String ft = text;
                                 final String fq = quotedText;
@@ -1128,6 +1136,35 @@ public class ChatHook {
         return null;
     }
 
+    private static void updateTranslateBtnText(Button btn) {
+        if (btn == null) return;
+        String cid = currentChatId;
+        String ov = (cid == null) ? null : chatLangOverride.get(cid);
+        if (ov == null || ov.isEmpty()) btn.setText("译");
+        else btn.setText("译·" + ov.toUpperCase());
+    }
+
+    private static void showLanguagePicker(Button btn, EditText edit) {
+        if (btn == null || edit == null) return;
+        final String cid = currentChatId;
+        if (cid == null || cid.isEmpty() || "0".equals(cid) || "null".equals(cid)) {
+            Toast.makeText(edit.getContext(), "⚠️ 会话尚未就绪，请退出聊天重新进入后再试", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final String[] codes = {"auto", "en", "es", "ru", "uk", "ko", "ar", "pt", "fr", "de", "it", "tr", "nl", "pl", "kk", "cs"};
+        final String[] names = {"🌐 自动判断", "英语 English", "西班牙语 Español", "俄语 Русский", "乌克兰语 Українська", "韩语 한국어", "阿拉伯语 العربية", "葡萄牙语 Português", "法语 Français", "德语 Deutsch", "意大利语 Italiano", "土耳其语 Türkçe", "荷兰语 Nederlands", "波兰语 Polski", "哈萨克语 Қазақша", "捷克语 Čeština"};
+        new android.app.AlertDialog.Builder(edit.getContext())
+                .setTitle("选择翻译语言（仅当前聊天）")
+                .setItems(names, (d, w) -> {
+                    String code = codes[w];
+                    if ("auto".equals(code)) chatLangOverride.remove(cid);
+                    else chatLangOverride.put(cid, code);
+                    updateTranslateBtnText(btn);
+                    Toast.makeText(edit.getContext(), "当前聊天语言已设为：" + names[w], Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("取消", null).show();
+    }
+
     private static View findNativeSendBtn(ViewGroup root) {
         if (root == null) return null;
         ArrayList<View> views = new ArrayList<>();
@@ -1201,6 +1238,11 @@ public class ChatHook {
                 Toast.makeText(edit.getContext(), "暂无可选版本", Toast.LENGTH_SHORT).show();
             }
         });
+        btn.setOnLongClickListener(v -> {
+            if (isTranslatingAPI) Toast.makeText(edit.getContext(), "翻译中，请稍候", Toast.LENGTH_SHORT).show();
+            else showLanguagePicker(btn, edit);
+            return true;
+        });
 
         final View[] nsb = new View[1];
 
@@ -1214,7 +1256,7 @@ public class ChatHook {
                     if (!isTranslatingAPI) {
                         btn.setVisibility(View.VISIBLE);
                         btn.setEnabled(true);
-                        btn.setText("译");
+                        updateTranslateBtnText(btn);
                         btn.setAlpha(0.93f);
                     }
                     if (nsb[0] != null) nsb[0].setVisibility(View.GONE);
@@ -1334,7 +1376,13 @@ public class ChatHook {
                         + "\n【补充内容】：" + text;
             }
 
-            if (pbm) ttt = "[PURE_BRACKET_MODE]\n" + ttt;
+            if (pbm) {
+                String cleanQ = text;
+                if (text.startsWith("(") && text.endsWith(")")) cleanQ = text.substring(1, text.length() - 1).trim();
+                else if (text.startsWith("（") && text.endsWith("）")) cleanQ = text.substring(1, text.length() - 1).trim();
+                if (cleanQ.isEmpty()) cleanQ = text;
+                ttt = cleanQ;
+            }
 
             if (qis != null) {
                 File qf = new File(qis);
@@ -1348,30 +1396,59 @@ public class ChatHook {
             final String ftt = ttt;
             final String rci = text;
 
+            if (qis != null) currentQuotedImagePath = null;
+
+            if (pbm) {
+                AITranslator.markNoHistory(rci);
+                String inner = rci;
+                if (inner.startsWith("(") && inner.endsWith(")")) inner = inner.substring(1, inner.length() - 1).trim();
+                else if (inner.startsWith("（") && inner.endsWith("）")) inner = inner.substring(1, inner.length() - 1).trim();
+                AITranslator.markNoHistory(inner);
+            }
+
+            if (pbm && qis != null) {
+                final String noteChat = cs;
+                final String notePath = qis;
+                final boolean noteMine = selectedReplyMine;
+                new Thread(() -> AITranslator.rememberImageNote(noteChat, notePath, noteMine)).start();
+            }
+
             new Thread(() -> {
                 try {
-                    String tl = determineSmartTargetLang(nats, nls, cs);
-                    if (cts == 1) AITranslator.registerFriend(cs, pns, tl, nats);
-
-                    String lr = chatRequestMap.get(cs);
-                    boolean retry = ftt.equals(lr);
-                    if (retry) {
-                        chatRetryCountMap.put(cs, chatRetryCountMap.getOrDefault(cs, 0) + 1);
+                    if (pbm) {
+                        String answer = AITranslator.askAiQuestion(ftt, cs);
+                        isTranslatingAPI = false;
+                        edit.post(() -> {
+                            btn.setEnabled(true);
+                            updateTranslateBtnText(btn);
+                            btn.setAlpha(0.92f);
+                            showAnswerDialog(edit, answer);
+                        });
                     } else {
-                        chatRequestMap.put(cs, ftt);
-                        chatRetryCountMap.put(cs, 0);
+                        String manualLang = chatLangOverride.get(cs);
+                        String tl = (manualLang != null && !manualLang.isEmpty()) ? manualLang : determineSmartTargetLang(nats, nls, cs);
+                        if (cts == 1) AITranslator.registerFriend(cs, pns, tl, nats);
+
+                        String lr = chatRequestMap.get(cs);
+                        boolean retry = ftt.equals(lr);
+                        if (retry) {
+                            chatRetryCountMap.put(cs, chatRetryCountMap.getOrDefault(cs, 0) + 1);
+                        } else {
+                            chatRequestMap.put(cs, ftt);
+                            chatRetryCountMap.put(cs, 0);
+                        }
+
+                        String result = AITranslator.translateForPicker(ftt, tl, cs, retry);
+                        isTranslatingAPI = false;
+                        String fr = result;
+
+                        edit.post(() -> {
+                            btn.setEnabled(true);
+                            updateTranslateBtnText(btn);
+                            btn.setAlpha(0.92f);
+                            showPicker(edit, btn, fr, rci, pns, oneTimeFinal);
+                        });
                     }
-
-                    String result = AITranslator.translateForPicker(ftt, tl, cs, retry);
-                    isTranslatingAPI = false;
-                    String fr = result;
-
-                    edit.post(() -> {
-                        btn.setEnabled(true);
-                        btn.setText("译");
-                        btn.setAlpha(0.92f);
-                        showPicker(edit, btn, fr, rci, pns, oneTimeFinal);
-                    });
                 } catch (Exception e) {
                     isTranslatingAPI = false;
                     chatRequestMap.remove(cs);
@@ -1379,10 +1456,10 @@ public class ChatHook {
 
                     edit.post(() -> {
                         btn.setEnabled(true);
-                        btn.setText("译");
+                        updateTranslateBtnText(btn);
                         btn.setAlpha(0.88f);
                         Toast.makeText(edit.getContext(),
-                                "⚠️ 翻译失败: " + (e.getMessage() != null ? e.getMessage() : "未知错误"),
+                                "⚠️ 失败: " + (e.getMessage() != null ? e.getMessage() : "未知错误"),
                                 Toast.LENGTH_LONG).show();
                     });
                 }
@@ -1447,6 +1524,31 @@ public class ChatHook {
             default: return null;
         }
     }
+    private static void showAnswerDialog(EditText edit, String answer) {
+        android.content.Context ctx = edit.getContext();
+        final String showText = (answer == null) ? "" : answer.trim().replaceAll("\\*+", "");
+        android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+        TextView rawTv = new TextView(ctx);
+        rawTv.setText(showText);
+        rawTv.setTextIsSelectable(true);
+        rawTv.setTextSize(14f);
+        rawTv.setTextColor(Color.BLACK);
+        rawTv.setPadding(32, 24, 32, 24);
+        rawTv.setLineSpacing(4f, 1.1f);
+        sv.addView(rawTv, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx).setTitle("AI 回答").setView(sv)
+                .setPositiveButton("复制", (d, w) -> {
+                    try { ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", showText)); Toast.makeText(ctx, "已复制", Toast.LENGTH_SHORT).show(); } catch (Exception ignored) {}
+                })
+                .setNegativeButton("关闭", null).create();
+        dialog.show();
+        if (dialog.getWindow() != null) {
+            android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+            dialog.getWindow().setLayout((int)(dm.widthPixels * 0.92), (int)(dm.heightPixels * 0.75));
+        }
+    }
+
+    private static void showPicker(EditText edit, Button btn, String result, String origChinese, String pn, boolean oneTime) {
 
     private static void showPicker(EditText edit, Button btn, String result, String origChinese, String pn, boolean oneTime) {
         android.content.Context ctx = edit.getContext();
@@ -1850,7 +1952,7 @@ public class ChatHook {
                     : extractQuoteForHistory(msg, chatId, true);
 
             boolean isNew = recordedMsgIds.add(fc + "_" + fm);
-            if (isNew) {
+            if (isNew && !shouldSkipHistory(text)) {
                 historyExecutor.execute(() ->
                         AITranslator.appendHistory(fc, fm, "assistant", ft, fst, fq, false)
                 );
