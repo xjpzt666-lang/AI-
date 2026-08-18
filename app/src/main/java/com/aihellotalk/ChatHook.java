@@ -671,7 +671,7 @@ public class ChatHook {
                                             TextView textView = (TextView) tv;
                                             String cur = textView.getText().toString();
                                             if (cur.equals(foreignText)
-                                                    ||| cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
+                                                    || cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
                                                 setFullText(textView, translated.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
                                             }
                                         }
@@ -754,7 +754,7 @@ public class ChatHook {
                                                 TextView textView = (TextView) tv;
                                                 String cur = textView.getText().toString();
                                                 if (cur.equals(foreignText)
-                                                        ||| cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
+                                                        || cur.startsWith(foreignText.substring(0, Math.min(10, foreignText.length())))) {
                                                     setFullText(textView, translated.replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
                                                 }
                                             }
