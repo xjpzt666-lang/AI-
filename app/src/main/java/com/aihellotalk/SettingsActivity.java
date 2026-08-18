@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 
 public class SettingsActivity extends Activity {
 
-    private EditText etKey, etUrl, etModel, etTemperature, etMaxTokens;
+    private EditText etKey, etUrl, etModel, etTemperature, etMaxTokens, etMaxChat;
     private android.widget.Spinner spinnerReasoning;
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
     private Button btnFetch, btnSave, btnTest;
@@ -72,6 +72,11 @@ public class SettingsActivity extends Activity {
         etTemperature = edit(prefs.getString("temperature", "0.7"));
         etTemperature.setHint("0.0 到 2.0 之间，推荐 0.7");
         ll.addView(etTemperature);
+
+        ll.addView(lab("上下文消息数 (Max Chat Messages):"));
+        etMaxChat = edit(prefs.getString("max_chat_messages", "30"));
+        etMaxChat.setHint("建议 20~60，越大越慢但记忆越久");
+        ll.addView(etMaxChat);
 
         ll.addView(lab("最大输出长度 (Max Tokens):"));
         etMaxTokens = edit(prefs.getString("max_tokens", "8000"));
@@ -405,6 +410,8 @@ public class SettingsActivity extends Activity {
         String es = etPromptES.getText().toString().trim();
 
         String tempStr = etTemperature.getText().toString().trim();
+        String maxChatStr = etMaxChat.getText().toString().trim();
+        if (maxChatStr.isEmpty()) maxChatStr = "30";
         if (tempStr.isEmpty()) {
             tempStr = "0.7";
         }
@@ -431,6 +438,7 @@ public class SettingsActivity extends Activity {
        editor.putString("api_url", url);
         editor.putString("model", mdl);
         editor.putString("temperature", tempStr);
+        editor.putString("max_chat_messages", maxChatStr);
         editor.putString("max_tokens", maxTokensStr);
         editor.putString("prompt_zh", zh);
         editor.putString("prompt_en", en);
@@ -443,6 +451,7 @@ public class SettingsActivity extends Activity {
         String finalTempStr = tempStr;
         String finalMaxTokensStr = maxTokensStr;
         String finalEffortStr = effortStr;
+        String finalMaxChatStr = maxChatStr;
        new Thread(() -> {
             try {
                 String modelList = prefs.getString("model_list", "");
@@ -452,6 +461,7 @@ public class SettingsActivity extends Activity {
                         + "model=" + mdl + "\n"
                         + "model_list=" + modelList + "\n"
                         + "temperature=" + finalTempStr + "\n"
+                        + "max_chat_messages=" + finalMaxChatStr + "\n"
                         + "max_tokens=" + finalMaxTokensStr + "\n"
                         + "reasoning_effort=" + finalEffortStr + "\n"
                         + "EOF\n";
