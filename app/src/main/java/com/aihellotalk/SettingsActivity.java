@@ -82,7 +82,7 @@ public class SettingsActivity extends Activity {
 
         ll.addView(lab("思考深度 (Reasoning Effort):"));
         spinnerReasoning = new android.widget.Spinner(this);
-        String[] efforts = {"default", "low", "medium", "high"};
+        String[] efforts = {"默认(不干预)", "轻度思考", "中度思考", "深度思考"};
         android.widget.ArrayAdapter<String> effortAdapter = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts);
         effortAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spinnerReasoning.setAdapter(effortAdapter);
