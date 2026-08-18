@@ -30,6 +30,8 @@ import java.util.concurrent.TimeUnit;
 
 public class SettingsActivity extends Activity {
 
+    private EditText etKey, etUrl, etModel, etTemperature, etMaxTokens;
+    private android.widget.Spinner spinnerReasoning;
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
     private Button btnFetch, btnSave, btnTest;
 
