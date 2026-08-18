@@ -529,6 +529,7 @@ public class MainActivity extends Activity {
             String mList = prefs.getString("model_list", "");
             String tempStr = prefs.getString("temperature", "0.7");
             String maxT = prefs.getString("max_tokens", "8000"); 
+            String effort = prefs.getString("reasoning_effort", "default");
 
             String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
                     + "api_key=" + key + "\n"
@@ -537,6 +538,7 @@ public class MainActivity extends Activity {
                     + "model_list=" + mList + "\n"
                     + "temperature=" + tempStr + "\n"
                     + "max_tokens=" + maxT + "\n"
+                    + "reasoning_effort=" + effort + "\n"
                     + "EOF\n";
             runRoot(cfg);
             runRoot("chmod 644 /data/local/tmp/htai_config.txt");
