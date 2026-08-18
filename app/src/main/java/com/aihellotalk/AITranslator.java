@@ -1418,7 +1418,7 @@ public class AITranslator {
             messages.put(createMessageObj("user", scriptBuilder.toString()));
 
             try {
-                return callChatMessages(messages, 2000);
+                return callChatMessages(messages, 1890);
             } catch (IOException e) {
                 if (e.getMessage() != null && e.getMessage().contains("400")) {
                     return fallbackToPureTextRequest(messages);
