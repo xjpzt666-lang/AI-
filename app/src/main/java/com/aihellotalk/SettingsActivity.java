@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 
 public class SettingsActivity extends Activity {
 
-    private EditText etKey, etUrl, etModel, etTemperature;
+    private EditText etKey, etUrl, etModel, etTemperature, etMaxTokens;
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
     private Button btnFetch, btnSave, btnTest;
 
@@ -71,6 +71,11 @@ public class SettingsActivity extends Activity {
         etTemperature = edit(prefs.getString("temperature", "0.7"));
         etTemperature.setHint("0.0 到 2.0 之间，推荐 0.7");
         ll.addView(etTemperature);
+
+        ll.addView(lab("最大输出长度 (Max Tokens):"));
+        etMaxTokens = edit(prefs.getString("max_tokens", "8000"));
+        etMaxTokens.setHint("建议设置 2000 到 8000，防止回答被截断");
+        ll.addView(etMaxTokens);
 
         ll.addView(div());
 
@@ -391,11 +396,22 @@ public class SettingsActivity extends Activity {
             tempStr = "0.7";
         }
 
+        String maxTokensStr = etMaxTokens.getText().toString().trim();
+        if (maxTokensStr.isEmpty()) {
+            maxTokensStr = "8000";
+        }
+        try {
+            Integer.parseInt(maxTokensStr);
+        } catch (NumberFormatException e) {
+            maxTokensStr = "8000";
+        }
+
         SharedPreferences.Editor editor = prefs.edit();
         editor.putString("api_key", key);
         editor.putString("api_url", url);
         editor.putString("model", mdl);
         editor.putString("temperature", tempStr);
+        editor.putString("max_tokens", maxTokensStr);
         editor.putString("prompt_zh", zh);
         editor.putString("prompt_en", en);
         editor.putString("prompt_ru", ru);
@@ -405,6 +421,7 @@ public class SettingsActivity extends Activity {
         editor.apply();
 
         String finalTempStr = tempStr;
+        String finalMaxTokensStr = maxTokensStr;
         new Thread(() -> {
             try {
                 String modelList = prefs.getString("model_list", "");
@@ -414,6 +431,7 @@ public class SettingsActivity extends Activity {
                         + "model=" + mdl + "\n"
                         + "model_list=" + modelList + "\n"
                         + "temperature=" + finalTempStr + "\n"
+                        + "max_tokens=" + finalMaxTokensStr + "\n"
                         + "EOF\n";
                 runRoot(cfg);
 
