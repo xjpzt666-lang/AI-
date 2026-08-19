@@ -730,16 +730,18 @@ public class ChatHook {
                         if (ev.getAction() == MotionEvent.ACTION_UP) {
                             String clean = s.substring(0, s.length() - 2).trim();
                             if (s.endsWith(" 🔄")) {
-                                String orig = AITranslator.getForeignByChinese(clean);
-                                if (orig == null) orig = AITranslator.getForeignByDraftChinese(clean);
+                                String orig = AITranslator.getForeignByDraftChinese(clean);
+                                if (orig == null) orig = AITranslator.getForeignByChinese(clean);
+                                if (orig == null) orig = AITranslator.getForeignFuzzy(clean);
                                 if (orig != null && !orig.equals(clean)) tv.setText(orig + " 🌐");
                             } else {
-                                String zh = AITranslator.getChineseByForeign(clean);
-                                if (zh == null) zh = AITranslator.getDraftFuzzy(clean);
+                                String zh = AITranslator.getDraftFuzzy(clean);
+                                if (zh == null) zh = AITranslator.getChineseByForeign(clean);
                                 if (zh != null && !zh.equals(clean)) tv.setText(zh + " 🔄");
                             }
                             p.setResult(true);
-                        } else if (ev.getAction() == MotionEvent.ACTION_DOWN) {
+                        }
+ else if (ev.getAction() == MotionEvent.ACTION_DOWN) {
                             p.setResult(true);
                         }
                     }
@@ -1001,7 +1003,7 @@ public class ChatHook {
                             if (isMine) {
                                 String d = AITranslator.getDraftFuzzy(text);
                                 if (d == null) d = AITranslator.getChineseByForeign(text);
-                                if (d != null) {
+                                if (d != null && !d.isEmpty()) {
                                     AITranslator.cacheResult(mid, text, d);
                                     final Object fbk = bean;
                                     final String ftk = text;
@@ -1009,36 +1011,30 @@ public class ChatHook {
                                         try { Thread.sleep(150); } catch (InterruptedException ignored) {}
                                         try { XposedHelpers.callMethod(fbk, "setText", ftk); } catch (Exception ignored) {}
                                     }).start();
-                                } else {
-                                    final String ft2 = text;
-                                    final String fc2 = chatId;
-                                    final String fm2 = mid;
-                                    final Object fb2 = bean;
-                                    if (reverseTranslatedMsgIds.add(fm2)) {
-                                        reverseTranslateExecutor.execute(() -> {
-                                            try {
-                                                String zh = AITranslator.reverseTranslateMyForeign(ft2, fc2);
-                                                if (zh != null && !zh.isEmpty()) {
-                                                    AITranslator.cacheResult(fm2, ft2, zh);
-                                                    AITranslator.rememberDraft(ft2, zh);
-                                                    reverseRetryMap.remove(fm2);
-                                                    try { XposedHelpers.callMethod(fb2, "setText", ft2); } catch (Exception ignored) {}
-                                                } else {
-                                                    int rc = reverseRetryMap.getOrDefault(fm2, 0);
-                                                    if (rc < 2) {
-                                                        reverseRetryMap.put(fm2, rc + 1);
-                                                        reverseTranslatedMsgIds.remove(fm2);
-                                                    }
-                                                }
-                                            } catch (Exception ignored) {
-                                                int rc = reverseRetryMap.getOrDefault(fm2, 0);
-                                                if (rc < 2) {
-                                                    reverseRetryMap.put(fm2, rc + 1);
-                                                    reverseTranslatedMsgIds.remove(fm2);
-                                                }
+                                    return;
+                                }
+
+                                final String ft2 = text;
+                                final String fc2 = chatId;
+                                final String fm2 = mid;
+                                final Object fb2 = bean;
+                                if (reverseTranslatedMsgIds.add(fm2)) {
+                                    reverseTranslateExecutor.execute(() -> {
+                                        try {
+                                            String existDraft = AITranslator.getDraftFuzzy(ft2);
+                                            if (existDraft != null && !existDraft.isEmpty()) {
+                                                AITranslator.cacheResult(fm2, ft2, existDraft);
+                                                return;
                                             }
-                                        });
-                                    }
+                                            String zh = AITranslator.reverseTranslateMyForeign(ft2, fc2);
+                                            if (zh != null && !zh.isEmpty()) {
+                                                AITranslator.cacheResult(fm2, ft2, zh);
+                                                AITranslator.rememberDraft(ft2, zh);
+                                                reverseRetryMap.remove(fm2);
+                                                try { XposedHelpers.callMethod(fb2, "setText", ft2); } catch (Exception ignored) {}
+                                            }
+                                        } catch (Exception ignored) {}
+                                    });
                                 }
                                 return;
                             }
@@ -1360,28 +1356,30 @@ public class ChatHook {
             final boolean qms = currentQuotedImageMissing;
 
             boolean pbm = isPureBracketQuery(text);
-            String ttt = text;
-
-            if (!pbm && hasSelectedReply && !selectedReplyMine
-                    && quote != null && !quote.trim().isEmpty()) {
-                String orig = AITranslator.getForeignFuzzy(quote);
-                if (orig != null) quote = orig;
-                ttt = "【我要回复的对方原话】：" + quote.trim()
-                        + "\n【我的回复】：" + text;
-            } else if (!pbm && hasSelectedReply && selectedReplyMine
-                    && quote != null && !quote.trim().isEmpty()) {
-                String orig = AITranslator.getForeignFuzzy(quote);
-                if (orig != null) quote = orig;
-                ttt = "【我对我自己之前这条外语消息的补充】：" + quote.trim()
-                        + "\n【补充内容】：" + text;
+            String cleanText = text;
+            if (pbm) {
+                if (cleanText.startsWith("(") && cleanText.endsWith(")")) cleanText = cleanText.substring(1, cleanText.length() - 1).trim();
+                else if (cleanText.startsWith("（") && cleanText.endsWith("）")) cleanText = cleanText.substring(1, cleanText.length() - 1).trim();
             }
 
-            if (pbm) {
-                String cleanQ = text;
-                if (text.startsWith("(") && text.endsWith(")")) cleanQ = text.substring(1, text.length() - 1).trim();
-                else if (text.startsWith("（") && text.endsWith("）")) cleanQ = text.substring(1, text.length() - 1).trim();
-                if (cleanQ.isEmpty()) cleanQ = text;
-                ttt = cleanQ;
+            String ttt = cleanText;
+
+            if (hasSelectedReply && quote != null && !quote.trim().isEmpty()) {
+                String orig = AITranslator.getForeignFuzzy(quote);
+                if (orig != null) quote = orig;
+                if (selectedReplyMine) {
+                    if (pbm) {
+                        ttt = "【我选中的我自己的历史消息】：" + quote.trim() + "\n【我对这条消息的疑问/提问】：" + cleanText;
+                    } else {
+                        ttt = "【我对我自己之前这条外语消息的补充】：" + quote.trim() + "\n【补充内容】：" + cleanText;
+                    }
+                } else {
+                    if (pbm) {
+                        ttt = "【我选中的对方原话】：" + quote.trim() + "\n【我关于这句话的提问/要求】：" + cleanText;
+                    } else {
+                        ttt = "【我要回复的对方原话】：" + quote.trim() + "\n【我的回复】：" + cleanText;
+                    }
+                }
             }
 
             if (qis != null) {
