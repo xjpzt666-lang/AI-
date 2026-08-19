@@ -899,12 +899,13 @@ private static String getReasoningEffort() {
 
         try {
             JSONArray messages = new JSONArray();
-            String sysPrompt = "你是聊天助手。用户正在和一个外国朋友聊天。"
-                    + "用户用中文向你提问（用括号括起来的），请直接回答用户的问题。"
-                    + "请结合对话历史和对方背景档案，用中文详细、完整地回答。"
-                    + "如果问题涉及翻译，请直接把翻译结果写在回答里。"
-                    + "如果上下文里没有相关信息，就诚实说不知道，禁止编造。"
-                    + "请给出详细、完整的回答，尽量全面分析，不要只回答一两句话。不要使用Markdown格式。"
+            String sysPrompt = "你是专属聊天军师与私人语言顾问。\n"
+                    + "用户正在和一个外国朋友聊天，并正在向你请教问题。\n"
+                    + "【重要识别规则】：\n"
+                    + "1. 如果输入中包含【我选中的对方原话】，说明用户是在针对对方这句话进行提问或分析，请优先解答。\n"
+                    + "2. 如果输入中包含【我选中的我自己的历史消息】，说明用户是在审视自己之前说过的话，请向用户指出该句表达是否得体或解答疑问。\n"
+                    + "3. 请结合对话历史与对方背景档案，用中文给出清晰、专业、详细的分析。\n"
+                    + "4. 如果涉及翻译要求，直接把最佳翻译写在回答中。禁止编造。严禁使用Markdown格式排版。\n"
                     + profileBlock(chatId);
             messages.put(createMessageObj("system", sysPrompt));
 
@@ -1631,7 +1632,10 @@ private static String getReasoningEffort() {
                     + "5. 上半部分分析完成后立即进入分隔线和4个翻译选项，不要继续扩写。\n"
                     + "6. 上半部分分析必须严格按要求写，不得只写一两句敷衍了事（除非用户明确要求简短）。\n"
                     + "7. 先完成上半部分分析，再生成4个选项。\n"
-                    + "8. 【绝对视角隔离】：你只是一个客观的翻译工具。提到“中国”时绝对不许翻译成“我国的/国产的”；提到外国时也不许翻译成“你们国家”。即使语境中用户是日本人，提到“日本”时也绝对不要翻译成“这里/我们这里”。所有国家名一律保持客观的字面直译。\n"
+                    + "8. 【绝对死命令：禁止意译国籍与代入用户人设】\n"
+                    + "   - 你不是用户本人！无论用户叫什么名字、是什么国籍，你（AI）没有任何个人身份，你只是一个绝对中立的翻译工具。\n"
+                    + "   - 当外语或中文原文出现“中国”、“日本”等特定国家名时，绝对禁止将其擅自替换为“国产”、“我国”、“这里”或“你们国家”等带有主观视角的代词！\n"
+                    + "   - 所有国家和文化名词必须严格保持客观的字面直译。如果你擅自代入人设并将国家名进行本地化替换，将直接导致系统崩溃。\n"
                     + bannedRule;
 
             String contextRule = "\n【上下文使用规则】\n"
@@ -1906,9 +1910,20 @@ private static String getReasoningEffort() {
         if (chinese == null || chinese.trim().isEmpty()) return null;
         String clean = stripFlipMarks(chinese);
         String exact = chineseToForeign.get(clean); if (exact != null) return exact;
+        
+        for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
+            String k = stripFlipMarks(entry.getKey()), v = stripFlipMarks(entry.getValue());
+            if (v != null && (clean.equals(v) || clean.contains(v) || v.contains(clean))) return k;
+        }
+
         for (Map.Entry<String, String> entry : chineseToForeign.entrySet()) {
             String k = stripFlipMarks(entry.getKey()), v = stripFlipMarks(entry.getValue());
-            if (clean.equals(k) || clean.contains(k) || k.contains(clean)) return v;
+            if (clean.equals(k) || clean.contains(k) || k.contains(clean)) {
+                if (k.length() > 0 && clean.length() > 0) {
+                    double ratio = (double) clean.length() / k.length();
+                    if (ratio > 0.4 && ratio < 2.5) return v;
+                }
+            }
         }
         return null;
     }
@@ -1916,9 +1931,11 @@ private static String getReasoningEffort() {
     public static String getChineseByForeign(String foreign) {
         if (foreign == null || foreign.trim().isEmpty()) return null;
         String clean = stripFlipMarks(foreign);
-        String exact = foreignToChinese.get(clean); if (exact != null) return exact;
-        exact = mySentDrafts.get(clean); if (exact != null) return exact;
-        for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) {
+        
+        String exact = mySentDrafts.get(clean); if (exact != null) return exact;
+        exact = foreignToChinese.get(clean); if (exact != null) return exact;
+        
+        for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
             String k = stripFlipMarks(entry.getKey()), v = stripFlipMarks(entry.getValue());
             if (clean.equals(k) || clean.contains(k) || k.contains(clean)) return v;
         }
@@ -1928,13 +1945,16 @@ private static String getReasoningEffort() {
     public static String getForeignFuzzy(String copiedText) {
         if (copiedText == null || copiedText.trim().isEmpty()) return null;
         String clean = stripFlipMarks(copiedText);
+        
         if (mySentDrafts.containsKey(clean)) return clean;
-        if (foreignToChinese.containsKey(clean)) return clean;
-        if (chineseToForeign.containsKey(clean)) return chineseToForeign.get(clean);
-        for (Map.Entry<String, String> entry : foreignToChinese.entrySet()) {
+        for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
             String f = stripFlipMarks(entry.getKey()), c = stripFlipMarks(entry.getValue());
             if (clean.contains(c) || c.contains(clean) || clean.contains(f) || f.contains(clean)) return f;
         }
+
+        if (foreignToChinese.containsKey(clean)) return clean;
+        if (chineseToForeign.containsKey(clean)) return chineseToForeign.get(clean);
+        
         return null;
     }
 
