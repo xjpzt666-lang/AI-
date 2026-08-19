@@ -2134,3 +2134,24 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 }
+    private static View findNativeSendBtn(ViewGroup root) {
+        if (root == null) return null;
+        ArrayList<View> views = new ArrayList<>();
+        views.add(root);
+
+        for (int i = 0; i < views.size(); i++) {
+            View cur = views.get(i);
+            try {
+                if (cur.getId() != View.NO_ID
+                        && cur.getResources().getResourceEntryName(cur.getId()).toLowerCase().contains("send")) {
+                    return cur;
+                }
+            } catch (Exception ignored) {}
+
+            if (cur instanceof ViewGroup) {
+                ViewGroup vg = (ViewGroup) cur;
+                for (int j = 0; j < vg.getChildCount(); j++) views.add(vg.getChildAt(j));
+            }
+        }
+        return null;
+    }
