@@ -1479,7 +1479,7 @@ private static String getReasoningEffort() {
             JSONArray messages = new JSONArray();
             String friendName = getFriendName(chatId);
             String nameHint = (friendName != null && !friendName.isEmpty() && !friendName.equals(chatId)) 
-                ? "\n\n【注意：当前聊天对象昵称：" + friendName + "。在分析心态和潜台词时，提到对方请务必使用“" + friendName + "(中文译名)”的格式，例如：Maria(玛丽亚)。但在翻译外文本身时务必自然流畅，绝对不要擅自把原文中出现的人名替换成该昵称。】" 
+                ? "\n\n【绝密警告：当前聊天对象是 " + friendName + "。你只需在心里知道对方是谁即可。在给出的最终中文翻译和括号潜台词里，绝对不要生硬地加上对方的名字！保持第一人称的自然语境，不许画蛇添足！】" 
                 : "";
             String sysPrompt = receivePrompt + profileBlock(chatId) + nameHint;
             messages.put(createMessageObj("system", sysPrompt));
@@ -1668,7 +1668,7 @@ private static String getReasoningEffort() {
 
             String friendName = getFriendName(chatId);
             String nameHint = (friendName != null && !friendName.isEmpty() && !friendName.equals(chatId)) 
-                ? "\n\n【注意：当前聊天对象昵称：" + friendName + "。在上半部分分析中，提到对方时请务必使用“" + friendName + "(中文译名)”的格式（例如：Maria(玛丽亚)）来替代“对方”一词。但生成翻译选项时务必保持地道自然，严禁擅自用该昵称替换原文里本来的人名。】" 
+                ? "\n\n【绝密警告：当前聊天对象是 " + friendName + "。在【上半部分分析】中可以自然地使用该昵称（如："+friendName+"）替代“对方”。但是！在生成【下方4个翻译选项】时，严禁把对方名字带入括号的潜台词里！潜台词必须短小精悍，绝不能在潜台词里生硬地提对方名字，也严禁替换原文人名！】" 
                 : "";
 
             String fullProtocol = sysPrompt + profileBlock(chatId) + nameHint + spanishDirective + formatProtocol + targetRule + contextRule;
