@@ -1140,48 +1140,127 @@ public class ChatHook {
         else btn.setText("译·" + ov.toUpperCase());
     }
 
-    private static void showLanguagePicker(Button btn, EditText edit) {
+        private static void showLanguagePicker(Button btn, EditText edit) {
         if (btn == null || edit == null) return;
+        android.content.Context ctx = edit.getContext();
         final String cid = currentChatId;
         if (cid == null || cid.isEmpty() || "0".equals(cid) || "null".equals(cid)) {
-            Toast.makeText(edit.getContext(), "⚠️ 会话尚未就绪，请退出聊天重新进入后再试", Toast.LENGTH_SHORT).show();
+            Toast.makeText(ctx, "⚠️ 会话尚未就绪，请退出重新进入", Toast.LENGTH_SHORT).show();
             return;
         }
+
+        android.widget.LinearLayout root = new android.widget.LinearLayout(ctx);
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.setPadding(0, 24, 0, 0);
+
+        // ============ 全局同步：一次性复选框 ============
+        final android.content.SharedPreferences sp = ctx.getSharedPreferences("htai_quick_prefs", android.content.Context.MODE_PRIVATE);
+        final android.widget.CheckBox checkBoxOneTime = new android.widget.CheckBox(ctx);
+        checkBoxOneTime.setText("仅本次 (全局同步，不污染历史记忆)");
+        checkBoxOneTime.setTextSize(13f);
+        checkBoxOneTime.setTextColor(Color.parseColor("#B02A37"));
+        checkBoxOneTime.setPadding(48, 16, 48, 16);
+        checkBoxOneTime.setChecked(sp.getBoolean("always_one_time", false));
+        checkBoxOneTime.setOnCheckedChangeListener((btnView, isChecked) -> {
+            sp.edit().putBoolean("always_one_time", isChecked).apply();
+            Toast.makeText(ctx, isChecked ? "✅ 已开启仅本次" : "❌ 已关闭仅本次", Toast.LENGTH_SHORT).show();
+        });
+        root.addView(checkBoxOneTime);
+
+        // ============ 快捷指令滑动条 ============
+        TextView tagHeader = new TextView(ctx);
+        tagHeader.setText("⚡ 快捷调教指令");
+        tagHeader.setTextSize(12f);
+        tagHeader.setTextColor(Color.GRAY);
+        tagHeader.setPadding(48, 16, 48, 8);
+        root.addView(tagHeader);
+
+        android.widget.HorizontalScrollView hsv = new android.widget.HorizontalScrollView(ctx);
+        hsv.setHorizontalScrollBarEnabled(false);
+        android.widget.LinearLayout quickBar = new android.widget.LinearLayout(ctx);
+        quickBar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        quickBar.setPadding(36, 0, 36, 16);
+        hsv.addView(quickBar);
+
+        final android.app.AlertDialog[] dialogRef = new android.app.AlertDialog[1];
+
+        for (int i = 1; i <= 5; i++) {
+            String raw = AITranslator.getQuickOption(i);
+            if (raw.isEmpty()) continue;
+            String[] parts = raw.split("\\|", 2);
+            final String tag = parts.length > 0 ? parts[0].trim() : "";
+            final String tagContent = parts.length > 1 ? parts[1].trim() : tag;
+            if (tag.isEmpty()) continue;
+
+            Button tagBtn = new Button(ctx);
+            tagBtn.setText(tag);
+            tagBtn.setTextSize(12f);
+            tagBtn.setAllCaps(false);
+            tagBtn.setPadding(24, 8, 24, 8);
+            GradientDrawable tbg = new GradientDrawable();
+            tbg.setColor(Color.parseColor("#E8E8E8"));
+            tbg.setCornerRadius(16f);
+            tagBtn.setBackground(tbg);
+            tagBtn.setTextColor(Color.parseColor("#333333"));
+            android.widget.LinearLayout.LayoutParams tlp = new android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            tlp.setMargins(0, 0, 16, 0);
+            tagBtn.setLayoutParams(tlp);
+
+            tagBtn.setOnClickListener(v2 -> {
+                String origChinese = edit.getText().toString();
+                String newPrompt = origChinese;
+                if (newPrompt.endsWith("）") || newPrompt.endsWith(")")) {
+                    newPrompt = newPrompt.replaceAll("[（\\(][^）\\)]*[）\\)]$", "").trim();
+                }
+                if (tag.contains("火力全开") || checkBoxOneTime.isChecked()) {
+                    newPrompt = "一次性：" + newPrompt + " （" + tagContent + "）";
+                } else {
+                    newPrompt = newPrompt + " （" + tagContent + "）";
+                }
+                edit.setText(newPrompt);
+                edit.setSelection(newPrompt.length());
+                if (dialogRef[0] != null) dialogRef[0].dismiss();
+                edit.post(() -> btn.performClick());
+            });
+            quickBar.addView(tagBtn);
+        }
+        root.addView(hsv);
+
+        // ============ 语言列表区 ============
+        View div = new View(ctx);
+        div.setBackgroundColor(Color.parseColor("#DDDDDD"));
+        div.setLayoutParams(new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 2));
+        root.addView(div);
+
         final String[] codes = {"auto", "en", "es", "ru", "uk", "ko", "ar", "pt", "fr", "de", "it", "tr", "nl", "pl", "kk", "cs"};
         final String[] names = {"🌐 自动判断", "英语 English", "西班牙语 Español", "俄语 Русский", "乌克兰语 Українська", "韩语 한국어", "阿拉伯语 العربية", "葡萄牙语 Português", "法语 Français", "德语 Deutsch", "意大利语 Italiano", "土耳其语 Türkçe", "荷兰语 Nederlands", "波兰语 Polski", "哈萨克语 Қазақша", "捷克语 Čeština"};
-        new android.app.AlertDialog.Builder(edit.getContext())
-                .setTitle("选择翻译语言（仅当前聊天）")
-                .setItems(names, (d, w) -> {
-                    String code = codes[w];
-                    if ("auto".equals(code)) chatLangOverride.remove(cid);
-                    else chatLangOverride.put(cid, code);
-                    updateTranslateBtnText(btn);
-                    Toast.makeText(edit.getContext(), "当前聊天语言已设为：" + names[w], Toast.LENGTH_SHORT).show();
-                })
-                .setNegativeButton("取消", null).show();
+        
+        android.widget.ListView listView = new android.widget.ListView(ctx);
+        android.widget.ArrayAdapter<String> adapter = new android.widget.ArrayAdapter<>(ctx, android.R.layout.simple_list_item_1, names);
+        listView.setAdapter(adapter);
+        root.addView(listView);
+
+        android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
+                .setTitle("长按菜单 (快捷指令 & 临时语言)")
+                .setView(root)
+                .setNegativeButton("取消", null)
+                .create();
+        
+        dialogRef[0] = dialog;
+
+        listView.setOnItemClickListener((parent, view, position, id) -> {
+            String code = codes[position];
+            if ("auto".equals(code)) chatLangOverride.remove(cid);
+            else chatLangOverride.put(cid, code);
+            updateTranslateBtnText(btn);
+            Toast.makeText(ctx, "当前聊天语言已设为：" + names[position], Toast.LENGTH_SHORT).show();
+            dialog.dismiss();
+        });
+
+        dialog.show();
     }
 
-    private static View findNativeSendBtn(ViewGroup root) {
-        if (root == null) return null;
-        ArrayList<View> views = new ArrayList<>();
-        views.add(root);
-
-        for (int i = 0; i < views.size(); i++) {
-            View cur = views.get(i);
-            try {
-                if (cur.getId() != View.NO_ID
-                        && cur.getResources().getResourceEntryName(cur.getId()).toLowerCase().contains("send")) {
-                    return cur;
-                }
-            } catch (Exception ignored) {}
-
-            if (cur instanceof ViewGroup) {
-                ViewGroup vg = (ViewGroup) cur;
-                for (int j = 0; j < vg.getChildCount(); j++) views.add(vg.getChildAt(j));
-            }
-        }
-        return null;
-    }
 
     private static void addTranslateBtn(ViewGroup layout, EditText edit) {
         try {
@@ -1742,7 +1821,7 @@ public class ChatHook {
 
             cont.addView(card);
         }
-                // ================= 折叠式快捷微调 =================
+         // ================= 折叠式快捷微调 =================
         android.widget.LinearLayout quickHeader = new android.widget.LinearLayout(ctx);
         quickHeader.setOrientation(android.widget.LinearLayout.HORIZONTAL);
         quickHeader.setPadding(36, 14, 36, 14);
@@ -1760,7 +1839,7 @@ public class ChatHook {
         quickBody.setVisibility(View.GONE);
         quickBody.setPadding(0, 8, 0, 8);
 
-        // ★ 核心升级 1：使用横向滑动层，解决按钮被挤出屏幕的问题
+        // 使用横向滑动层，防止按钮被挤出屏幕
         android.widget.HorizontalScrollView hsv = new android.widget.HorizontalScrollView(ctx);
         hsv.setHorizontalScrollBarEnabled(false);
         hsv.setBackgroundColor(Color.parseColor("#F5F5F5"));
@@ -1776,7 +1855,7 @@ public class ChatHook {
         checkBoxOneTime.setTextColor(Color.parseColor("#666666"));
         checkBoxOneTime.setPadding(48, 10, 36, 10);
         
-        // ★ 核心升级 2：使用 SharedPreferences 永久记忆你的勾选状态
+        // 使用 SharedPreferences 永久记忆你的勾选状态
         final android.content.SharedPreferences sp = ctx.getSharedPreferences("htai_quick_prefs", android.content.Context.MODE_PRIVATE);
         checkBoxOneTime.setChecked(sp.getBoolean("always_one_time", false));
         checkBoxOneTime.setOnCheckedChangeListener((btnView, isChecked) -> {
@@ -1811,7 +1890,7 @@ public class ChatHook {
                 if (newPrompt.endsWith("）") || newPrompt.endsWith(")")) {
                     newPrompt = newPrompt.replaceAll("[（\\(][^）\\)]*[）\\)]$", "").trim();
                 }
-                // ★ 核心升级 3：“火力全开”享受绝对豁免权，必定打上“一次性”标签
+                // “火力全开”享受绝对豁免权，必定打上“一次性”标签
                 if (tag.contains("火力全开") || checkBoxOneTime.isChecked()) {
                     newPrompt = "一次性：" + newPrompt + " （" + tagContent + "）";
                 } else {
@@ -1826,8 +1905,10 @@ public class ChatHook {
             quickBar.addView(tagBtn);
         }
         quickBody.addView(hsv);
-        quickBody.addView(checkBoxOneTime);
         cont.addView(quickBody);
+        
+        // 强制把复选框加在最外层，永远可见不被折叠
+        cont.addView(checkBoxOneTime);
 
         quickHeader.setOnClickListener(v2 -> {
             if (quickBody.getVisibility() == View.GONE) {
@@ -1838,6 +1919,7 @@ public class ChatHook {
                 quickTitle.setText("▶ ⚡ 快捷微调 (点击展开)");
             }
         });
+
 
         dialog.show();
         if (dialog.getWindow() != null) {
