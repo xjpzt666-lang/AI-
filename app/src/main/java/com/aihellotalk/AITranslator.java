@@ -1477,7 +1477,11 @@ private static String getReasoningEffort() {
 
         try {
             JSONArray messages = new JSONArray();
-            String sysPrompt = receivePrompt + profileBlock(chatId);
+            String friendName = getFriendName(chatId);
+            String nameHint = (friendName != null && !friendName.isEmpty() && !friendName.equals(chatId)) 
+                ? "\n\n【注意：当前聊天对象昵称：" + friendName + "。在分析心态和潜台词时，提到对方请务必使用“" + friendName + "(中文译名)”的格式，例如：Maria(玛丽亚)。但在翻译外文本身时务必自然流畅，绝对不要擅自把原文中出现的人名替换成该昵称。】" 
+                : "";
+            String sysPrompt = receivePrompt + profileBlock(chatId) + nameHint;
             messages.put(createMessageObj("system", sysPrompt));
 
             JSONArray fullHistory = loadHistory(chatId);
@@ -1662,7 +1666,12 @@ private static String getReasoningEffort() {
                     + "历史中标记为[一次性上下文]的内容只表示它发生过，不代表长期风格。\n"
                     + "本次翻译的语气只由 <translate> 内的当前原文决定。\n";
 
-            String fullProtocol = sysPrompt + profileBlock(chatId) + spanishDirective + formatProtocol + targetRule + contextRule;
+            String friendName = getFriendName(chatId);
+            String nameHint = (friendName != null && !friendName.isEmpty() && !friendName.equals(chatId)) 
+                ? "\n\n【注意：当前聊天对象昵称：" + friendName + "。在上半部分分析中，提到对方时请务必使用“" + friendName + "(中文译名)”的格式（例如：Maria(玛丽亚)）来替代“对方”一词。但生成翻译选项时务必保持地道自然，严禁擅自用该昵称替换原文里本来的人名。】" 
+                : "";
+
+            String fullProtocol = sysPrompt + profileBlock(chatId) + nameHint + spanishDirective + formatProtocol + targetRule + contextRule;
 
             messages.put(createMessageObj("system", fullProtocol));
 
@@ -2008,7 +2017,7 @@ private static String getReasoningEffort() {
                 r.close();
             }
         } catch (Exception ignored) {}
-        if (receivePrompt.isEmpty()) receivePrompt = "\u4f60\u662f\u6211\u7684\u4e13\u5c5e\u793e\u4ea4\u60c5\u62a5\u4f20\u8bd1\u5458\u3002\u8981\u6c42\uff1a1. \u514b\u9686\u5bf9\u65b9\u7684\u8bed\u6c14\u98ce\u683c\u30022. \u53ea\u7ed91\u4e2a\u4e2d\u6587\u7ffb\u8bd1\uff0c\u4e0d\u8981\u9009\u9879\u30023. \u4e0d\u8981\u52a0\u524d\u8a00\u540e\u8bed\u30024. \u6f5c\u53f0\u8bcd\u653e\u672b\u5c3e\u62ec\u53f7\uff08\u4e0d\u8d85\u8fc720\u5b57\uff09\u3002";
+        if (receivePrompt.isEmpty()) receivePrompt = "你是我的专属社交情报传译员。要求：1. 克隆对方的语气风格。2. 只给1个中文翻译，不要选项。3. 不要加前言后语。4. 潜台词放末尾括号（可自由发挥分析潜台词，但不超过30字）。";
         if (promptEN.isEmpty()) promptEN = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u82f1\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
         if (promptRU.isEmpty()) promptRU = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u4fc4\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
         if (promptUK.isEmpty()) promptUK = "\u4f60\u662f\u793e\u4ea4\u5634\u66ff\u3002\u628a\u4e2d\u6587\u8f6c\u6210\u5730\u9053\u4e4c\u514b\u5170\u8bed\u53e3\u8bed\uff0c4\u7248\u672c\u3002\u683c\u5f0f\uff1a\u5916\u6587|\u4e2d\u6587\u5927\u610f|\u6807\u7b7e\u3002";
