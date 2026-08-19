@@ -351,6 +351,8 @@ public class MainActivity extends Activity {
         Toast.makeText(this, "正在恢复主账号记忆...", Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             runRoot("mkdir -p /data/data/com.hellotalk/files");
+            runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files 2>/dev/null");
+            runRoot("chmod 777 /data/data/com.hellotalk/files 2>/dev/null");
             runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
             runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
             runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
@@ -381,14 +383,42 @@ public class MainActivity extends Activity {
                         "📦 立即备份（沙箱 → 保险箱）",
                         "🕶 切换一次性模式（小号瞎聊用）",
                         "👑 切换主账号模式（恢复记忆）",
-                        "🔍 查看记忆文件（诊断）"
+                        "🔍 查看记忆文件（诊断）",
+                        "🔥 一键焚毁沙盒（清空当前记忆）"
                 }, (d, w) -> {
                     if (w == 0) backupNow();
                     else if (w == 1) confirmSwitchToTemp();
                     else if (w == 2) switchToMain();
                     else if (w == 3) showMemoryFiles();
+                    else if (w == 4) confirmClearSandbox();
                 })
                 .show();
+    }
+
+    private void confirmClearSandbox() {
+        new AlertDialog.Builder(this)
+                .setTitle("高能预警：焚毁沙盒")
+                .setMessage("这将彻底使用 Root 权限强制删除 HelloTalk 沙盒下的所有 AI 记忆和草稿缓存。\n\n（放心，这绝不会影响你早已存放在保险箱里的主账号备份）。\n\n确定要清空吗？")
+                .setPositiveButton("🔥 立即焚毁", (d, w) -> clearSandboxNow())
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void clearSandboxNow() {
+        Toast.makeText(this, "正在焚毁沙盒记忆...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            // Root 强制删除沙盒内所有的模块文件
+            runRoot("rm -f /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            // 杀掉 HelloTalk 进程，确保它释放内存锁
+            runRoot("am force-stop com.hellotalk");
+            
+            runOnUiThread(() -> {
+                // 刷新 UI 状态
+                checkMemoryClaim();
+                refreshDrawerList();
+                Toast.makeText(MainActivity.this, "🔥 沙盒已干干净净！HelloTalk 已强制重启", Toast.LENGTH_LONG).show();
+            });
+        }).start();
     }
 
     private void backupNow() {
@@ -453,6 +483,8 @@ public class MainActivity extends Activity {
 
             if (!sandboxHas) {
                 runRoot("mkdir -p /data/data/com.hellotalk/files");
+                runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files 2>/dev/null");
+                runRoot("chmod 777 /data/data/com.hellotalk/files 2>/dev/null");
                 runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
                 runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
                 runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
@@ -866,8 +898,13 @@ public class MainActivity extends Activity {
                 w.write(history.toString());
                 w.close();
 
+                runRoot("mkdir -p /data/data/com.hellotalk/files");
+                runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files 2>/dev/null");
+                runRoot("chmod 777 /data/data/com.hellotalk/files 2>/dev/null");
+                
                 runRoot("cp " + tempFile.getAbsolutePath() + " " + path);
                 runRoot("chmod 666 " + path);
+                runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) " + path + " 2>/dev/null");
 
                 mainHandler.post(() -> {
                     displayMessage("system", "✅ 指令及附件已静默注入底层！\n切回 HelloTalk 再次点击“译”按钮即可生效。");
