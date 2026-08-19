@@ -1742,6 +1742,89 @@ public class ChatHook {
 
             cont.addView(card);
         }
+        // ================= 折叠式快捷微调 =================
+        android.widget.LinearLayout quickHeader = new android.widget.LinearLayout(ctx);
+        quickHeader.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        quickHeader.setPadding(36, 14, 36, 14);
+        quickHeader.setBackgroundColor(Color.parseColor("#E9ECEF"));
+        final TextView quickTitle = new TextView(ctx);
+        quickTitle.setText("▶ ⚡ 快捷微调 (点击展开)");
+        quickTitle.setTextSize(13f);
+        quickTitle.setTextColor(Color.parseColor("#0B5ED7"));
+        quickTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        quickHeader.addView(quickTitle);
+        cont.addView(quickHeader);
+
+        final android.widget.LinearLayout quickBody = new android.widget.LinearLayout(ctx);
+        quickBody.setOrientation(android.widget.LinearLayout.VERTICAL);
+        quickBody.setVisibility(View.GONE);
+        quickBody.setPadding(0, 8, 0, 8);
+
+        android.widget.LinearLayout quickBar = new android.widget.LinearLayout(ctx);
+        quickBar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        quickBar.setPadding(36, 8, 36, 8);
+        quickBar.setBackgroundColor(Color.parseColor("#F5F5F5"));
+
+        final android.widget.CheckBox checkBoxOneTime = new android.widget.CheckBox(ctx);
+        checkBoxOneTime.setText("仅本次（不污染）");
+        checkBoxOneTime.setTextSize(12f);
+        checkBoxOneTime.setTextColor(Color.parseColor("#666666"));
+        checkBoxOneTime.setPadding(48, 10, 36, 10);
+
+        for (int i = 1; i <= 5; i++) {
+            String raw = AITranslator.getQuickOption(i);
+            if (raw.isEmpty()) continue;
+            String[] parts = raw.split("\\|", 2);
+            final String tag = parts.length > 0 ? parts[0].trim() : "";
+            final String tagContent = parts.length > 1 ? parts[1].trim() : tag;
+            if (tag.isEmpty()) continue;
+
+            Button tagBtn = new Button(ctx);
+            tagBtn.setText(tag);
+            tagBtn.setTextSize(11f);
+            tagBtn.setAllCaps(false);
+            tagBtn.setPadding(12, 6, 12, 6);
+            GradientDrawable tbg = new GradientDrawable();
+            tbg.setColor(Color.parseColor("#E8E8E8"));
+            tbg.setCornerRadius(20f);
+            tagBtn.setBackground(tbg);
+            tagBtn.setTextColor(Color.parseColor("#333333"));
+            android.widget.LinearLayout.LayoutParams tlp = new android.widget.LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            tlp.setMargins(0, 0, 8, 0);
+            tagBtn.setLayoutParams(tlp);
+
+            tagBtn.setOnClickListener(v2 -> {
+                String newPrompt = origChinese;
+                if (newPrompt.endsWith("）") || newPrompt.endsWith(")")) {
+                    newPrompt = newPrompt.replaceAll("[（\\(][^）\\)]*[）\\)]$", "").trim();
+                }
+                if (tag.contains("火力全开") || checkBoxOneTime.isChecked()) {
+                    newPrompt = "一次性：" + newPrompt + " （" + tagContent + "）";
+                } else {
+                    newPrompt = newPrompt + " （" + tagContent + "）";
+                }
+                edit.setText(newPrompt);
+                edit.setSelection(newPrompt.length());
+                dialog.dismiss();
+                edit.post(() -> btn.performClick());
+            });
+
+            quickBar.addView(tagBtn);
+        }
+        quickBody.addView(quickBar);
+        quickBody.addView(checkBoxOneTime);
+        cont.addView(quickBody);
+
+        quickHeader.setOnClickListener(v2 -> {
+            if (quickBody.getVisibility() == View.GONE) {
+                quickBody.setVisibility(View.VISIBLE);
+                quickTitle.setText("▼ ⚡ 快捷微调 (点击折叠)");
+            } else {
+                quickBody.setVisibility(View.GONE);
+                quickTitle.setText("▶ ⚡ 快捷微调 (点击展开)");
+            }
+        });
 
         dialog.show();
         if (dialog.getWindow() != null) {
