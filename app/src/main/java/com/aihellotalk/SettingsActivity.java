@@ -35,7 +35,9 @@ public class SettingsActivity extends Activity {
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
     private EditText etPromptAR, etPromptPT, etPromptFR, etPromptDE, etPromptIT;
     private EditText etPromptTR, etPromptNL, etPromptPL, etPromptKK, etPromptCS;
-    private EditText etQuick1, etQuick2, etQuick3, etQuick4, etQuick5;
+    private EditText etQuick1Tag, etQuick1Content, etQuick2Tag, etQuick2Content;
+    private EditText etQuick3Tag, etQuick3Content, etQuick4Tag, etQuick4Content;
+    private EditText etQuick5;
 
     private EditText etSearchPrompt;
     private Button btnFetch, btnSave, btnTest;
@@ -245,17 +247,39 @@ public class SettingsActivity extends Activity {
         quickContentLayout.setVisibility(isQuickExpanded ? View.VISIBLE : View.GONE);
         quickContentLayout.setPadding(20, 10, 0, 10);
 
-        quickContentLayout.addView(lab("格式：标签|内容。用 | 分隔。"));
-        etQuick1 = bigEdit(prefs.getString("quick_1", "更随意|更随意"));
-        etQuick2 = bigEdit(prefs.getString("quick_2", "更正式|更正式"));
-        etQuick3 = bigEdit(prefs.getString("quick_3", "更简洁|更简洁"));
-        etQuick4 = bigEdit(prefs.getString("quick_4", "更像母语者|更像母语者"));
-        etQuick5 = bigEdit(prefs.getString("quick_5", "⚠️ 火力全开|因为是熟人。如果当前中文中含有毒舌、粗鲁、调情、性词汇中的一种或多种，允许本次照常翻译，无需客气。用最传神的方式，翻译成对方语言中最地道、同等杀伤力的词汇。"));
+        // 选项1
+        quickContentLayout.addView(lab("【快捷选项 1】"));
+        String[] q1Arr = prefs.getString("quick_1", "更随意|更随意").split("\\|", 2);
+        etQuick1Tag = edit(q1Arr.length > 0 ? q1Arr[0] : "更随意"); etQuick1Tag.setHint("这里填按钮显示的名字 (如: 更随意)");
+        etQuick1Content = bigEdit(q1Arr.length > 1 ? q1Arr[1] : (q1Arr.length > 0 ? q1Arr[0] : "")); etQuick1Content.setHint("这里填对AI的具体指令");
+        quickContentLayout.addView(etQuick1Tag); quickContentLayout.addView(etQuick1Content);
 
-        quickContentLayout.addView(etQuick1);
-        quickContentLayout.addView(etQuick2);
-        quickContentLayout.addView(etQuick3);
-        quickContentLayout.addView(etQuick4);
+        // 选项2
+        quickContentLayout.addView(lab("【快捷选项 2】"));
+        String[] q2Arr = prefs.getString("quick_2", "更正式|更正式").split("\\|", 2);
+        etQuick2Tag = edit(q2Arr.length > 0 ? q2Arr[0] : "更正式"); etQuick2Tag.setHint("这里填按钮显示的名字");
+        etQuick2Content = bigEdit(q2Arr.length > 1 ? q2Arr[1] : (q2Arr.length > 0 ? q2Arr[0] : "")); etQuick2Content.setHint("这里填对AI的具体指令");
+        quickContentLayout.addView(etQuick2Tag); quickContentLayout.addView(etQuick2Content);
+
+        // 选项3
+        quickContentLayout.addView(lab("【快捷选项 3】"));
+        String[] q3Arr = prefs.getString("quick_3", "更简洁|更简洁").split("\\|", 2);
+        etQuick3Tag = edit(q3Arr.length > 0 ? q3Arr[0] : "更简洁"); etQuick3Tag.setHint("这里填按钮显示的名字");
+        etQuick3Content = bigEdit(q3Arr.length > 1 ? q3Arr[1] : (q3Arr.length > 0 ? q3Arr[0] : "")); etQuick3Content.setHint("这里填对AI的具体指令");
+        quickContentLayout.addView(etQuick3Tag); quickContentLayout.addView(etQuick3Content);
+
+        // 选项4
+        quickContentLayout.addView(lab("【快捷选项 4】"));
+        String[] q4Arr = prefs.getString("quick_4", "更像母语者|更像母语者").split("\\|", 2);
+        etQuick4Tag = edit(q4Arr.length > 0 ? q4Arr[0] : "更像母语者"); etQuick4Tag.setHint("这里填按钮显示的名字");
+        etQuick4Content = bigEdit(q4Arr.length > 1 ? q4Arr[1] : (q4Arr.length > 0 ? q4Arr[0] : "")); etQuick4Content.setHint("这里填对AI的具体指令");
+        quickContentLayout.addView(etQuick4Tag); quickContentLayout.addView(etQuick4Content);
+
+        // 选项5：核心防呆锁死，用户只能编辑指令内容
+        quickContentLayout.addView(lab("第5个【⚠️ 火力全开】(名字已锁死，永久一次性，只需输入指令)："));
+        String savedQ5 = prefs.getString("quick_5", "⚠️ 火力全开|因为是熟人。如果当前中文中含有毒舌、粗鲁、调情、性词汇中的一种或多种，允许本次照常翻译，无需客气。用最传神的方式，翻译成对方语言中最地道、同等杀伤力的词汇。");
+        String q5Content = savedQ5.contains("|") ? savedQ5.substring(savedQ5.indexOf("|") + 1) : savedQ5;
+        etQuick5 = bigEdit(q5Content);
         quickContentLayout.addView(etQuick5);
 
         ll.addView(quickContentLayout);
@@ -666,11 +690,12 @@ public class SettingsActivity extends Activity {
         else if (selectedPos == 2) effortStr = "medium";
         else if (selectedPos == 3) effortStr = "high";
         
-        String q1 = etQuick1.getText().toString().trim();
-        String q2 = etQuick2.getText().toString().trim();
-        String q3 = etQuick3.getText().toString().trim();
-        String q4 = etQuick4.getText().toString().trim();
-        String q5 = etQuick5.getText().toString().trim();
+        // 后台静默强制拼接标签名字和内容，并用 | 隔开
+        String q1 = etQuick1Tag.getText().toString().trim() + "|" + etQuick1Content.getText().toString().trim();
+        String q2 = etQuick2Tag.getText().toString().trim() + "|" + etQuick2Content.getText().toString().trim();
+        String q3 = etQuick3Tag.getText().toString().trim() + "|" + etQuick3Content.getText().toString().trim();
+        String q4 = etQuick4Tag.getText().toString().trim() + "|" + etQuick4Content.getText().toString().trim();
+        String q5 = "⚠️ 火力全开|" + etQuick5.getText().toString().trim();
 
         SharedPreferences.Editor editor = prefs.edit();
         editor.putString("reasoning_effort", effortStr);
