@@ -1742,7 +1742,7 @@ public class ChatHook {
 
             cont.addView(card);
         }
-        // ================= 折叠式快捷微调 =================
+                // ================= 折叠式快捷微调 =================
         android.widget.LinearLayout quickHeader = new android.widget.LinearLayout(ctx);
         quickHeader.setOrientation(android.widget.LinearLayout.HORIZONTAL);
         quickHeader.setPadding(36, 14, 36, 14);
@@ -1760,16 +1760,28 @@ public class ChatHook {
         quickBody.setVisibility(View.GONE);
         quickBody.setPadding(0, 8, 0, 8);
 
+        // ★ 核心升级 1：使用横向滑动层，解决按钮被挤出屏幕的问题
+        android.widget.HorizontalScrollView hsv = new android.widget.HorizontalScrollView(ctx);
+        hsv.setHorizontalScrollBarEnabled(false);
+        hsv.setBackgroundColor(Color.parseColor("#F5F5F5"));
+
         android.widget.LinearLayout quickBar = new android.widget.LinearLayout(ctx);
         quickBar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
         quickBar.setPadding(36, 8, 36, 8);
-        quickBar.setBackgroundColor(Color.parseColor("#F5F5F5"));
+        hsv.addView(quickBar);
 
         final android.widget.CheckBox checkBoxOneTime = new android.widget.CheckBox(ctx);
-        checkBoxOneTime.setText("仅本次（不污染）");
+        checkBoxOneTime.setText("仅本次 (不污染历史记忆)");
         checkBoxOneTime.setTextSize(12f);
         checkBoxOneTime.setTextColor(Color.parseColor("#666666"));
         checkBoxOneTime.setPadding(48, 10, 36, 10);
+        
+        // ★ 核心升级 2：使用 SharedPreferences 永久记忆你的勾选状态
+        final android.content.SharedPreferences sp = ctx.getSharedPreferences("htai_quick_prefs", android.content.Context.MODE_PRIVATE);
+        checkBoxOneTime.setChecked(sp.getBoolean("always_one_time", false));
+        checkBoxOneTime.setOnCheckedChangeListener((btnView, isChecked) -> {
+            sp.edit().putBoolean("always_one_time", isChecked).apply();
+        });
 
         for (int i = 1; i <= 5; i++) {
             String raw = AITranslator.getQuickOption(i);
@@ -1799,6 +1811,7 @@ public class ChatHook {
                 if (newPrompt.endsWith("）") || newPrompt.endsWith(")")) {
                     newPrompt = newPrompt.replaceAll("[（\\(][^）\\)]*[）\\)]$", "").trim();
                 }
+                // ★ 核心升级 3：“火力全开”享受绝对豁免权，必定打上“一次性”标签
                 if (tag.contains("火力全开") || checkBoxOneTime.isChecked()) {
                     newPrompt = "一次性：" + newPrompt + " （" + tagContent + "）";
                 } else {
@@ -1812,7 +1825,7 @@ public class ChatHook {
 
             quickBar.addView(tagBtn);
         }
-        quickBody.addView(quickBar);
+        quickBody.addView(hsv);
         quickBody.addView(checkBoxOneTime);
         cont.addView(quickBody);
 
