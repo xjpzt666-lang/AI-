@@ -1804,6 +1804,7 @@ public class ChatHook {
             dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, h);
         }
     }
+           private static void showPicker(EditText edit, Button btn, String result, String origChinese, String pn, boolean oneTime) {
         android.content.Context ctx = edit.getContext();
 
         String at = AITranslator.extractAnalysis(result);
@@ -1902,7 +1903,6 @@ public class ChatHook {
         cont.setOrientation(android.widget.LinearLayout.VERTICAL);
         cont.setPadding(36, 8, 36, 24);
         bs.addView(cont);
-        root.addView(bs);
 
         String dn = (pn != null && !pn.isEmpty()) ? pn : currentPartnerName;
         String title = (dn != null && !dn.isEmpty()) ? ("选版本 - " + dn) : "选版本";
@@ -2000,15 +2000,69 @@ public class ChatHook {
             cont.addView(card);
         }
 
+        // ================= 新增：底部微调输入区域 =================
+        android.widget.LinearLayout feedbackLayout = new android.widget.LinearLayout(ctx);
+        feedbackLayout.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        feedbackLayout.setPadding(36, 16, 36, 16);
+        feedbackLayout.setBackgroundColor(Color.parseColor("#F5F5F5"));
+        
+        EditText feedbackInput = new EditText(ctx);
+        feedbackInput.setHint("不满意？输入修改意见...");
+        feedbackInput.setTextSize(14f);
+        feedbackInput.setPadding(24, 16, 24, 16);
+        feedbackInput.setBackgroundColor(Color.WHITE);
+        android.widget.LinearLayout.LayoutParams inputLp = new android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        inputLp.setMargins(0, 0, 16, 0);
+        feedbackInput.setLayoutParams(inputLp);
+        
+        Button submitBtn = new Button(ctx);
+        submitBtn.setText("微调");
+        submitBtn.setTextSize(13f);
+        submitBtn.setTextColor(Color.WHITE);
+        submitBtn.setBackgroundColor(Color.parseColor("#0B5ED7"));
+        submitBtn.setPadding(16, 8, 16, 8);
+        submitBtn.setLayoutParams(new android.widget.LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        
+        submitBtn.setOnClickListener(v -> {
+            String feedback = feedbackInput.getText().toString().trim();
+            if (feedback.isEmpty()) {
+                Toast.makeText(ctx, "请输入微调意见", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            
+            // 自动带上括号，并拼接回原本的输入框内容
+            String newPrompt = origChinese;
+            if (newPrompt.endsWith("）") || newPrompt.endsWith(")")) {
+                // 如果本来就有括号，就去掉旧括号重新拼
+                newPrompt = newPrompt.replaceAll("[（\\(][^）\\)]*[）\\)]$", "").trim();
+            }
+            newPrompt = newPrompt + " （" + feedback + "）";
+            
+            edit.setText(newPrompt);
+            edit.setSelection(newPrompt.length());
+            
+            // 关掉当前弹窗，立刻自动帮你再点一次翻译！
+            dialog.dismiss();
+            edit.post(() -> btn.performClick());
+        });
+        
+        feedbackLayout.addView(feedbackInput);
+        feedbackLayout.addView(submitBtn);
+        
+        root.addView(feedbackLayout);
+        // ========================================================
+
         dialog.show();
+        
         if (dialog.getWindow() != null) {
+            // 设置 SOFT_INPUT_ADJUST_RESIZE，防止输入法挡住输入框！
+            dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
             android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
             int h = (int) (dm.heightPixels * 0.88);
             dialog.getWindow().setLayout(ViewGroup.LayoutParams.MATCH_PARENT, h);
         }
     }
-
-    private static String extractQuoteForHistory(Object msg, String chatId, boolean isMine) {
+ 
         try {
             Object ri = invokeQuiet(mGetReplyInfo, msg);
             if (ri != null) {
