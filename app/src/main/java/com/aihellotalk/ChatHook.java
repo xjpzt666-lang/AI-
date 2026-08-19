@@ -1029,7 +1029,8 @@ public class ChatHook {
                                             String zh = AITranslator.reverseTranslateMyForeign(ft2, fc2);
                                             if (zh != null && !zh.isEmpty()) {
                                                 AITranslator.cacheResult(fm2, ft2, zh);
-                                                AITranslator.rememberDraft(ft2, zh);
+                                                AITranslator.rememberDraftIfAbsent(ft2, zh);
+
                                                 reverseRetryMap.remove(fm2);
                                                 try { XposedHelpers.callMethod(fb2, "setText", ft2); } catch (Exception ignored) {}
                                             }
@@ -1780,10 +1781,13 @@ public class ChatHook {
             card.setOnClickListener(v2 -> {
                 String cleanChinese = AITranslator.stripMetaInstructions(origChinese);
 
-                if (oneTime) {
-                    AITranslator.suppressSentForeign(foreign);
-                } else if (cleanChinese != null && !cleanChinese.isEmpty()) {
+                if (cleanChinese != null && !cleanChinese.isEmpty()) {
                     AITranslator.rememberDraft(foreign, cleanChinese);
+                }
+                
+                boolean isAlwaysOneTime = ctx.getSharedPreferences("htai_quick_prefs", android.content.Context.MODE_PRIVATE).getBoolean("always_one_time", false);
+                if (oneTime || isAlwaysOneTime) {
+                    AITranslator.suppressSentForeign(foreign);
                 }
 
                 edit.setText(foreign);
@@ -1857,7 +1861,8 @@ public class ChatHook {
         
         // 使用 SharedPreferences 永久记忆你的勾选状态
         final android.content.SharedPreferences sp = ctx.getSharedPreferences("htai_quick_prefs", android.content.Context.MODE_PRIVATE);
-        checkBoxOneTime.setChecked(sp.getBoolean("always_one_time", false));
+        checkBoxOneTime.setChecked(oneTime || sp.getBoolean("always_one_time", false));
+
         checkBoxOneTime.setOnCheckedChangeListener((btnView, isChecked) -> {
             sp.edit().putBoolean("always_one_time", isChecked).apply();
         });
