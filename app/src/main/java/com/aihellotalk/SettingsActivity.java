@@ -35,6 +35,7 @@ public class SettingsActivity extends Activity {
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
     private EditText etPromptAR, etPromptPT, etPromptFR, etPromptDE, etPromptIT;
     private EditText etPromptTR, etPromptNL, etPromptPL, etPromptKK, etPromptCS;
+    private EditText etQuick1, etQuick2, etQuick3, etQuick4, etQuick5;
 
     private EditText etSearchPrompt;
     private Button btnFetch, btnSave, btnTest;
@@ -231,6 +232,35 @@ public class SettingsActivity extends Activity {
 
         ll.addView(promptContentLayout);
         setupToggle(promptHeaderLayout, promptHeaderTitle, promptContentLayout, "🌐 语言专属指令设置", "prompt_expanded");
+                // ================= 折叠区 3：弹窗快捷选项 =================
+        LinearLayout quickHeaderLayout = createHeaderLayout();
+        TextView quickHeaderTitle = new TextView(this);
+        boolean isQuickExpanded = prefs.getBoolean("quick_expanded", false);
+        styleHeaderTitle(quickHeaderTitle, isQuickExpanded ? "▼ ⚡ 弹窗快捷选项 (点击折叠)" : "▶ ⚡ 弹窗快捷选项 (点击展开)");
+        quickHeaderLayout.addView(quickHeaderTitle);
+        ll.addView(quickHeaderLayout);
+
+        LinearLayout quickContentLayout = new LinearLayout(this);
+        quickContentLayout.setOrientation(LinearLayout.VERTICAL);
+        quickContentLayout.setVisibility(isQuickExpanded ? View.VISIBLE : View.GONE);
+        quickContentLayout.setPadding(20, 10, 0, 10);
+
+        quickContentLayout.addView(lab("格式：标签|内容。用 | 分隔。"));
+        etQuick1 = bigEdit(prefs.getString("quick_1", "更随意|更随意"));
+        etQuick2 = bigEdit(prefs.getString("quick_2", "更正式|更正式"));
+        etQuick3 = bigEdit(prefs.getString("quick_3", "更简洁|更简洁"));
+        etQuick4 = bigEdit(prefs.getString("quick_4", "更像母语者|更像母语者"));
+        etQuick5 = bigEdit(prefs.getString("quick_5", "⚠️ 火力全开|因为是熟人。如果当前中文中含有毒舌、粗鲁、调情、性词汇中的一种或多种，允许本次照常翻译，无需客气。用最传神的方式，翻译成对方语言中最地道、同等杀伤力的词汇。"));
+
+        quickContentLayout.addView(etQuick1);
+        quickContentLayout.addView(etQuick2);
+        quickContentLayout.addView(etQuick3);
+        quickContentLayout.addView(etQuick4);
+        quickContentLayout.addView(etQuick5);
+
+        ll.addView(quickContentLayout);
+        setupToggle(quickHeaderLayout, quickHeaderTitle, quickContentLayout, "⚡ 弹窗快捷选项", "quick_expanded");
+
 
         ll.addView(div());
 
@@ -593,7 +623,7 @@ public class SettingsActivity extends Activity {
         builder.show();
     }
 
-    private void saveAll() {
+        private void saveAll() {
         btnSave.setEnabled(false);
         btnSave.setText("保存中...");
 
@@ -622,31 +652,25 @@ public class SettingsActivity extends Activity {
         String tempStr = etTemperature.getText().toString().trim();
         String maxChatStr = etMaxChat.getText().toString().trim();
         if (maxChatStr.isEmpty()) maxChatStr = "30";
-        if (tempStr.isEmpty()) {
-            tempStr = "0.7";
-        }
-        try {
-            Double.parseDouble(tempStr);
-        } catch (NumberFormatException e) {
-            tempStr = "0.7";
-        }
+        if (tempStr.isEmpty()) tempStr = "0.7";
+        try { Double.parseDouble(tempStr); } catch (NumberFormatException e) { tempStr = "0.7"; }
 
         String maxTokensStr = etMaxTokens.getText().toString().trim();
         String bannedStr = etBannedWords.getText().toString().trim();
-        if (maxTokensStr.isEmpty()) {
-            maxTokensStr = "8000";
-        }
-        try {
-            Integer.parseInt(maxTokensStr);
-        } catch (NumberFormatException e) {
-            maxTokensStr = "8000";
-        }
+        if (maxTokensStr.isEmpty()) maxTokensStr = "8000";
+        try { Integer.parseInt(maxTokensStr); } catch (NumberFormatException e) { maxTokensStr = "8000"; }
 
         int selectedPos = spinnerReasoning.getSelectedItemPosition();
         String effortStr = "default";
         if (selectedPos == 1) effortStr = "low";
         else if (selectedPos == 2) effortStr = "medium";
         else if (selectedPos == 3) effortStr = "high";
+        
+        String q1 = etQuick1.getText().toString().trim();
+        String q2 = etQuick2.getText().toString().trim();
+        String q3 = etQuick3.getText().toString().trim();
+        String q4 = etQuick4.getText().toString().trim();
+        String q5 = etQuick5.getText().toString().trim();
 
         SharedPreferences.Editor editor = prefs.edit();
         editor.putString("reasoning_effort", effortStr);
@@ -673,13 +697,20 @@ public class SettingsActivity extends Activity {
         editor.putString("prompt_pl", pl);
         editor.putString("prompt_kk", kk);
         editor.putString("prompt_cs", cs);
+        editor.putString("quick_1", q1);
+        editor.putString("quick_2", q2);
+        editor.putString("quick_3", q3);
+        editor.putString("quick_4", q4);
+        editor.putString("quick_5", q5);
         editor.apply();
 
-        String finalTempStr = tempStr;
-        String finalMaxTokensStr = maxTokensStr;
-        String finalEffortStr = effortStr;
-        String finalMaxChatStr = maxChatStr;
-        String finalBannedStr = bannedStr;
+        final String finalTempStr = tempStr;
+        final String finalMaxTokensStr = maxTokensStr;
+        final String finalEffortStr = effortStr;
+        final String finalMaxChatStr = maxChatStr;
+        final String finalBannedStr = bannedStr;
+        final String fq1 = q1, fq2 = q2, fq3 = q3, fq4 = q4, fq5 = q5;
+        
         new Thread(() -> {
             try {
                 String modelList = prefs.getString("model_list", "");
@@ -693,6 +724,11 @@ public class SettingsActivity extends Activity {
                         + "max_tokens=" + finalMaxTokensStr + "\n"
                         + "banned_words=" + finalBannedStr + "\n"
                         + "reasoning_effort=" + finalEffortStr + "\n"
+                        + "quick_1=" + fq1 + "\n"
+                        + "quick_2=" + fq2 + "\n"
+                        + "quick_3=" + fq3 + "\n"
+                        + "quick_4=" + fq4 + "\n"
+                        + "quick_5=" + fq5 + "\n"
                         + "EOF\n";
                 runRoot(cfg);
 
@@ -743,6 +779,7 @@ public class SettingsActivity extends Activity {
             }
         }).start();
     }
+
 
     private void testTranslate() {
         String key = etKey.getText().toString().trim();
