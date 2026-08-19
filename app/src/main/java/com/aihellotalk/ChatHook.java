@@ -1791,7 +1791,7 @@ public class ChatHook {
         feedbackLayout.addView(feedbackInput);
         feedbackLayout.addView(submitBtn);
         
-        root.addView(feedbackLayout);
+        cont.addView(feedbackLayout);
         // ========================================================
 
         dialog.show();
