@@ -188,6 +188,24 @@ public class AITranslator {
         if (tokens < 100) tokens = 8000;
         return tokens;
     }
+    public static String getQuickOption(int n) {
+        String def = "";
+        try {
+            File f = new File("/data/local/tmp/htai_config.txt");
+            if (f.exists()) {
+                BufferedReader r = new BufferedReader(new FileReader(f));
+                String line;
+                while ((line = r.readLine()) != null) {
+                    if (line.trim().startsWith("quick_" + n + "=")) {
+                        def = line.substring(("quick_" + n + "=").length()).trim();
+                        break;
+                    }
+                }
+                r.close();
+            }
+        } catch (Exception ignored) {}
+        return def;
+    }
 
 private static String getReasoningEffort() {
     String effort = "default";
