@@ -52,12 +52,12 @@ public class AITranslator {
     public static final Map<String, String[]> cache = new ConcurrentHashMap<>();
     public static final Map<String, String> foreignToChinese = new ConcurrentHashMap<>();
     public static final Map<String, String> chineseToForeign = new ConcurrentHashMap<>();
-    public static final Map<String, String> mySentDrafts = new LinkedHashMap<String, String>() {
+    public static final Map<String, String> mySentDrafts = Collections.synchronizedMap(new LinkedHashMap<String, String>() {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, String> eldest) {
             return size() > 800;
         }
-    };
+    });
 
     private static final Map<String, String> imageBase64Cache = new ConcurrentHashMap<>();
     private static final Set<String> oneTimeSentSuppress = ConcurrentHashMap.newKeySet();
@@ -755,7 +755,9 @@ private static String getReasoningEffort() {
             if (draftsFile == null) return;
             draftsFile.getParentFile().mkdirs();
             JSONObject obj = new JSONObject();
-            for (Map.Entry<String, String> e : mySentDrafts.entrySet()) obj.put(e.getKey(), e.getValue());
+            synchronized (mySentDrafts) {
+                for (Map.Entry<String, String> e : mySentDrafts.entrySet()) obj.put(e.getKey(), e.getValue());
+            }
             BufferedWriter w = new BufferedWriter(new FileWriter(draftsFile));
             w.write(obj.toString()); w.close();
         } catch (Exception ignored) {}
@@ -771,6 +773,24 @@ private static String getReasoningEffort() {
             if (f.isEmpty() || c.isEmpty() || f.equals(c)) return;
             mySentDrafts.put(f, c); foreignToChinese.put(f, c); chineseToForeign.put(c, f);
             cacheResult("draft_" + f.hashCode(), f, c); saveDrafts();
+        } catch (Exception ignored) {}
+    }
+    public static void rememberDraftIfAbsent(String foreign, String chinese) {
+        try {
+            String f = stripFlipMarks(foreign);
+            String c = stripFlipMarks(chinese);
+            if (f == null || c == null) return;
+            f = f.trim();
+            c = stripMetaInstructions(c).trim();
+            if (f.isEmpty() || c.isEmpty() || f.equals(c)) return;
+            synchronized (mySentDrafts) {
+                if (mySentDrafts.containsKey(f)) return;
+                mySentDrafts.put(f, c);
+            }
+            foreignToChinese.put(f, c);
+            chineseToForeign.put(c, f);
+            cacheResult("draft_" + f.hashCode(), f, c);
+            saveDrafts();
         } catch (Exception ignored) {}
     }
 
@@ -925,6 +945,13 @@ private static String getReasoningEffort() {
                     + "3. 请结合对话历史与对方背景档案，用中文给出清晰、专业、详细的分析。\n"
                     + "4. 如果涉及翻译要求，直接把最佳翻译写在回答中。禁止编造。严禁使用Markdown格式排版。\n"
                     + profileBlock(chatId);
+
+            String friendName = getFriendName(chatId);
+            String nameHint = (friendName != null && !friendName.isEmpty() && !friendName.equals(chatId)) 
+                ? "\n\n【注意：当前提问针对的聊天对象昵称是：" + friendName + "。在解答用户问题时，你可以自然地使用该昵称来称呼对方，让人感觉更亲切，但请像正常人说话一样，不要句句都生硬地重复这个名字。】" 
+                : "";
+            
+            sysPrompt = sysPrompt + nameHint;
             messages.put(createMessageObj("system", sysPrompt));
 
             JSONArray fullHistory = loadHistory(chatId);
@@ -1962,9 +1989,13 @@ private static String getReasoningEffort() {
         String exact = mySentDrafts.get(clean); if (exact != null) return exact;
         exact = foreignToChinese.get(clean); if (exact != null) return exact;
         
-        for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
-            String k = stripFlipMarks(entry.getKey()), v = stripFlipMarks(entry.getValue());
-            if (clean.equals(k) || clean.contains(k) || k.contains(clean)) return v;
+        synchronized (mySentDrafts) {
+            for (Map.Entry<String, String> entry : mySentDrafts.entrySet()) {
+                String k = stripFlipMarks(entry.getKey()), v = stripFlipMarks(entry.getValue());
+                if (clean.equals(k)) return v;
+                if (k != null && !k.isEmpty() && clean.contains(k) && (double) k.length() / clean.length() >= 0.45) return v;
+                if (k != null && !k.isEmpty() && k.contains(clean) && (double) clean.length() / k.length() >= 0.45) return v;
+            }
         }
         return null;
     }
