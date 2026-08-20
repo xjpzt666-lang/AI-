@@ -1233,3 +1233,5 @@ public class SettingsActivity extends Activity {
             this.name = name; this.key = key; this.url = url; this.model = model;
         }
     }
+
+}
