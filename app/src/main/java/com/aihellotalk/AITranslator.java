@@ -2001,12 +2001,25 @@ private static String executeRequestWith(OkHttpClient useClient, JSONObject body
     return executeRequestWithRotation(body, useClient, true);
 }
 
-private static String executeRequestWithRotation(JSONObject body, OkHttpClient forceClient, boolean isReceive) throws IOException {
+private static String executeRequestWithRotation(JSONObject body, OkHttpClient forceClient, boolean fallbackIsReceive) throws IOException {
     if (endpoints.isEmpty()) throw new IOException("沒有配置任何API端點");
+
+    // ===== 核心修复：智能方向嗅探 =====
+    boolean isReceive = true; // 默认当做接收
+    String bodyStr = body.toString();
+    // 识别“发送/主动回复/翻译中文”的专属指令特征词
+    if (bodyStr.contains("【上下文使用规则】") || 
+        bodyStr.contains("下半部分只输出4个选项") || 
+        bodyStr.contains("专属聊天军师") || 
+        bodyStr.contains("把以下中文翻译成")) {
+        isReceive = false;
+    }
+    // ==================================
+
     IOException lastException = null;
     int maxAttempts = endpoints.size() * 2;
     for (int attempt = 0; attempt < maxAttempts; attempt++) {
-        ApiEndpoint ep = getNextEndpoint(isReceive);
+        ApiEndpoint ep = getNextEndpoint(isReceive); // 用真实方向去挑选 API
         if (ep == null) throw new IOException("所有API端點均不可用");
         try {
             String origModel = null;
@@ -2018,8 +2031,8 @@ private static String executeRequestWithRotation(JSONObject body, OkHttpClient f
             } catch (JSONException ignored) {}
 
             if (ep.supportsReasoningEffort && !"default".equals(ep.reasoningEffort)) {
-    try { body.put("reasoning_effort", ep.reasoningEffort); } catch (JSONException ignored) {}
-}
+                try { body.put("reasoning_effort", ep.reasoningEffort); } catch (JSONException ignored) {}
+            }
 
             OkHttpClient useClient = (forceClient != null) ? forceClient : ep.ensureClient();
             String result = executeSingleRequest(useClient, body, ep);
@@ -2043,60 +2056,6 @@ private static String executeRequestWithRotation(JSONObject body, OkHttpClient f
     throw lastException != null ? lastException : new IOException("所有API端點均不可用");
 }
 
-private static String executeSingleRequest(OkHttpClient useClient, JSONObject body, ApiEndpoint ep) throws IOException {
-    Request req = new Request.Builder()
-            .url(fixUrl(ep.url))
-            .header("Authorization", "Bearer " + ep.key)
-            .header("Content-Type", "application/json")
-            .post(RequestBody.create(body.toString(), JSON_TYPE))
-            .build();
-    try (Response resp = useClient.newCall(req).execute()) {
-        String responseBody = resp.body() != null ? resp.body().string() : "";
-        if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code() + " " + responseBody);
-        try {
-            JSONObject json = new JSONObject(responseBody);
-            JSONObject choice = json.getJSONArray("choices").getJSONObject(0);
-            String content = choice.getJSONObject("message").optString("content", "").trim();
-            if (content.isEmpty()) throw new IOException("大模型返回了空數據。");
-            return content;
-        } catch (IOException e) { throw e; }
-        catch (Exception e) { throw new IOException("JSON解析失敗：" + responseBody); }
-    }
-}
-
-    private static String fixUrl(String url) {
-        if (url == null || url.isEmpty()) return "https://api.openai.com/v1/chat/completions";
-        
-        // 如果用户自己填写了完整的完整路径（包含 chat/completions），直接信任并原样返回
-        if (url.endsWith("/chat/completions")) {
-            return url;
-        }
-
-        // 如果没有包含 chat/completions，我们需要帮它补全
-        if (!url.endsWith("/")) {
-            url += "/";
-        }
-        
-        // 关键改动：对于 Gemini 等特殊接口，如果地址里已经有 openai/v1/，就不要瞎切了
-        if (url.contains("generativelanguage.googleapis.com")) {
-             // 针对 Gemini 官方接口的特殊补全
-             if (!url.contains("chat/completions")) {
-                  return url + "chat/completions";
-             }
-        }
-
-        // 保留对普通中转 API 的宽容处理（如果不是 Gemini，才执行旧的切割逻辑）
-        int idx = url.indexOf("/v1/");
-        if (idx >= 0 && !url.contains("generativelanguage.googleapis.com")) {
-            url = url.substring(0, idx + 4);
-        }
-        
-        // 最后确保以完整的 completions 结尾
-        if (!url.endsWith("chat/completions")) {
-            return url + "chat/completions";
-        }
-        return url;
-    }
 
     public static List<String> fetchModels(String key, String baseUrl) throws IOException {
         List<String> result = new ArrayList<>();
