@@ -149,7 +149,7 @@ private static class ApiEndpoint {
     void onSuccess() { callCount++; }
 
     void onFailure() {
-        cooldownUntil = System.currentTimeMillis() + 5_000;
+        cooldownUntil = System.currentTimeMillis() + 1_000;
         callCount = 0;
     }
 
@@ -2004,39 +2004,70 @@ private static String executeRequestWith(OkHttpClient useClient, JSONObject body
 private static String executeRequestWithRotation(JSONObject body, OkHttpClient forceClient, boolean fallbackIsReceive) throws IOException {
     if (endpoints.isEmpty()) throw new IOException("沒有配置任何API端點");
 
-    // ===== 核心修复：智能方向嗅探 =====
-    boolean isReceive = true; // 默认当做接收
+    // ===== 极其严谨的方向判定 =====
+    boolean isReceive = false; // 默认全是主动发送
     String bodyStr = body.toString();
-    // 识别“发送/主动回复/翻译中文”的专属指令特征词
-    if (bodyStr.contains("【上下文使用规则】") || 
-        bodyStr.contains("下半部分只输出4个选项") || 
-        bodyStr.contains("专属聊天军师") || 
-        bodyStr.contains("把以下中文翻译成")) {
-        isReceive = false;
+    // 只有绝对匹配到这两句话，才算是“接收对方外语”
+    if (bodyStr.contains("下方只有<<<和>>>标记内") || bodyStr.contains("【表/标点深度分析协议】")) {
+        isReceive = true;
     }
-    // ==================================
 
     IOException lastException = null;
     int maxAttempts = endpoints.size() * 2;
+    int start = roundRobinIndex;
+    ApiEndpoint targetEp = null;
+
+    // 严格轮询：方向不对直接跳过，没得商量
     for (int attempt = 0; attempt < maxAttempts; attempt++) {
-        ApiEndpoint ep = getNextEndpoint(isReceive); // 用真实方向去挑选 API
-        if (ep == null) throw new IOException("所有API端點均不可用");
+        for (int i = 0; i < endpoints.size(); i++) {
+            int idx = (start + i) % endpoints.size();
+            ApiEndpoint ep = endpoints.get(idx);
+            
+            if (!ep.enabled || !ep.isAvailable()) continue;
+            if (isReceive && !ep.canReceive()) continue;
+            if (!isReceive && !ep.canSend()) continue;
+
+            if (ep.needRotate()) {
+                ep.callCount = 0;
+                continue;
+            }
+            targetEp = ep;
+            roundRobinIndex = idx;
+            break;
+        }
+        
+        if (targetEp == null) {
+            for (ApiEndpoint ep : endpoints) if (ep.enabled) ep.callCount = 0;
+            for (int i = 0; i < endpoints.size(); i++) {
+                int idx = (start + i) % endpoints.size();
+                ApiEndpoint ep = endpoints.get(idx);
+                if (!ep.enabled || !ep.isAvailable()) continue;
+                if (isReceive && !ep.canReceive()) continue;
+                if (!isReceive && !ep.canSend()) continue;
+                targetEp = ep;
+                roundRobinIndex = idx;
+                break;
+            }
+        }
+
+        if (targetEp == null) throw new IOException("当前动作对应的方向找不到可用 API");
+
         try {
             String origModel = null;
             try {
-                if (ep.model != null && !ep.model.isEmpty() && body.has("model")) {
+                if (targetEp.model != null && !targetEp.model.isEmpty() && body.has("model")) {
                     origModel = body.getString("model");
-                    body.put("model", ep.model);
+                    body.put("model", targetEp.model);
                 }
             } catch (JSONException ignored) {}
 
-            if (ep.supportsReasoningEffort && !"default".equals(ep.reasoningEffort)) {
-                try { body.put("reasoning_effort", ep.reasoningEffort); } catch (JSONException ignored) {}
+            if (targetEp.supportsReasoningEffort && !"default".equals(targetEp.reasoningEffort)) {
+                try { body.put("reasoning_effort", targetEp.reasoningEffort); } catch (JSONException ignored) {}
             }
 
-            OkHttpClient useClient = (forceClient != null) ? forceClient : ep.ensureClient();
-            String result = executeSingleRequest(useClient, body, ep);
-            ep.onSuccess();
+            OkHttpClient useClient = (forceClient != null) ? forceClient : targetEp.ensureClient();
+            String result = executeSingleRequest(useClient, body, targetEp);
+            targetEp.onSuccess(); 
             return result;
         } catch (IOException e) {
             lastException = e;
@@ -2046,9 +2077,9 @@ private static String executeRequestWithRotation(JSONObject body, OkHttpClient f
                     || msg.contains("Timeout") || msg.contains("connect") || msg.contains("EOF")
                     || msg.contains("Socket") || msg.contains("reset");
             if (shouldRetry) {
-                Log.w(TAG, "HT_AI 端點 " + ep.model + " 失敗，冷卻5秒: " + msg);
-                ep.onFailure();
-                continue;
+                Log.w(TAG, "HT_AI 端點 " + targetEp.model + " 失敗，冷卻5秒: " + msg);
+                targetEp.onFailure(); 
+                continue; 
             }
             throw e;
         }
@@ -2078,37 +2109,27 @@ private static String executeSingleRequest(OkHttpClient useClient, JSONObject bo
 }
 
 private static String fixUrl(String url) {
-    if (url == null || url.isEmpty()) return "https://api.openai.com/v1/chat/completions";
+    if (url == null || url.trim().isEmpty()) return "https://api.openai.com/v1/chat/completions";
+    url = url.trim();
+    if (url.endsWith("/chat/completions")) return url;
+    if (!url.endsWith("/")) url += "/";
     
-    // 如果用户自己填写了完整的完整路径（包含 chat/completions），直接信任并原样返回
-    if (url.endsWith("/chat/completions")) {
-        return url;
-    }
-
-    // 如果没有包含 chat/completions，我们需要帮它补全
-    if (!url.endsWith("/")) {
-        url += "/";
-    }
-    
-    // 针对 Gemini 等特殊接口，如果地址里已经有 openai/v1/，不要瞎切
     if (url.contains("generativelanguage.googleapis.com")) {
-         if (!url.contains("chat/completions")) {
-              return url + "chat/completions";
-         }
-    }
-
-    // 保留对普通中转 API 的宽容处理
-    int idx = url.indexOf("/v1/");
-    if (idx >= 0 && !url.contains("generativelanguage.googleapis.com")) {
-        url = url.substring(0, idx + 4);
+         if (!url.contains("chat/completions")) return url + "chat/completions";
+         return url;
     }
     
-    // 最后确保以完整的 completions 结尾
-    if (!url.endsWith("chat/completions")) {
-        return url + "chat/completions";
+    // 强制智能补全 v1，解决网页 HTML 报错问题
+    if (!url.contains("/v1/")) {
+         url += "v1/";
+    } else {
+         int idx = url.indexOf("/v1/");
+         url = url.substring(0, idx + 4);
     }
-    return url;
+    return url + "chat/completions";
 }
+
+
 
     public static List<String> fetchModels(String key, String baseUrl) throws IOException {
         List<String> result = new ArrayList<>();
