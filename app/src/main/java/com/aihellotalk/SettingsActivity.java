@@ -194,15 +194,11 @@ apiContentLayout.setOrientation(LinearLayout.VERTICAL);
 apiContentLayout.setVisibility(isApiExpanded ? View.VISIBLE : View.GONE);
 apiContentLayout.setPadding(20, 10, 0, 10);
 
-// 辅助背景
+// 辅助背景与选项定义（确保只定义一次）
 android.graphics.drawable.GradientDrawable titleBg = new android.graphics.drawable.GradientDrawable();
 titleBg.setColor(Color.parseColor("#E8EAF6"));
 titleBg.setCornerRadius(8f);
-
-// 辅助背景
-android.graphics.drawable.GradientDrawable titleBg = new android.graphics.drawable.GradientDrawable();
-titleBg.setColor(Color.parseColor("#E8EAF6"));
-titleBg.setCornerRadius(8f);
+String[] efforts2 = {"默认(不干预)", "轻度思考", "中度思考", "深度思考"};
 
 // --- API 2 ---
 TextView apiTitle2 = new TextView(this); apiTitle2.setText("🟢 备用 API 2"); apiTitle2.setTextColor(Color.parseColor("#198754")); apiTitle2.setTextSize(15f); apiTitle2.setTypeface(null, android.graphics.Typeface.BOLD); apiTitle2.setPadding(20, 20, 20, 20); apiTitle2.setBackground(titleBg);
@@ -251,6 +247,7 @@ Button btnFetch5 = btn("获取模型"); btnFetch5.setOnClickListener(v -> fetchM
 apiContentLayout.addView(lab("调用权重 5:")); etWeight5 = edit(prefs.getString("api_weight_5", "3")); apiContentLayout.addView(etWeight5);
 apiContentLayout.addView(lab("翻译方向 5:")); spinnerDir5 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir5.setAdapter(dirAdapter5); spinnerDir5.setSelection(prefs.getInt("api_direction_5", 0)); apiContentLayout.addView(spinnerDir5);
 apiContentLayout.addView(lab("思考模式 5:")); spinnerReasoning5 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning5.setAdapter(effAdapter5); String savedEff5 = prefs.getString("reasoning_effort_5", "default"); int selEff5 = 0; if ("low".equals(savedEff5)) selEff5 = 1; else if ("medium".equals(savedEff5)) selEff5 = 2; else if ("high".equals(savedEff5)) selEff5 = 3; spinnerReasoning5.setSelection(selEff5); apiContentLayout.addView(spinnerReasoning5);
+
 
 ll.addView(apiContentLayout);
 setupToggle(apiHeaderLayout, apiHeaderTitle, apiContentLayout, "🔄 多API智能密钥配置", "api_expanded");
