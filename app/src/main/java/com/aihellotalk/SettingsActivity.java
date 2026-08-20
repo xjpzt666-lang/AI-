@@ -43,14 +43,14 @@ private EditText etWeight1;
 private android.widget.Spinner spinnerDir1;
 // API 2-5 思考模式
 private android.widget.Spinner spinnerReasoning2, spinnerReasoning3, spinnerReasoning4, spinnerReasoning5;
-// ★ 多API备用配置
-private EditText etKey2, etUrl2, etModel2, etWeight2;
+// ★ 多API备用配置 (加入别名声明)
+private EditText etKey2, etUrl2, etModel2, etWeight2, etAlias2;
 private android.widget.Spinner spinnerDir2;
-private EditText etKey3, etUrl3, etModel3, etWeight3;
+private EditText etKey3, etUrl3, etModel3, etWeight3, etAlias3;
 private android.widget.Spinner spinnerDir3;
-private EditText etKey4, etUrl4, etModel4, etWeight4;
+private EditText etKey4, etUrl4, etModel4, etWeight4, etAlias4;
 private android.widget.Spinner spinnerDir4;
-private EditText etKey5, etUrl5, etModel5, etWeight5;
+private EditText etKey5, etUrl5, etModel5, etWeight5, etAlias5;
 private android.widget.Spinner spinnerDir5;
     private EditText etKey6, etUrl6, etModel6, etWeight6, etAlias6;
     private android.widget.Spinner spinnerDir6, spinnerReasoning6;
