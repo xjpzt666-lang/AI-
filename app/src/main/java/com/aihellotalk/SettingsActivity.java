@@ -31,14 +31,19 @@ import java.util.concurrent.TimeUnit;
 public class SettingsActivity extends Activity {
 
     private EditText etKey, etUrl, etModel, etTemperature, etMaxTokens, etMaxChat, etBannedWords;
-    private android.widget.Spinner spinnerReasoning;
+private android.widget.Spinner spinnerReasoning;
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
     private EditText etPromptAR, etPromptPT, etPromptFR, etPromptDE, etPromptIT;
     private EditText etPromptTR, etPromptNL, etPromptPL, etPromptKK, etPromptCS;
     private EditText etQuick1Tag, etQuick1Content, etQuick2Tag, etQuick2Content;
     private EditText etQuick3Tag, etQuick3Content, etQuick4Tag, etQuick4Content;
     private EditText etQuick5;
-// ★ 多API備用配置
+// API 1 新增字段
+private EditText etWeight1;
+private android.widget.Spinner spinnerDir1;
+// API 2-5 思考模式
+private android.widget.Spinner spinnerReasoning2, spinnerReasoning3, spinnerReasoning4, spinnerReasoning5;
+// ★ 多API备用配置
 private EditText etKey2, etUrl2, etModel2, etWeight2;
 private android.widget.Spinner spinnerDir2;
 private EditText etKey3, etUrl3, etModel3, etWeight3;
@@ -111,7 +116,36 @@ private android.widget.Spinner spinnerDir5;
         etModel.setHint("先获取后选择，或手动输入");
         ll.addView(etModel);
 
-        // ================= 折叠区 1：高级与安全设置 =================
+ll.addView(lab("调用权重 (数字越大用得越多，建议1~10):"));
+etWeight1 = edit(prefs.getString("api_weight", "3"));
+etWeight1.setHint("3");
+ll.addView(etWeight1);
+
+ll.addView(lab("翻译方向:"));
+spinnerDir1 = new android.widget.Spinner(this);
+String[] dirs = {"发送+接收", "仅接收", "仅发送"};
+android.widget.ArrayAdapter<String> dirAdapter1 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
+dirAdapter1.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+spinnerDir1.setAdapter(dirAdapter1);
+spinnerDir1.setSelection(prefs.getInt("api_direction", 0));
+ll.addView(spinnerDir1);
+
+ll.addView(lab("思考模式:"));
+spinnerReasoning = new android.widget.Spinner(this);
+String[] efforts = {"默认(不干预)", "轻度思考", "中度思考", "深度思考"};
+android.widget.ArrayAdapter<String> effAdapter1 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts);
+effAdapter1.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+spinnerReasoning.setAdapter(effAdapter1);                      // ← 改
+String savedEff1 = prefs.getString("reasoning_effort", "default");
+int selEff1 = 0;
+if ("low".equals(savedEff1)) selEff1 = 1;
+else if ("medium".equals(savedEff1)) selEff1 = 2;
+else if ("high".equals(savedEff1)) selEff1 = 3;
+spinnerReasoning.setSelection(selEff1);                        // ← 改
+spinnerReasoning.setTag("reasoning1");                         // ← 改
+ll.addView(spinnerReasoning);                                  // ← 改
+
+// ================= 折叠区 1：高级与安全设置 =================
         LinearLayout advHeaderLayout = createHeaderLayout();
         advHeaderTitle = new TextView(this);
         boolean isAdvExpanded = prefs.getBoolean("adv_expanded", false); // 读取记忆
@@ -144,27 +178,14 @@ private android.widget.Spinner spinnerDir5;
         etBannedWords.setHint("输入千万不能出现的词或标点，如：lol,破折号,;");
         advContentLayout.addView(etBannedWords);
 
-        advContentLayout.addView(lab("思考深度 (Reasoning Effort):"));
-        spinnerReasoning = new android.widget.Spinner(this);
-        String[] efforts = {"默认(不干预)", "轻度思考", "中度思考", "深度思考"};
-        android.widget.ArrayAdapter<String> effortAdapter = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts);
-        effortAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        spinnerReasoning.setAdapter(effortAdapter);
-        String savedEffort = prefs.getString("reasoning_effort", "default");
-        int selectedIndex = 0;
-        if ("low".equals(savedEffort)) selectedIndex = 1;
-        else if ("medium".equals(savedEffort)) selectedIndex = 2;
-        else if ("high".equals(savedEffort)) selectedIndex = 3;
-        spinnerReasoning.setSelection(selectedIndex);
-        advContentLayout.addView(spinnerReasoning);
 
         ll.addView(advContentLayout);
         setupToggle(advHeaderLayout, advHeaderTitle, advContentLayout, "⚙️ 高级与安全设置", "adv_expanded");
-// ================= 折叠区 1.5：多API智能輪換配置 =================
+// ================= 折叠区 1.5：多API智能密钥配置 =================
 LinearLayout apiHeaderLayout = createHeaderLayout();
 TextView apiHeaderTitle = new TextView(this);
-boolean isApiExpanded = prefs.getBoolean("api_expanded", false);
-styleHeaderTitle(apiHeaderTitle, isApiExpanded ? "▼ 🔄 多API智能輪換配置（最多5個） (点击折叠)" : "▶ 🔄 多API智能輪換配置（最多5個） (点击展开)");
+boolean isApiExpanded = prefs.getBoolean("api_expanded", true);
+styleHeaderTitle(apiHeaderTitle, isApiExpanded ? "▼ 🔄 多API智能密钥配置（最多5個） (点击折叠)" : "▶ 🔄 多API智能密钥配置（最多5個） (点击展开)");
 apiHeaderLayout.addView(apiHeaderTitle);
 ll.addView(apiHeaderLayout);
 
@@ -174,7 +195,7 @@ apiContentLayout.setVisibility(isApiExpanded ? View.VISIBLE : View.GONE);
 apiContentLayout.setPadding(20, 10, 0, 10);
 
 // --- API 2 ---
-apiContentLayout.addView(lab("★ 備用 API 2 (留空則跳過):"));
+apiContentLayout.addView(lab("★ 备用 API 2 (留空则跳过):"));
 apiContentLayout.addView(lab("API Key 2:"));
 etKey2 = edit(prefs.getString("api_key_2", ""));
 apiContentLayout.addView(etKey2);
@@ -184,21 +205,37 @@ apiContentLayout.addView(etUrl2);
 apiContentLayout.addView(lab("模型 2:"));
 etModel2 = edit(prefs.getString("model_2", ""));
 apiContentLayout.addView(etModel2);
-apiContentLayout.addView(lab("調用權重 2 (數字越大用得越多，建議1~10):"));
+Button btnFetch2 = btn("获取模型");
+btnFetch2.setOnClickListener(v -> fetchModelsForApi(etKey2.getText().toString().trim(), etUrl2.getText().toString().trim(), etModel2));
+apiContentLayout.addView(btnFetch2);
+apiContentLayout.addView(lab("调用权重 2 (字越大用的越多，建议1~10):"));
 etWeight2 = edit(prefs.getString("api_weight_2", "3"));
 apiContentLayout.addView(etWeight2);
-apiContentLayout.addView(lab("翻譯方向 2:"));
+apiContentLayout.addView(lab("翻译方向 2:"));
 spinnerDir2 = new android.widget.Spinner(this);
-String[] dirs = {"發送+接收", "僅接收", "僅發送"};
+
 android.widget.ArrayAdapter<String> dirAdapter2 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
 dirAdapter2.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
 spinnerDir2.setAdapter(dirAdapter2);
 spinnerDir2.setSelection(prefs.getInt("api_direction_2", 0));
 apiContentLayout.addView(spinnerDir2);
+apiContentLayout.addView(lab("思考模式 2:"));
+spinnerReasoning2 = new android.widget.Spinner(this);
+String[] efforts2 = {"默认(不干预)", "轻度思考", "中度思考", "深度思考"};
+android.widget.ArrayAdapter<String> effAdapter2 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2);
+effAdapter2.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+spinnerReasoning2.setAdapter(effAdapter2);
+String savedEff2 = prefs.getString("reasoning_effort_2", "default");
+int selEff2 = 0;
+if ("low".equals(savedEff2)) selEff2 = 1;
+else if ("medium".equals(savedEff2)) selEff2 = 2;
+else if ("high".equals(savedEff2)) selEff2 = 3;
+spinnerReasoning2.setSelection(selEff2);
+apiContentLayout.addView(spinnerReasoning2);
 apiContentLayout.addView(div());
 
 // --- API 3 ---
-apiContentLayout.addView(lab("★ 備用 API 3 (留空則跳過):"));
+apiContentLayout.addView(lab("★ 备用 API 3 (留空则跳过):"));
 apiContentLayout.addView(lab("API Key 3:"));
 etKey3 = edit(prefs.getString("api_key_3", ""));
 apiContentLayout.addView(etKey3);
@@ -208,20 +245,35 @@ apiContentLayout.addView(etUrl3);
 apiContentLayout.addView(lab("模型 3:"));
 etModel3 = edit(prefs.getString("model_3", ""));
 apiContentLayout.addView(etModel3);
-apiContentLayout.addView(lab("調用權重 3:"));
+Button btnFetch3 = btn("获取模型");
+btnFetch3.setOnClickListener(v -> fetchModelsForApi(etKey3.getText().toString().trim(), etUrl3.getText().toString().trim(), etModel3));
+apiContentLayout.addView(btnFetch3);
+apiContentLayout.addView(lab("调用权重 3:"));
 etWeight3 = edit(prefs.getString("api_weight_3", "3"));
 apiContentLayout.addView(etWeight3);
-apiContentLayout.addView(lab("翻譯方向 3:"));
+apiContentLayout.addView(lab("翻译方向 3:"));
 spinnerDir3 = new android.widget.Spinner(this);
 android.widget.ArrayAdapter<String> dirAdapter3 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
 dirAdapter3.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
 spinnerDir3.setAdapter(dirAdapter3);
 spinnerDir3.setSelection(prefs.getInt("api_direction_3", 0));
 apiContentLayout.addView(spinnerDir3);
+apiContentLayout.addView(lab("思考模式 3:"));
+spinnerReasoning3 = new android.widget.Spinner(this);
+android.widget.ArrayAdapter<String> effAdapter3 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2);
+effAdapter3.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+spinnerReasoning3.setAdapter(effAdapter3);
+String savedEff3 = prefs.getString("reasoning_effort_3", "default");
+int selEff3 = 0;
+if ("low".equals(savedEff3)) selEff3 = 1;
+else if ("medium".equals(savedEff3)) selEff3 = 2;
+else if ("high".equals(savedEff3)) selEff3 = 3;
+spinnerReasoning3.setSelection(selEff3);
+apiContentLayout.addView(spinnerReasoning3);
 apiContentLayout.addView(div());
 
 // --- API 4 ---
-apiContentLayout.addView(lab("★ 備用 API 4 (留空則跳過):"));
+apiContentLayout.addView(lab("★ 备用 API 4 (留空则跳过):"));
 apiContentLayout.addView(lab("API Key 4:"));
 etKey4 = edit(prefs.getString("api_key_4", ""));
 apiContentLayout.addView(etKey4);
@@ -231,20 +283,35 @@ apiContentLayout.addView(etUrl4);
 apiContentLayout.addView(lab("模型 4:"));
 etModel4 = edit(prefs.getString("model_4", ""));
 apiContentLayout.addView(etModel4);
-apiContentLayout.addView(lab("調用權重 4:"));
+Button btnFetch4 = btn("获取模型");
+btnFetch4.setOnClickListener(v -> fetchModelsForApi(etKey4.getText().toString().trim(), etUrl4.getText().toString().trim(), etModel4));
+apiContentLayout.addView(btnFetch4);
+apiContentLayout.addView(lab("调用权重 4:"));
 etWeight4 = edit(prefs.getString("api_weight_4", "3"));
 apiContentLayout.addView(etWeight4);
-apiContentLayout.addView(lab("翻譯方向 4:"));
+apiContentLayout.addView(lab("翻译方向 4:"));
 spinnerDir4 = new android.widget.Spinner(this);
 android.widget.ArrayAdapter<String> dirAdapter4 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
 dirAdapter4.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
 spinnerDir4.setAdapter(dirAdapter4);
 spinnerDir4.setSelection(prefs.getInt("api_direction_4", 0));
 apiContentLayout.addView(spinnerDir4);
+apiContentLayout.addView(lab("思考模式 4:"));
+spinnerReasoning4 = new android.widget.Spinner(this);
+android.widget.ArrayAdapter<String> effAdapter4 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2);
+effAdapter4.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+spinnerReasoning4.setAdapter(effAdapter4);
+String savedEff4 = prefs.getString("reasoning_effort_4", "default");
+int selEff4 = 0;
+if ("low".equals(savedEff4)) selEff4 = 1;
+else if ("medium".equals(savedEff4)) selEff4 = 2;
+else if ("high".equals(savedEff4)) selEff4 = 3;
+spinnerReasoning4.setSelection(selEff4);
+apiContentLayout.addView(spinnerReasoning4);
 apiContentLayout.addView(div());
 
 // --- API 5 ---
-apiContentLayout.addView(lab("★ 備用 API 5 (留空則跳過):"));
+apiContentLayout.addView(lab("★ 备用 API 5 (留空则跳过):"));
 apiContentLayout.addView(lab("API Key 5:"));
 etKey5 = edit(prefs.getString("api_key_5", ""));
 apiContentLayout.addView(etKey5);
@@ -254,19 +321,34 @@ apiContentLayout.addView(etUrl5);
 apiContentLayout.addView(lab("模型 5:"));
 etModel5 = edit(prefs.getString("model_5", ""));
 apiContentLayout.addView(etModel5);
-apiContentLayout.addView(lab("調用權重 5:"));
+Button btnFetch5 = btn("获取模型");
+btnFetch5.setOnClickListener(v -> fetchModelsForApi(etKey5.getText().toString().trim(), etUrl5.getText().toString().trim(), etModel5));
+apiContentLayout.addView(btnFetch5);
+apiContentLayout.addView(lab("调用权重 5:"));
 etWeight5 = edit(prefs.getString("api_weight_5", "3"));
 apiContentLayout.addView(etWeight5);
-apiContentLayout.addView(lab("翻譯方向 5:"));
+apiContentLayout.addView(lab("翻译方向 5:"));
 spinnerDir5 = new android.widget.Spinner(this);
 android.widget.ArrayAdapter<String> dirAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
 dirAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
 spinnerDir5.setAdapter(dirAdapter5);
 spinnerDir5.setSelection(prefs.getInt("api_direction_5", 0));
 apiContentLayout.addView(spinnerDir5);
+apiContentLayout.addView(lab("思考模式 5:"));
+spinnerReasoning5 = new android.widget.Spinner(this);
+android.widget.ArrayAdapter<String> effAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2);
+effAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+spinnerReasoning5.setAdapter(effAdapter5);
+String savedEff5 = prefs.getString("reasoning_effort_5", "default");
+int selEff5 = 0;
+if ("low".equals(savedEff5)) selEff5 = 1;
+else if ("medium".equals(savedEff5)) selEff5 = 2;
+else if ("high".equals(savedEff5)) selEff5 = 3;
+spinnerReasoning5.setSelection(selEff5);
+apiContentLayout.addView(spinnerReasoning5);
 
 ll.addView(apiContentLayout);
-setupToggle(apiHeaderLayout, apiHeaderTitle, apiContentLayout, "🔄 多API智能輪換配置", "api_expanded");
+setupToggle(apiHeaderLayout, apiHeaderTitle, apiContentLayout, "🔄 多API智能密钥配置", "api_expanded");
         // ================= 折叠区 2：语言专属指令 =================
         LinearLayout promptHeaderLayout = createHeaderLayout();
         promptHeaderTitle = new TextView(this);
@@ -602,7 +684,39 @@ setupToggle(apiHeaderLayout, apiHeaderTitle, apiContentLayout, "🔄 多API智�
             return null;
         }
     }
+private void fetchModelsForApi(String keyStr, String urlStr, EditText targetModelEdit) {
+    if (keyStr.isEmpty()) {
+        toast("请先填写该 API 的 Key");
+        return;
+    }
+    String baseUrl = urlStr.isEmpty() ? "https://api.openai.com/v1/chat/completions" : urlStr;
+    new Thread(() -> {
+        try {
+            List<String> models = autoFetchModels(keyStr, baseUrl);
+            runOnUiThread(() -> {
+                if (models.isEmpty()) {
+                    toast("该 API 获取模型列表失败，请手动输入模型名");
+                } else {
+                    showModelPickerForApi(models, targetModelEdit);
+                }
+            });
+        } catch (Exception e) {
+            runOnUiThread(() -> toast("获取失败: " + e.getMessage()));
+        }
+    }).start();
+}
 
+private void showModelPickerForApi(List<String> models, EditText targetEdit) {
+    String[] items = models.toArray(new String[0]);
+    new AlertDialog.Builder(this)
+        .setTitle("选择模型")
+        .setItems(items, (d, w) -> {
+            targetEdit.setText(items[w]);
+            toast("已选择: " + items[w]);
+        })
+        .setNegativeButton("取消", null)
+        .show();
+}
     private void fetchModels() {
         String key = etKey.getText().toString().trim();
         if (key.isEmpty()) {
@@ -798,11 +912,11 @@ setupToggle(apiHeaderLayout, apiHeaderTitle, apiContentLayout, "🔄 多API智�
         if (maxTokensStr.isEmpty()) maxTokensStr = "8000";
         try { Integer.parseInt(maxTokensStr); } catch (NumberFormatException e) { maxTokensStr = "8000"; }
 
-        int selectedPos = spinnerReasoning.getSelectedItemPosition();
-        String effortStr = "default";
-        if (selectedPos == 1) effortStr = "low";
-        else if (selectedPos == 2) effortStr = "medium";
-        else if (selectedPos == 3) effortStr = "high";
+int selectedPos = spinnerReasoning.getSelectedItemPosition();
+String effortStr = "default";
+if (selectedPos == 1) effortStr = "low";
+else if (selectedPos == 2) effortStr = "medium";
+else if (selectedPos == 3) effortStr = "high";
         
         // 后台静默强制拼接标签名字和内容，并用 | 隔开
         String q1 = etQuick1Tag.getText().toString().trim() + "|" + etQuick1Content.getText().toString().trim();
@@ -815,6 +929,8 @@ setupToggle(apiHeaderLayout, apiHeaderTitle, apiContentLayout, "🔄 多API智�
         editor.putString("reasoning_effort", effortStr);
         editor.putString("api_key", key);
         editor.putString("api_url", url);
+        editor.putString("api_weight", etWeight1.getText().toString().trim());
+editor.putInt("api_direction", spinnerDir1.getSelectedItemPosition());
         editor.putString("model", mdl);
         editor.putString("temperature", tempStr);
         editor.putString("max_chat_messages", maxChatStr);
@@ -860,6 +976,11 @@ editor.putString("api_url_5", etUrl5.getText().toString().trim());
 editor.putString("model_5", etModel5.getText().toString().trim());
 editor.putString("api_weight_5", etWeight5.getText().toString().trim());
 editor.putInt("api_direction_5", spinnerDir5.getSelectedItemPosition());
+        String[] effortValues = {"default", "low", "medium", "high"};
+editor.putString("reasoning_effort_2", effortValues[spinnerReasoning2.getSelectedItemPosition()]);
+editor.putString("reasoning_effort_3", effortValues[spinnerReasoning3.getSelectedItemPosition()]);
+editor.putString("reasoning_effort_4", effortValues[spinnerReasoning4.getSelectedItemPosition()]);
+editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelectedItemPosition()]);
         editor.putString("quick_5", q5);
         editor.apply();
 
@@ -875,9 +996,11 @@ editor.putInt("api_direction_5", spinnerDir5.getSelectedItemPosition());
                 String modelList = prefs.getString("model_list", "");
                 String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
                         + "api_key=" + key + "\n"
-                        + "api_url=" + url + "\n"
-                        + "model=" + mdl + "\n"
-                        + "model_list=" + modelList + "\n"
++ "api_url=" + url + "\n"
++ "model=" + mdl + "\n"
++ "model_list=" + modelList + "\n"
++ "api_weight=" + prefs.getString("api_weight", "3") + "\n"
++ "api_direction=" + prefs.getInt("api_direction", 0) + "\n"
                         + "temperature=" + finalTempStr + "\n"
                         + "max_chat_messages=" + finalMaxChatStr + "\n"
                         + "max_tokens=" + finalMaxTokensStr + "\n"
@@ -908,6 +1031,10 @@ editor.putInt("api_direction_5", spinnerDir5.getSelectedItemPosition());
 + "model_5=" + prefs.getString("model_5", "") + "\n"
 + "api_weight_5=" + prefs.getString("api_weight_5", "3") + "\n"
 + "api_direction_5=" + prefs.getInt("api_direction_5", 0) + "\n"
++ "reasoning_effort_2=" + prefs.getString("reasoning_effort_2", "default") + "\n"
++ "reasoning_effort_3=" + prefs.getString("reasoning_effort_3", "default") + "\n"
++ "reasoning_effort_4=" + prefs.getString("reasoning_effort_4", "default") + "\n"
++ "reasoning_effort_5=" + prefs.getString("reasoning_effort_5", "default") + "\n"
 + "EOF\n";
                 runRoot(cfg);
 
