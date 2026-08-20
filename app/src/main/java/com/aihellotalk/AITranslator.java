@@ -2056,6 +2056,59 @@ private static String executeRequestWithRotation(JSONObject body, OkHttpClient f
     throw lastException != null ? lastException : new IOException("所有API端點均不可用");
 }
 
+private static String executeSingleRequest(OkHttpClient useClient, JSONObject body, ApiEndpoint ep) throws IOException {
+    Request req = new Request.Builder()
+            .url(fixUrl(ep.url))
+            .header("Authorization", "Bearer " + ep.key)
+            .header("Content-Type", "application/json")
+            .post(RequestBody.create(body.toString(), JSON_TYPE))
+            .build();
+    try (Response resp = useClient.newCall(req).execute()) {
+        String responseBody = resp.body() != null ? resp.body().string() : "";
+        if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code() + " " + responseBody);
+        try {
+            JSONObject json = new JSONObject(responseBody);
+            JSONObject choice = json.getJSONArray("choices").getJSONObject(0);
+            String content = choice.getJSONObject("message").optString("content", "").trim();
+            if (content.isEmpty()) throw new IOException("大模型返回了空数据。");
+            return content;
+        } catch (IOException e) { throw e; }
+        catch (Exception e) { throw new IOException("JSON解析失败：" + responseBody); }
+    }
+}
+
+private static String fixUrl(String url) {
+    if (url == null || url.isEmpty()) return "https://api.openai.com/v1/chat/completions";
+    
+    // 如果用户自己填写了完整的完整路径（包含 chat/completions），直接信任并原样返回
+    if (url.endsWith("/chat/completions")) {
+        return url;
+    }
+
+    // 如果没有包含 chat/completions，我们需要帮它补全
+    if (!url.endsWith("/")) {
+        url += "/";
+    }
+    
+    // 针对 Gemini 等特殊接口，如果地址里已经有 openai/v1/，不要瞎切
+    if (url.contains("generativelanguage.googleapis.com")) {
+         if (!url.contains("chat/completions")) {
+              return url + "chat/completions";
+         }
+    }
+
+    // 保留对普通中转 API 的宽容处理
+    int idx = url.indexOf("/v1/");
+    if (idx >= 0 && !url.contains("generativelanguage.googleapis.com")) {
+        url = url.substring(0, idx + 4);
+    }
+    
+    // 最后确保以完整的 completions 结尾
+    if (!url.endsWith("chat/completions")) {
+        return url + "chat/completions";
+    }
+    return url;
+}
 
     public static List<String> fetchModels(String key, String baseUrl) throws IOException {
         List<String> result = new ArrayList<>();
