@@ -1111,126 +1111,169 @@ public class SettingsActivity extends Activity {
         }).start();
     }
 
-            private void testTranslate() {
-        // 收集所有已配置的 API 通道信息
-        List<ApiTestInfo> list = new ArrayList<>();
-        
-        // 检查主 API
-        String k1 = etKey.getText().toString().trim();
-        if (!k1.isEmpty()) {
-            list.add(new ApiTestInfo("主 API", k1, etUrl.getText().toString().trim(), etModel.getText().toString().trim()));
-        }
-        
-        // 检查 2-8 备用 API（智能非空过滤）
-        EditText[] keys = {etKey2, etKey3, etKey4, etKey5, etKey6, etKey7, etKey8};
-        EditText[] urls = {etUrl2, etUrl3, etUrl4, etUrl5, etUrl6, etUrl7, etUrl8};
-        EditText[] models = {etModel2, etModel3, etModel4, etModel5, etModel6, etModel7, etModel8};
-        
-        for (int i = 0; i < keys.length; i++) {
-            String k = keys[i].getText().toString().trim();
-            if (!k.isEmpty()) {
-                int apiNum = i + 2;
-                list.add(new ApiTestInfo("备用 API " + apiNum, k, urls[i].getText().toString().trim(), models[i].getText().toString().trim()));
-            }
-        }
+    // ================= 测试大盘用的数据结构 =================
+private static class ApiSlot {
+    int index;
+    String alias;
+    String key;
+    String url;
+    String model;
+    boolean tested = false;
+    boolean success = false;
+    String message = "";
 
-        if (list.isEmpty()) {
-            toast("请至少配置一个 API Key");
-            return;
-        }
-
-        btnTest.setEnabled(false);
-        btnTest.setText("正在逐个精准体检...");
-
-        new Thread(() -> {
-            StringBuilder report = new StringBuilder();
-            int successCount = 0;
-            int failCount = 0;
-
-            OkHttpClient client = new OkHttpClient.Builder()
-                    .connectTimeout(6, TimeUnit.SECONDS)
-                    .readTimeout(10, TimeUnit.SECONDS)
-                    .build();
-
-            for (ApiTestInfo info : list) {
-                String baseUrl = info.url.isEmpty() ? "https://api.openai.com/v1/chat/completions" : info.url.trim();
-                // 严谨修复 URL 路径
-                if (!baseUrl.endsWith("/chat/completions")) {
-                    if (!baseUrl.endsWith("/")) baseUrl += "/";
-                    if (!baseUrl.contains("generativelanguage.googleapis.com")) {
-                        if (!baseUrl.contains("/v1/")) {
-                            baseUrl += "v1/";
-                        } else {
-                            int idx = baseUrl.indexOf("/v1/");
-                            baseUrl = baseUrl.substring(0, idx + 4);
-                        }
-                    }
-                    baseUrl += "chat/completions";
-                }
-
-                try {
-                    // 零大模型 Token 消耗：只发一个极简的 1-token 测试请求验证通道
-                    JSONObject bodyObj = new JSONObject();
-                    bodyObj.put("model", info.model.isEmpty() ? "gpt-3.5-turbo" : info.model);
-                    bodyObj.put("max_tokens", 1);
-                    JSONArray msgs = new JSONArray();
-                    JSONObject m = new JSONObject();
-                    m.put("role", "user");
-                    m.put("content", "hi");
-                    msgs.put(m);
-                    bodyObj.put("messages", msgs);
-
-                    okhttp3.RequestBody reqBody = okhttp3.RequestBody.create(bodyObj.toString(), okhttp3.MediaType.get("application/json; charset=utf-8"));
-                    Request req = new Request.Builder()
-                            .url(baseUrl)
-                            .header("Authorization", "Bearer " + info.key)
-                            .header("Content-Type", "application/json")
-                            .header("User-Agent", "Mozilla/5.0")
-                            .post(reqBody)
-                            .build();
-
-                    try (Response resp = client.newCall(req).execute()) {
-                        String respStr = resp.body() != null ? resp.body().string() : "";
-                        if (resp.isSuccessful()) {
-                            report.append("✅ ").append(info.name).append("：畅通\n");
-                            successCount++;
-                        } else {
-                            report.append("❌ ").append(info.name).append("：HTTP ").append(resp.code()).append("\n");
-                            failCount++;
-                        }
-                    }
-                } catch (Exception e) {
-                    String err = e.getMessage() != null ? e.getMessage() : "未知异常";
-                    if (err.length() > 30) err = err.substring(0, 30) + "...";
-                    report.append("❌ ").append(info.name).append("：异常(").append(err).append(")\n");
-                    failCount++;
-                }
-            }
-
-            final String finalReport = report.toString();
-            final int fSuccess = successCount;
-            final int fFail = failCount;
-
-            runOnUiThread(() -> {
-                btnTest.setEnabled(true);
-                btnTest.setText("一键测试大盘全链路");
-                
-                new AlertDialog.Builder(SettingsActivity.this)
-                        .setTitle("📊 通道精准体检报告")
-                        .setMessage(finalReport + "\n总结：成功 " + fSuccess + " 个，失败 " + fFail + " 个")
-                        .setPositiveButton("确定", null)
-                        .show();
-            });
-        }).start();
+    ApiSlot(int index, String alias, String key, String url, String model) {
+        this.index = index;
+        this.alias = (alias != null && !alias.trim().isEmpty()) ? alias.trim() : ("API " + index);
+        this.key = key;
+        this.url = url;
+        this.model = model;
     }
 
-    // 补回每个单独通道旁边的“测试通道”按钮所需要的方法
+    void test() {
+        tested = true;
+        String baseUrl = url.isEmpty() ? "https://api.openai.com/v1/chat/completions" : url.trim();
+        if (!baseUrl.endsWith("/chat/completions")) {
+            if (!baseUrl.endsWith("/")) baseUrl += "/";
+            if (!baseUrl.contains("generativelanguage.googleapis.com")) {
+                if (!baseUrl.contains("/v1/")) {
+                    baseUrl += "v1/";
+                } else {
+                    int idx = baseUrl.indexOf("/v1/");
+                    baseUrl = baseUrl.substring(0, idx + 4);
+                }
+            }
+            baseUrl += "chat/completions";
+        }
+
+        try {
+            OkHttpClient client = new OkHttpClient.Builder()
+                    .connectTimeout(8, TimeUnit.SECONDS)
+                    .readTimeout(15, TimeUnit.SECONDS)
+                    .build();
+
+            JSONObject bodyObj = new JSONObject();
+            bodyObj.put("model", model);
+            bodyObj.put("max_tokens", 10);
+            JSONArray msgs = new JSONArray();
+            JSONObject m = new JSONObject();
+            m.put("role", "user");
+            m.put("content", "hello");
+            msgs.put(m);
+            bodyObj.put("messages", msgs);
+
+            okhttp3.RequestBody reqBody = okhttp3.RequestBody.create(
+                    bodyObj.toString(),
+                    okhttp3.MediaType.get("application/json; charset=utf-8"));
+
+            Request req = new Request.Builder()
+                    .url(baseUrl)
+                    .header("Authorization", "Bearer " + key)
+                    .header("Content-Type", "application/json")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                    .post(reqBody)
+                    .build();
+
+            try (Response resp = client.newCall(req).execute()) {
+                String respStr = resp.body() != null ? resp.body().string() : "";
+                if (resp.isSuccessful()) {
+                    success = true;
+                    message = "✅ 畅通";
+                } else {
+                    success = false;
+                    try {
+                        JSONObject errJson = new JSONObject(respStr);
+                        JSONObject err = errJson.optJSONObject("error");
+                        if (err != null) {
+                            message = "❌ HTTP " + resp.code() + " - " + err.optString("message", respStr);
+                        } else {
+                            message = "❌ HTTP " + resp.code() + " - " + respStr;
+                        }
+                    } catch (Exception e) {
+                        message = "❌ HTTP " + resp.code();
+                    }
+                    if (message.length() > 200) message = message.substring(0, 200);
+                }
+            }
+        } catch (Exception e) {
+            success = false;
+            message = "❌ " + e.getClass().getSimpleName() + ": " + (e.getMessage() != null ? e.getMessage() : "");
+            if (message.length() > 200) message = message.substring(0, 200);
+        }
+    }
+}
+
+private void showTestResultsToast(List<ApiSlot> slots) {
+    int successCount = 0, failCount = 0;
+    StringBuilder failNames = new StringBuilder();
+    for (ApiSlot s : slots) {
+        if (s.success) successCount++;
+        else { failCount++; if (failNames.length() > 0) failNames.append("、"); failNames.append(s.alias); }
+    }
+    String msg;
+    if (failCount == 0) msg = "✅ 全部 " + slots.size() + " 个通道畅通！";
+    else if (successCount == 0) msg = "🚫 全部 " + slots.size() + " 个通道不可用！";
+    else { msg = "⚠️ " + successCount + " 通 / " + failCount + " 败"; if (failNames.length() <= 60) msg += "\n失败: " + failNames; }
+    Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+}
+
+private void testTranslate() {
+    List<ApiSlot> slots = new ArrayList<>();
+
+    String k1 = etKey.getText().toString().trim();
+    if (!k1.isEmpty()) slots.add(new ApiSlot(1, "主 API", k1, etUrl.getText().toString().trim(), etModel.getText().toString().trim()));
+
+    String k2 = etKey2.getText().toString().trim();
+    if (!k2.isEmpty()) slots.add(new ApiSlot(2, etAlias2.getText().toString().trim(), k2, etUrl2.getText().toString().trim(), etModel2.getText().toString().trim()));
+
+    String k3 = etKey3.getText().toString().trim();
+    if (!k3.isEmpty()) slots.add(new ApiSlot(3, etAlias3.getText().toString().trim(), k3, etUrl3.getText().toString().trim(), etModel3.getText().toString().trim()));
+
+    String k4 = etKey4.getText().toString().trim();
+    if (!k4.isEmpty()) slots.add(new ApiSlot(4, etAlias4.getText().toString().trim(), k4, etUrl4.getText().toString().trim(), etModel4.getText().toString().trim()));
+
+    String k5 = etKey5.getText().toString().trim();
+    if (!k5.isEmpty()) slots.add(new ApiSlot(5, etAlias5.getText().toString().trim(), k5, etUrl5.getText().toString().trim(), etModel5.getText().toString().trim()));
+
+    String k6 = etKey6.getText().toString().trim();
+    if (!k6.isEmpty()) slots.add(new ApiSlot(6, etAlias6.getText().toString().trim(), k6, etUrl6.getText().toString().trim(), etModel6.getText().toString().trim()));
+
+    String k7 = etKey7.getText().toString().trim();
+    if (!k7.isEmpty()) slots.add(new ApiSlot(7, etAlias7.getText().toString().trim(), k7, etUrl7.getText().toString().trim(), etModel7.getText().toString().trim()));
+
+    String k8 = etKey8.getText().toString().trim();
+    if (!k8.isEmpty()) slots.add(new ApiSlot(8, etAlias8.getText().toString().trim(), k8, etUrl8.getText().toString().trim(), etModel8.getText().toString().trim()));
+
+    if (slots.isEmpty()) {
+        toast("请至少在任意一个 API 配置中填写 Key");
+        return;
+    }
+
+    btnTest.setEnabled(false);
+    btnTest.setText("测试中 (" + slots.size() + "个通道)...");
+
+    new Thread(() -> {
+        for (ApiSlot slot : slots) {
+            slot.test();
+        }
+
+        runOnUiThread(() -> {
+            btnTest.setEnabled(true);
+            btnTest.setText("一键测试大盘全链路");
+            showTestResultsToast(slots);
+        });
+    }).start();
+}
+
+    // 独立测试通道方法，绕开调度限制
+        // 独立测试通道方法，绕开调度限制并修复 /v1/v1/ 重叠BUG
     private void testSingleApi(String key, String url, String model) {
         if (key.isEmpty() || model.isEmpty()) {
             toast("请先填写 Key 和 模型");
             return;
         }
         
+        // 采用与主程序完全一致的严谨URL解析逻辑
         String baseUrl = url.isEmpty() ? "https://api.openai.com/v1/chat/completions" : url.trim();
         if (!baseUrl.endsWith("/chat/completions")) {
             if (!baseUrl.endsWith("/")) baseUrl += "/";
@@ -1270,7 +1313,7 @@ public class SettingsActivity extends Activity {
                         .url(finalUrl)
                         .header("Authorization", "Bearer " + key)
                         .header("Content-Type", "application/json")
-                        .header("User-Agent", "Mozilla/5.0")
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)") // 伪装成浏览器硬解所有防火墙
                         .post(reqBody)
                         .build();
                         
@@ -1300,10 +1343,4 @@ public class SettingsActivity extends Activity {
         }).start();
     }
 
-    // 辅助类：用来暂存API信息
-    private static class ApiTestInfo {
-        String name, key, url, model;
-        ApiTestInfo(String name, String key, String url, String model) {
-            this.name = name; this.key = key; this.url = url; this.model = model;
-        }
-    }
+}
