@@ -1111,126 +1111,125 @@ public class SettingsActivity extends Activity {
         }).start();
     }
 
-    private void testTranslate() {
+        private void testTranslate() {
+        // 收集所有已配置的 API 通道信息
+        List<ApiTestInfo> list = new ArrayList<>();
+        
+        // 检查主 API
         String k1 = etKey.getText().toString().trim();
-        String k2 = etKey2.getText().toString().trim();
-        String k3 = etKey3.getText().toString().trim();
-        String k4 = etKey4.getText().toString().trim();
-        String k5 = etKey5.getText().toString().trim();
-        String k6 = etKey6.getText().toString().trim();
-        String k7 = etKey7.getText().toString().trim();
-        String k8 = etKey8.getText().toString().trim();
+        if (!k1.isEmpty()) {
+            list.add(new ApiTestInfo("主 API", k1, etUrl.getText().toString().trim(), etModel.getText().toString().trim()));
+        }
+        
+        // 检查 2-8 备用 API（智能非空过滤，没填 Key 的自动跳过，绝对不笨）
+        EditText[] keys = {etKey2, etKey3, etKey4, etKey5, etKey6, etKey7, etKey8};
+        EditText[] urls = {etUrl2, etUrl3, etUrl4, etUrl5, etUrl6, etUrl7, etUrl8};
+        EditText[] models = {etModel2, etModel3, etModel4, etModel5, etModel6, etModel7, etModel8};
+        
+        for (int i = 0; i < keys.length; i++) {
+            String k = keys[i].getText().toString().trim();
+            if (!k.isEmpty()) {
+                int apiNum = i + 2;
+                list.add(new ApiTestInfo("备用 API " + apiNum, k, urls[i].getText().toString().trim(), models[i].getText().toString().trim()));
+            }
+        }
 
-        if (k1.isEmpty() && k2.isEmpty() && k3.isEmpty() && k4.isEmpty() && k5.isEmpty() && k6.isEmpty() && k7.isEmpty() && k8.isEmpty()) {
-            toast("请至少在任意一个 API 配置中填写 Key");
+        if (list.isEmpty()) {
+            toast("请至少配置一个 API Key");
             return;
         }
 
         btnTest.setEnabled(false);
-        btnTest.setText("测试中...");
-        
-        String url = etUrl.getText().toString().trim();
-        String mdl = etModel.getText().toString().trim();
+        btnTest.setText("正在逐个精准体检...");
 
         new Thread(() -> {
-            try {
-                AITranslator.init(k1, url, mdl);
-                String result = AITranslator.translateTest("你好世界", "English");
-                runOnUiThread(() -> {
-                    btnTest.setEnabled(true);
-                    btnTest.setText("一键测试大盘全链路");
-                    if ("你好世界".equals(result)) {
-                        toast("未翻译");
-                    } else {
-                        toast("大盘链路畅通！翻译结果: " + result);
-                    }
-                });
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    btnTest.setEnabled(true);
-                    btnTest.setText("一键测试大盘全链路");
-                    toast("链路测试失败: " + e.getMessage());
-                });
-            }
-        }).start();
-    }
+            StringBuilder report = new StringBuilder();
+            int successCount = 0;
+            int failCount = 0;
 
-    // 独立测试通道方法，绕开调度限制
-        // 独立测试通道方法，绕开调度限制并修复 /v1/v1/ 重叠BUG
-    private void testSingleApi(String key, String url, String model) {
-        if (key.isEmpty() || model.isEmpty()) {
-            toast("请先填写 Key 和 模型");
-            return;
-        }
-        
-        // 采用与主程序完全一致的严谨URL解析逻辑
-        String baseUrl = url.isEmpty() ? "https://api.openai.com/v1/chat/completions" : url.trim();
-        if (!baseUrl.endsWith("/chat/completions")) {
-            if (!baseUrl.endsWith("/")) baseUrl += "/";
-            if (!baseUrl.contains("generativelanguage.googleapis.com")) {
-                if (!baseUrl.contains("/v1/")) {
-                    baseUrl += "v1/";
-                } else {
-                    int idx = baseUrl.indexOf("/v1/");
-                    baseUrl = baseUrl.substring(0, idx + 4);
+            OkHttpClient client = new OkHttpClient.Builder()
+                    .connectTimeout(6, TimeUnit.SECONDS)
+                    .readTimeout(10, TimeUnit.SECONDS)
+                    .build();
+
+            for (ApiTestInfo info : list) {
+                String baseUrl = info.url.isEmpty() ? "https://api.openai.com/v1/chat/completions" : info.url.trim();
+                // 严谨修复 URL 路径
+                if (!baseUrl.endsWith("/chat/completions")) {
+                    if (!baseUrl.endsWith("/")) baseUrl += "/";
+                    if (!baseUrl.contains("generativelanguage.googleapis.com")) {
+                        if (!baseUrl.contains("/v1/")) {
+                            baseUrl += "v1/";
+                        } else {
+                            int idx = baseUrl.indexOf("/v1/");
+                            baseUrl = baseUrl.substring(0, idx + 4);
+                        }
+                    }
+                    baseUrl += "chat/completions";
+                }
+
+                try {
+                    // 零大模型 Token 消耗：只发一个极简的 1-token 测试请求验证通道
+                    JSONObject bodyObj = new JSONObject();
+                    bodyObj.put("model", info.model.isEmpty() ? "gpt-3.5-turbo" : info.model);
+                    bodyObj.put("max_tokens", 1);
+                    JSONArray msgs = new JSONArray();
+                    JSONObject m = new JSONObject();
+                    m.put("role", "user");
+                    m.put("content", "hi");
+                    msgs.put(m);
+                    bodyObj.put("messages", msgs);
+
+                    okhttp3.RequestBody reqBody = okhttp3.RequestBody.create(bodyObj.toString(), okhttp3.MediaType.get("application/json; charset=utf-8"));
+                    Request req = new Request.Builder()
+                            .url(baseUrl)
+                            .header("Authorization", "Bearer " + info.key)
+                            .header("Content-Type", "application/json")
+                            .header("User-Agent", "Mozilla/5.0")
+                            .post(reqBody)
+                            .build();
+
+                    try (Response resp = client.newCall(req).execute()) {
+                        String respStr = resp.body() != null ? resp.body().string() : "";
+                        if (resp.isSuccessful()) {
+                            report.append("✅ ").append(info.name).append("：畅通\n");
+                            successCount++;
+                        } else {
+                            // 提取精准的 HTTP 错误码
+                            report.append("❌ ").append(info.name).append("：HTTP ").append(resp.code()).append("\n");
+                            failCount++;
+                        }
+                    }
+                } catch (Exception e) {
+                    String err = e.getMessage() != null ? e.getMessage() : "未知异常";
+                    if (err.length() > 30) err = err.substring(0, 30) + "...";
+                    report.append("❌ ").append(info.name).append("：异常(").append(err).append(")\n");
+                    failCount++;
                 }
             }
-            baseUrl += "chat/completions";
-        }
-        
-        Toast.makeText(this, "正在直接测试该通道...", Toast.LENGTH_SHORT).show();
-        
-        String finalUrl = baseUrl;
-        new Thread(() -> {
-            try {
-                OkHttpClient client = new OkHttpClient.Builder()
-                        .connectTimeout(8, TimeUnit.SECONDS)
-                        .readTimeout(15, TimeUnit.SECONDS)
-                        .build();
-                        
-                JSONObject bodyObj = new JSONObject();
-                bodyObj.put("model", model);
-                bodyObj.put("max_tokens", 10); 
-                JSONArray msgs = new JSONArray();
-                JSONObject m = new JSONObject();
-                m.put("role", "user");
-                m.put("content", "hello");
-                msgs.put(m);
-                bodyObj.put("messages", msgs);
+
+            final String finalReport = report.toString();
+            final int fSuccess = successCount;
+            final int fFail = failCount;
+
+            runOnUiThread(() -> {
+                btnTest.setEnabled(true);
+                btnTest.setText("一键测试大盘全链路");
                 
-                okhttp3.RequestBody reqBody = okhttp3.RequestBody.create(bodyObj.toString(), okhttp3.MediaType.get("application/json; charset=utf-8"));
-                Request req = new Request.Builder()
-                        .url(finalUrl)
-                        .header("Authorization", "Bearer " + key)
-                        .header("Content-Type", "application/json")
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)") // 伪装成浏览器硬解所有防火墙
-                        .post(reqBody)
-                        .build();
-                        
-                try (Response resp = client.newCall(req).execute()) {
-                    String respStr = resp.body() != null ? resp.body().string() : "";
-                    if (resp.isSuccessful()) {
-                        runOnUiThread(() -> toast("✅ 测试成功！该 API 通道正常畅通。"));
-                    } else {
-                        runOnUiThread(() -> {
-                            new AlertDialog.Builder(SettingsActivity.this)
-                                .setTitle("❌ 测试失败")
-                                .setMessage("HTTP " + resp.code() + "\n" + respStr)
-                                .setPositiveButton("关闭", null)
-                                .show();
-                        });
-                    }
-                }
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    new AlertDialog.Builder(SettingsActivity.this)
-                        .setTitle("❌ 请求异常")
-                        .setMessage(e.getMessage())
-                        .setPositiveButton("关闭", null)
+                // 实事求是地弹窗展示体检报告
+                new AlertDialog.Builder(SettingsActivity.this)
+                        .setTitle("📊 通道精准体检报告")
+                        .setMessage(finalReport + "\n总结：成功 " + fSuccess + " 个，失败 " + fFail + " 个")
+                        .setPositiveButton("确定", null)
                         .show();
-                });
-            }
+            });
         }).start();
     }
 
-}
+    // 辅助类：用来暂存API信息
+    private static class ApiTestInfo {
+        String name, key, url, model;
+        ApiTestInfo(String name, String key, String url, String model) {
+            this.name = name; this.key = key; this.url = url; this.model = model;
+        }
+    }
