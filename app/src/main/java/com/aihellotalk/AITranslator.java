@@ -108,12 +108,13 @@ private static class ApiEndpoint {
     final int weight;
     final int direction; // 0=發送+接收, 1=僅接收, 2=僅發送
     final boolean supportsReasoningEffort;
+    final String reasoningEffort;
     volatile boolean enabled;
     volatile int callCount;
     volatile long cooldownUntil;
     OkHttpClient client;
 
-    ApiEndpoint(String key, String url, String model, int weight, boolean enabled, int direction) {
+    ApiEndpoint(String key, String url, String model, int weight, boolean enabled, int direction, String reasoningEffort) {
         this.key = key;
         this.url = (url != null && !url.isEmpty()) ? url : "https://api.openai.com/v1/chat/completions";
         this.model = model;
@@ -121,6 +122,7 @@ private static class ApiEndpoint {
         this.enabled = enabled && key != null && !key.isEmpty() && model != null && !model.isEmpty();
         this.direction = (direction >= 0 && direction <= 2) ? direction : 0;
         this.supportsReasoningEffort = (this.url == null || !this.url.contains("generativelanguage.googleapis.com"));
+        this.reasoningEffort = (reasoningEffort != null && !reasoningEffort.isEmpty()) ? reasoningEffort : "default";
     }
 
     synchronized OkHttpClient ensureClient() {
@@ -531,11 +533,16 @@ private static void loadEndpoints() {
 boolean enabled = enabledStr == null || "true".equalsIgnoreCase(enabledStr);
                 
         int direction = readConfigInt("api_direction" + suffix, 0);
-        endpoints.add(new ApiEndpoint(key, url, model, weight, enabled, direction));
+        String reasoningEffort = readConfigValue("reasoning_effort" + suffix);
+if (reasoningEffort == null || reasoningEffort.isEmpty()) {
+    reasoningEffort = readConfigValue("reasoning_effort"); // 回退到全局
+    if (reasoningEffort == null) reasoningEffort = "default";
+}
+        endpoints.add(new ApiEndpoint(key, url, model, weight, enabled, direction, reasoningEffort));
         Log.i(TAG, "HT_AI 端點[" + i + "]: model=" + model + " 權重=" + weight + " 方向=" + direction);
     }
     if (endpoints.isEmpty() && apiKey != null && !apiKey.isEmpty()) {
-        endpoints.add(new ApiEndpoint(apiKey, apiUrl, model, 3, true, 0));
+        endpoints.add(new ApiEndpoint(apiKey, apiUrl, model, 3, true, 0, "default"));
     }
     Log.i(TAG, "HT_AI 共加載 " + endpoints.size() + " 個API端點");
 }
@@ -2010,12 +2017,9 @@ private static String executeRequestWithRotation(JSONObject body, OkHttpClient f
                 }
             } catch (JSONException ignored) {}
 
-            if (ep.supportsReasoningEffort) {
-                String effort = getReasoningEffort();
-                if (!"default".equals(effort)) {
-                    try { body.put("reasoning_effort", effort); } catch (JSONException ignored) {}
-                }
-            }
+            if (ep.supportsReasoningEffort && !"default".equals(ep.reasoningEffort)) {
+    try { body.put("reasoning_effort", ep.reasoningEffort); } catch (JSONException ignored) {}
+}
 
             OkHttpClient useClient = (forceClient != null) ? forceClient : ep.ensureClient();
             String result = executeSingleRequest(useClient, body, ep);
