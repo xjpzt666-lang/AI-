@@ -763,6 +763,13 @@ public class SettingsActivity extends Activity {
                 Request req = new Request.Builder()
                         .url(url)
                         .header("Authorization", "Bearer " + key)
+Request req = new Request.Builder()
+        .url(url)
+        .header("Authorization", "Bearer " + key)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)") // 添加这行防拦截
+        .get()
+        .build();
+
                         .get()
                         .build();
 
@@ -1155,18 +1162,25 @@ public class SettingsActivity extends Activity {
     }
 
     // 独立测试通道方法，绕开调度限制
+        // 独立测试通道方法，绕开调度限制并修复 /v1/v1/ 重叠BUG
     private void testSingleApi(String key, String url, String model) {
         if (key.isEmpty() || model.isEmpty()) {
             toast("请先填写 Key 和 模型");
             return;
         }
-        String baseUrl = url.isEmpty() ? "https://api.openai.com/v1/chat/completions" : url;
-        if (!baseUrl.contains("/v1/") && !baseUrl.contains("generativelanguage.googleapis.com")) {
-            if (!baseUrl.endsWith("/")) baseUrl += "/";
-            baseUrl += "v1/";
-        }
+        
+        // 采用与主程序完全一致的严谨URL解析逻辑
+        String baseUrl = url.isEmpty() ? "https://api.openai.com/v1/chat/completions" : url.trim();
         if (!baseUrl.endsWith("/chat/completions")) {
             if (!baseUrl.endsWith("/")) baseUrl += "/";
+            if (!baseUrl.contains("generativelanguage.googleapis.com")) {
+                if (!baseUrl.contains("/v1/")) {
+                    baseUrl += "v1/";
+                } else {
+                    int idx = baseUrl.indexOf("/v1/");
+                    baseUrl = baseUrl.substring(0, idx + 4);
+                }
+            }
             baseUrl += "chat/completions";
         }
         
@@ -1195,6 +1209,7 @@ public class SettingsActivity extends Activity {
                         .url(finalUrl)
                         .header("Authorization", "Bearer " + key)
                         .header("Content-Type", "application/json")
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)") // 伪装成浏览器硬解所有防火墙
                         .post(reqBody)
                         .build();
                         
@@ -1223,4 +1238,5 @@ public class SettingsActivity extends Activity {
             }
         }).start();
     }
+
 }
