@@ -100,7 +100,66 @@ public class AITranslator {
             "^(?:\u7248\u672c\\s*\\d*|[Oo]ption\\s*\\d*|\u9009\u9879\\s*\\d*|\\d{1,2}\\s*[.\u3001)\uff09:\uff1a]|[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u2460-\u2473]+\\s*[.\u3001)\uff09:\uff1a]?)\\s*");
 
     private static final int MAX_TOTAL_BASE64_CHARS = 900_000;
+// ===== ★ 多API智能輪換系統 =====
+private static class ApiEndpoint {
+    final String key;
+    final String url;
+    final String model;
+    final int weight;
+    final int direction; // 0=發送+接收, 1=僅接收, 2=僅發送
+    final boolean supportsReasoningEffort;
+    volatile boolean enabled;
+    volatile int callCount;
+    volatile long cooldownUntil;
+    OkHttpClient client;
 
+    ApiEndpoint(String key, String url, String model, int weight, boolean enabled, int direction) {
+        this.key = key;
+        this.url = (url != null && !url.isEmpty()) ? url : "https://api.openai.com/v1/chat/completions";
+        this.model = model;
+        this.weight = (weight > 0) ? weight : 3;
+        this.enabled = enabled && key != null && !key.isEmpty() && model != null && !model.isEmpty();
+        this.direction = (direction >= 0 && direction <= 2) ? direction : 0;
+        this.supportsReasoningEffort = (this.url == null || !this.url.contains("generativelanguage.googleapis.com"));
+    }
+
+    synchronized OkHttpClient ensureClient() {
+        if (client == null) {
+            client = new OkHttpClient.Builder()
+                .connectTimeout(20, TimeUnit.SECONDS)
+                .readTimeout(90, TimeUnit.SECONDS)
+                .writeTimeout(45, TimeUnit.SECONDS)
+                .build();
+        }
+        return client;
+    }
+
+    boolean isAvailable() {
+        if (!enabled) return false;
+        if (cooldownUntil == 0) return true;
+        if (System.currentTimeMillis() > cooldownUntil) {
+            cooldownUntil = 0;
+            return true;
+        }
+        return false;
+    }
+
+    void onSuccess() { callCount++; }
+
+    void onFailure() {
+        cooldownUntil = System.currentTimeMillis() + 5_000;
+        callCount = 0;
+    }
+
+    boolean needRotate() { return callCount >= weight; }
+
+    boolean canReceive() { return direction == 0 || direction == 1; }
+    boolean canSend() { return direction == 0 || direction == 2; }
+}
+
+private static final List<ApiEndpoint> endpoints = new ArrayList<>();
+private static volatile int roundRobinIndex = 0;
+// ===== 輪換系統結束 =====
     private static double getTemperature() {
         double temp = 0.3;
         try {
@@ -429,8 +488,99 @@ private static String getReasoningEffort() {
         loadPrompts();
         loadDrafts();
         initMemoryMode();
-    }
+    loadEndpoints();
+}
+private static String readConfigValue(String key) {
+    try {
+        File f = new File("/data/local/tmp/htai_config.txt");
+        if (!f.exists()) return null;
+        BufferedReader r = new BufferedReader(new FileReader(f));
+        String line;
+        while ((line = r.readLine()) != null) {
+            line = line.trim();
+            if (line.startsWith(key + "=")) {
+                String val = line.substring(key.length() + 1).trim();
+                r.close();
+                return val;
+            }
+        }
+        r.close();
+    } catch (Exception ignored) {}
+    return null;
+}
 
+private static int readConfigInt(String key, int defaultVal) {
+    try {
+        String v = readConfigValue(key);
+        if (v != null && !v.isEmpty()) return Integer.parseInt(v);
+    } catch (Exception ignored) {}
+    return defaultVal;
+}
+
+private static void loadEndpoints() {
+    endpoints.clear();
+    for (int i = 1; i <= 5; i++) {
+        String suffix = (i == 1) ? "" : ("_" + i);
+        String key = readConfigValue("api_key" + suffix);
+        if (key == null || key.isEmpty()) continue;
+        String url = readConfigValue("api_url" + suffix);
+        String model = readConfigValue("model" + suffix);
+        if (model == null || model.isEmpty()) continue;
+        int weight = readConfigInt("api_weight" + suffix, 3);
+        String enabledStr = readConfigValue("api_enabled" + suffix);
+boolean enabled = enabledStr == null || "true".equalsIgnoreCase(enabledStr);
+                |
+        int direction = readConfigInt("api_direction" + suffix, 0);
+        endpoints.add(new ApiEndpoint(key, url, model, weight, enabled, direction));
+        Log.i(TAG, "HT_AI 端點[" + i + "]: model=" + model + " 權重=" + weight + " 方向=" + direction);
+    }
+    if (endpoints.isEmpty() && apiKey != null && !apiKey.isEmpty()) {
+        endpoints.add(new ApiEndpoint(apiKey, apiUrl, model, 3, true, 0));
+    }
+    Log.i(TAG, "HT_AI 共加載 " + endpoints.size() + " 個API端點");
+}
+
+private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
+    if (endpoints.isEmpty()) return null;
+    int totalAvailable = 0;
+    for (ApiEndpoint ep : endpoints) {
+        if (ep.enabled && ep.isAvailable()) {
+            if (isReceive && ep.canReceive()) totalAvailable++;
+            else if (!isReceive && ep.canSend()) totalAvailable++;
+        }
+    }
+    if (totalAvailable == 0) {
+        for (ApiEndpoint ep : endpoints) {
+            if (ep.enabled) ep.cooldownUntil = 0;
+        }
+    }
+    int start = roundRobinIndex;
+    for (int i = 0; i < endpoints.size(); i++) {
+        int idx = (start + i) % endpoints.size();
+        ApiEndpoint ep = endpoints.get(idx);
+        if (!ep.enabled || !ep.isAvailable()) continue;
+        if (isReceive && !ep.canReceive()) continue;
+        if (!isReceive && !ep.canSend()) continue;
+        if (ep.needRotate()) {
+            ep.callCount = 0;
+            continue;
+        }
+        roundRobinIndex = (idx + 1) % endpoints.size();
+        return ep;
+    }
+    for (ApiEndpoint ep : endpoints) {
+        if (ep.enabled) ep.callCount = 0;
+    }
+    roundRobinIndex = 0;
+    for (ApiEndpoint ep : endpoints) {
+        if (ep.enabled) {
+            if (isReceive && !ep.canReceive()) continue;
+            if (!isReceive && !ep.canSend()) continue;
+            return ep;
+        }
+    }
+    return null;
+}
     public static void initForFetch(String key, String url) {
         apiKey = key;
         apiUrl = url;
@@ -1792,84 +1942,123 @@ private static String getReasoningEffort() {
         } catch (JSONException e) { throw new IOException("降级解析失败"); }
     }
 
-    private static String callChatSimple(String prompt) throws IOException {
-        if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
-        if (client == null) throw new IOException("未初始化");
-        try {
-            JSONObject body = new JSONObject();
-            body.put("model", model);
-            body.put("max_tokens", getMaxTokens());
-            body.put("temperature", getTemperature());
-            String effort = getReasoningEffort();
-            if (!"default".equals(effort)) {
-                body.put("reasoning_effort", effort);
-            }
-            JSONArray msgs = new JSONArray();
-            JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
-            msgs.put(m); body.put("messages", msgs);
-            return executeRequest(body);
-        } catch (JSONException e) { throw new IOException("构建失败"); }
-    }
-
-    private static String callChatMessages(JSONArray messages) throws IOException {
-        if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
-        if (client == null) throw new IOException("未初始化");
-        try {
-            JSONObject body = new JSONObject();
-            body.put("model", model);
-            body.put("max_tokens", getMaxTokens());
-            body.put("temperature", getTemperature());
-            String effort = getReasoningEffort();
-            if (!"default".equals(effort)) {
-                body.put("reasoning_effort", effort);
-            }
-            body.put("messages", messages);
-            return executeRequest(body);
-        } catch (JSONException e) { throw new IOException("构建失败"); }
-    }
     
-    private static String callChatMessages(JSONArray messages, int maxTokens) throws IOException {
+            private static String callChatSimple(String prompt) throws IOException {
     if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
     if (client == null) throw new IOException("未初始化");
     try {
         JSONObject body = new JSONObject();
         body.put("model", model);
-        body.put("max_tokens", maxTokens);
+        body.put("max_tokens", getMaxTokens());
         body.put("temperature", getTemperature());
-        String effort = getReasoningEffort();
-        if (!"default".equals(effort)) {
-            body.put("reasoning_effort", effort);
-        }
+        JSONArray msgs = new JSONArray();
+        JSONObject m = new JSONObject(); m.put("role", "user"); m.put("content", prompt);
+        msgs.put(m); body.put("messages", msgs);
+        return executeRequest(body);
+    } catch (JSONException e) { throw new IOException("构建失败"); }
+}
+
+    private static String callChatMessages(JSONArray messages) throws IOException {
+    if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
+    if (client == null) throw new IOException("未初始化");
+    try {
+        JSONObject body = new JSONObject();
+        body.put("model", model);
+        body.put("max_tokens", getMaxTokens());
+        body.put("temperature", getTemperature());
         body.put("messages", messages);
+            return executeRequest(body);
+        } catch (JSONException e) { throw new IOException("构建失败"); }
+    }
+    
+    private static String callChatMessages(JSONArray messages, int maxTokens) throws IOException {
+if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
+if (client == null) throw new IOException("未初始化");
+try {
+    JSONObject body = new JSONObject();
+    body.put("model", model);
+    body.put("max_tokens", maxTokens);
+    body.put("temperature", getTemperature());
+    body.put("messages", messages);
         return executeRequest(body);
     } catch (JSONException e) {
         throw new IOException("构建失败");
     }
 }
 
-    private static String executeRequest(JSONObject body) throws IOException { return executeRequestWith(client, body); }
+    private static String executeRequest(JSONObject body) throws IOException {
+    return executeRequestWithRotation(body, null, true);
+}
 
-    private static String executeRequestWith(OkHttpClient useClient, JSONObject body) throws IOException {
-        Request req = new Request.Builder()
-                .url(fixUrl(apiUrl))
-                .header("Authorization", "Bearer " + apiKey)
-                .header("Content-Type", "application/json")
-                .post(RequestBody.create(body.toString(), JSON_TYPE))
-                .build();
+private static String executeRequestWith(OkHttpClient useClient, JSONObject body) throws IOException {
+    return executeRequestWithRotation(body, useClient, true);
+}
 
-        try (Response resp = useClient.newCall(req).execute()) {
-            String responseBody = resp.body() != null ? resp.body().string() : "";
-            if (!resp.isSuccessful()) throw new IOException("HTTP状态码 " + resp.code() + "\n" + responseBody);
+private static String executeRequestWithRotation(JSONObject body, OkHttpClient forceClient, boolean isReceive) throws IOException {
+    if (endpoints.isEmpty()) throw new IOException("沒有配置任何API端點");
+    IOException lastException = null;
+    int maxAttempts = endpoints.size() * 2;
+    for (int attempt = 0; attempt < maxAttempts; attempt++) {
+        ApiEndpoint ep = getNextEndpoint(isReceive);
+        if (ep == null) throw new IOException("所有API端點均不可用");
+        try {
+            String origModel = null;
             try {
-                JSONObject json = new JSONObject(responseBody);
-                JSONObject choice = json.getJSONArray("choices").getJSONObject(0);
-                String content = choice.getJSONObject("message").optString("content", "").trim();
-                if (content.isEmpty()) throw new IOException("大模型返回了空数据。");
-                return content;
-            } catch (IOException e) { throw e; }
-            catch (Exception e) { throw new IOException("JSON解析失败：" + responseBody); }
+                if (ep.model != null && !ep.model.isEmpty() && body.has("model")) {
+                    origModel = body.getString("model");
+                    body.put("model", ep.model);
+                }
+            } catch (JSONException ignored) {}
+
+            if (ep.supportsReasoningEffort) {
+                String effort = getReasoningEffort();
+                if (!"default".equals(effort)) {
+                    try { body.put("reasoning_effort", effort); } catch (JSONException ignored) {}
+                }
+            }
+
+            OkHttpClient useClient = (forceClient != null) ? forceClient : ep.ensureClient();
+            String result = executeSingleRequest(useClient, body, ep);
+            ep.onSuccess();
+            return result;
+        } catch (IOException e) {
+            lastException = e;
+            String msg = e.getMessage() != null ? e.getMessage() : "";
+            boolean shouldRetry = msg.contains("429") || msg.contains("500") || msg.contains("502")
+                    || msg.contains("503") || msg.contains("504") || msg.contains("timeout")
+                    || msg.contains("Timeout") || msg.contains("connect") || msg.contains("EOF")
+                    || msg.contains("Socket") || msg.contains("reset");
+            if (shouldRetry) {
+                Log.w(TAG, "HT_AI 端點 " + ep.model + " 失敗，冷卻5秒: " + msg);
+                ep.onFailure();
+                continue;
+            }
+            throw e;
         }
     }
+    throw lastException != null ? lastException : new IOException("所有API端點均不可用");
+}
+
+private static String executeSingleRequest(OkHttpClient useClient, JSONObject body, ApiEndpoint ep) throws IOException {
+    Request req = new Request.Builder()
+            .url(fixUrl(ep.url))
+            .header("Authorization", "Bearer " + ep.key)
+            .header("Content-Type", "application/json")
+            .post(RequestBody.create(body.toString(), JSON_TYPE))
+            .build();
+    try (Response resp = useClient.newCall(req).execute()) {
+        String responseBody = resp.body() != null ? resp.body().string() : "";
+        if (!resp.isSuccessful()) throw new IOException("HTTP " + resp.code() + " " + responseBody);
+        try {
+            JSONObject json = new JSONObject(responseBody);
+            JSONObject choice = json.getJSONArray("choices").getJSONObject(0);
+            String content = choice.getJSONObject("message").optString("content", "").trim();
+            if (content.isEmpty()) throw new IOException("大模型返回了空數據。");
+            return content;
+        } catch (IOException e) { throw e; }
+        catch (Exception e) { throw new IOException("JSON解析失敗：" + responseBody); }
+    }
+}
 
     private static String fixUrl(String url) {
         if (url == null || url.isEmpty()) return "https://api.openai.com/v1/chat/completions";
