@@ -194,158 +194,58 @@ apiContentLayout.setOrientation(LinearLayout.VERTICAL);
 apiContentLayout.setVisibility(isApiExpanded ? View.VISIBLE : View.GONE);
 apiContentLayout.setPadding(20, 10, 0, 10);
 
-// --- API 2 ---
-apiContentLayout.addView(lab("★ 备用 API 2 (留空则跳过):"));
-apiContentLayout.addView(lab("API Key 2:"));
-etKey2 = edit(prefs.getString("api_key_2", ""));
-apiContentLayout.addView(etKey2);
-apiContentLayout.addView(lab("API URL 2:"));
-etUrl2 = edit(prefs.getString("api_url_2", ""));
-apiContentLayout.addView(etUrl2);
-apiContentLayout.addView(lab("模型 2:"));
-etModel2 = edit(prefs.getString("model_2", ""));
-apiContentLayout.addView(etModel2);
-Button btnFetch2 = btn("获取模型");
-btnFetch2.setOnClickListener(v -> fetchModelsForApi(etKey2.getText().toString().trim(), etUrl2.getText().toString().trim(), etModel2));
-apiContentLayout.addView(btnFetch2);
-apiContentLayout.addView(lab("调用权重 2 (字越大用的越多，建议1~10):"));
-etWeight2 = edit(prefs.getString("api_weight_2", "3"));
-apiContentLayout.addView(etWeight2);
-apiContentLayout.addView(lab("翻译方向 2:"));
-spinnerDir2 = new android.widget.Spinner(this);
+// 辅助背景
+android.graphics.drawable.GradientDrawable titleBg = new android.graphics.drawable.GradientDrawable();
+titleBg.setColor(Color.parseColor("#E8EAF6"));
+titleBg.setCornerRadius(8f);
 
-android.widget.ArrayAdapter<String> dirAdapter2 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
-dirAdapter2.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-spinnerDir2.setAdapter(dirAdapter2);
-spinnerDir2.setSelection(prefs.getInt("api_direction_2", 0));
-apiContentLayout.addView(spinnerDir2);
-apiContentLayout.addView(lab("思考模式 2:"));
-spinnerReasoning2 = new android.widget.Spinner(this);
-String[] efforts2 = {"默认(不干预)", "轻度思考", "中度思考", "深度思考"};
-android.widget.ArrayAdapter<String> effAdapter2 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2);
-effAdapter2.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-spinnerReasoning2.setAdapter(effAdapter2);
-String savedEff2 = prefs.getString("reasoning_effort_2", "default");
-int selEff2 = 0;
-if ("low".equals(savedEff2)) selEff2 = 1;
-else if ("medium".equals(savedEff2)) selEff2 = 2;
-else if ("high".equals(savedEff2)) selEff2 = 3;
-spinnerReasoning2.setSelection(selEff2);
-apiContentLayout.addView(spinnerReasoning2);
-apiContentLayout.addView(div());
+// --- API 2 ---
+TextView t2 = new TextView(this); t2.setText("🟢 备用 API 2"); t2.setTextColor(Color.parseColor("#198754")); t2.setTextSize(15f); t2.setTypeface(null, android.graphics.Typeface.BOLD); t2.setPadding(20, 20, 20, 20); t2.setBackground(titleBg);
+LinearLayout.LayoutParams lp2 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp2.setMargins(0, 30, 0, 10); t2.setLayoutParams(lp2);
+apiContentLayout.addView(t2);
+apiContentLayout.addView(lab("API Key 2:")); etKey2 = edit(prefs.getString("api_key_2", "")); apiContentLayout.addView(etKey2);
+apiContentLayout.addView(lab("API URL 2:")); etUrl2 = edit(prefs.getString("api_url_2", "")); apiContentLayout.addView(etUrl2);
+apiContentLayout.addView(lab("模型 2:")); etModel2 = edit(prefs.getString("model_2", "")); apiContentLayout.addView(etModel2);
+Button btnFetch2 = btn("获取模型"); btnFetch2.setOnClickListener(v -> fetchModelsForApi(etKey2.getText().toString().trim(), etUrl2.getText().toString().trim(), etModel2)); apiContentLayout.addView(btnFetch2);
+apiContentLayout.addView(lab("调用权重 2:")); etWeight2 = edit(prefs.getString("api_weight_2", "3")); apiContentLayout.addView(etWeight2);
+apiContentLayout.addView(lab("翻译方向 2:")); spinnerDir2 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter2 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter2.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir2.setAdapter(dirAdapter2); spinnerDir2.setSelection(prefs.getInt("api_direction_2", 0)); apiContentLayout.addView(spinnerDir2);
+apiContentLayout.addView(lab("思考模式 2:")); spinnerReasoning2 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter2 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter2.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning2.setAdapter(effAdapter2); String savedEff2 = prefs.getString("reasoning_effort_2", "default"); int selEff2 = 0; if ("low".equals(savedEff2)) selEff2 = 1; else if ("medium".equals(savedEff2)) selEff2 = 2; else if ("high".equals(savedEff2)) selEff2 = 3; spinnerReasoning2.setSelection(selEff2); apiContentLayout.addView(spinnerReasoning2);
 
 // --- API 3 ---
-apiContentLayout.addView(lab("★ 备用 API 3 (留空则跳过):"));
-apiContentLayout.addView(lab("API Key 3:"));
-etKey3 = edit(prefs.getString("api_key_3", ""));
-apiContentLayout.addView(etKey3);
-apiContentLayout.addView(lab("API URL 3:"));
-etUrl3 = edit(prefs.getString("api_url_3", ""));
-apiContentLayout.addView(etUrl3);
-apiContentLayout.addView(lab("模型 3:"));
-etModel3 = edit(prefs.getString("model_3", ""));
-apiContentLayout.addView(etModel3);
-Button btnFetch3 = btn("获取模型");
-btnFetch3.setOnClickListener(v -> fetchModelsForApi(etKey3.getText().toString().trim(), etUrl3.getText().toString().trim(), etModel3));
-apiContentLayout.addView(btnFetch3);
-apiContentLayout.addView(lab("调用权重 3:"));
-etWeight3 = edit(prefs.getString("api_weight_3", "3"));
-apiContentLayout.addView(etWeight3);
-apiContentLayout.addView(lab("翻译方向 3:"));
-spinnerDir3 = new android.widget.Spinner(this);
-android.widget.ArrayAdapter<String> dirAdapter3 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
-dirAdapter3.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-spinnerDir3.setAdapter(dirAdapter3);
-spinnerDir3.setSelection(prefs.getInt("api_direction_3", 0));
-apiContentLayout.addView(spinnerDir3);
-apiContentLayout.addView(lab("思考模式 3:"));
-spinnerReasoning3 = new android.widget.Spinner(this);
-android.widget.ArrayAdapter<String> effAdapter3 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2);
-effAdapter3.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-spinnerReasoning3.setAdapter(effAdapter3);
-String savedEff3 = prefs.getString("reasoning_effort_3", "default");
-int selEff3 = 0;
-if ("low".equals(savedEff3)) selEff3 = 1;
-else if ("medium".equals(savedEff3)) selEff3 = 2;
-else if ("high".equals(savedEff3)) selEff3 = 3;
-spinnerReasoning3.setSelection(selEff3);
-apiContentLayout.addView(spinnerReasoning3);
-apiContentLayout.addView(div());
+TextView t3 = new TextView(this); t3.setText("🟠 备用 API 3"); t3.setTextColor(Color.parseColor("#D97706")); t3.setTextSize(15f); t3.setTypeface(null, android.graphics.Typeface.BOLD); t3.setPadding(20, 20, 20, 20); t3.setBackground(titleBg);
+LinearLayout.LayoutParams lp3 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp3.setMargins(0, 40, 0, 10); t3.setLayoutParams(lp3);
+apiContentLayout.addView(t3);
+apiContentLayout.addView(lab("API Key 3:")); etKey3 = edit(prefs.getString("api_key_3", "")); apiContentLayout.addView(etKey3);
+apiContentLayout.addView(lab("API URL 3:")); etUrl3 = edit(prefs.getString("api_url_3", "")); apiContentLayout.addView(etUrl3);
+apiContentLayout.addView(lab("模型 3:")); etModel3 = edit(prefs.getString("model_3", "")); apiContentLayout.addView(etModel3);
+Button btnFetch3 = btn("获取模型"); btnFetch3.setOnClickListener(v -> fetchModelsForApi(etKey3.getText().toString().trim(), etUrl3.getText().toString().trim(), etModel3)); apiContentLayout.addView(btnFetch3);
+apiContentLayout.addView(lab("调用权重 3:")); etWeight3 = edit(prefs.getString("api_weight_3", "3")); apiContentLayout.addView(etWeight3);
+apiContentLayout.addView(lab("翻译方向 3:")); spinnerDir3 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter3 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter3.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir3.setAdapter(dirAdapter3); spinnerDir3.setSelection(prefs.getInt("api_direction_3", 0)); apiContentLayout.addView(spinnerDir3);
+apiContentLayout.addView(lab("思考模式 3:")); spinnerReasoning3 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter3 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter3.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning3.setAdapter(effAdapter3); String savedEff3 = prefs.getString("reasoning_effort_3", "default"); int selEff3 = 0; if ("low".equals(savedEff3)) selEff3 = 1; else if ("medium".equals(savedEff3)) selEff3 = 2; else if ("high".equals(savedEff3)) selEff3 = 3; spinnerReasoning3.setSelection(selEff3); apiContentLayout.addView(spinnerReasoning3);
 
 // --- API 4 ---
-apiContentLayout.addView(lab("★ 备用 API 4 (留空则跳过):"));
-apiContentLayout.addView(lab("API Key 4:"));
-etKey4 = edit(prefs.getString("api_key_4", ""));
-apiContentLayout.addView(etKey4);
-apiContentLayout.addView(lab("API URL 4:"));
-etUrl4 = edit(prefs.getString("api_url_4", ""));
-apiContentLayout.addView(etUrl4);
-apiContentLayout.addView(lab("模型 4:"));
-etModel4 = edit(prefs.getString("model_4", ""));
-apiContentLayout.addView(etModel4);
-Button btnFetch4 = btn("获取模型");
-btnFetch4.setOnClickListener(v -> fetchModelsForApi(etKey4.getText().toString().trim(), etUrl4.getText().toString().trim(), etModel4));
-apiContentLayout.addView(btnFetch4);
-apiContentLayout.addView(lab("调用权重 4:"));
-etWeight4 = edit(prefs.getString("api_weight_4", "3"));
-apiContentLayout.addView(etWeight4);
-apiContentLayout.addView(lab("翻译方向 4:"));
-spinnerDir4 = new android.widget.Spinner(this);
-android.widget.ArrayAdapter<String> dirAdapter4 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
-dirAdapter4.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-spinnerDir4.setAdapter(dirAdapter4);
-spinnerDir4.setSelection(prefs.getInt("api_direction_4", 0));
-apiContentLayout.addView(spinnerDir4);
-apiContentLayout.addView(lab("思考模式 4:"));
-spinnerReasoning4 = new android.widget.Spinner(this);
-android.widget.ArrayAdapter<String> effAdapter4 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2);
-effAdapter4.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-spinnerReasoning4.setAdapter(effAdapter4);
-String savedEff4 = prefs.getString("reasoning_effort_4", "default");
-int selEff4 = 0;
-if ("low".equals(savedEff4)) selEff4 = 1;
-else if ("medium".equals(savedEff4)) selEff4 = 2;
-else if ("high".equals(savedEff4)) selEff4 = 3;
-spinnerReasoning4.setSelection(selEff4);
-apiContentLayout.addView(spinnerReasoning4);
-apiContentLayout.addView(div());
+TextView t4 = new TextView(this); t4.setText("🟣 备用 API 4"); t4.setTextColor(Color.parseColor("#7C3AED")); t4.setTextSize(15f); t4.setTypeface(null, android.graphics.Typeface.BOLD); t4.setPadding(20, 20, 20, 20); t4.setBackground(titleBg);
+LinearLayout.LayoutParams lp4 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp4.setMargins(0, 40, 0, 10); t4.setLayoutParams(lp4);
+apiContentLayout.addView(t4);
+apiContentLayout.addView(lab("API Key 4:")); etKey4 = edit(prefs.getString("api_key_4", "")); apiContentLayout.addView(etKey4);
+apiContentLayout.addView(lab("API URL 4:")); etUrl4 = edit(prefs.getString("api_url_4", "")); apiContentLayout.addView(etUrl4);
+apiContentLayout.addView(lab("模型 4:")); etModel4 = edit(prefs.getString("model_4", "")); apiContentLayout.addView(etModel4);
+Button btnFetch4 = btn("获取模型"); btnFetch4.setOnClickListener(v -> fetchModelsForApi(etKey4.getText().toString().trim(), etUrl4.getText().toString().trim(), etModel4)); apiContentLayout.addView(btnFetch4);
+apiContentLayout.addView(lab("调用权重 4:")); etWeight4 = edit(prefs.getString("api_weight_4", "3")); apiContentLayout.addView(etWeight4);
+apiContentLayout.addView(lab("翻译方向 4:")); spinnerDir4 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter4 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter4.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir4.setAdapter(dirAdapter4); spinnerDir4.setSelection(prefs.getInt("api_direction_4", 0)); apiContentLayout.addView(spinnerDir4);
+apiContentLayout.addView(lab("思考模式 4:")); spinnerReasoning4 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter4 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter4.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning4.setAdapter(effAdapter4); String savedEff4 = prefs.getString("reasoning_effort_4", "default"); int selEff4 = 0; if ("low".equals(savedEff4)) selEff4 = 1; else if ("medium".equals(savedEff4)) selEff4 = 2; else if ("high".equals(savedEff4)) selEff4 = 3; spinnerReasoning4.setSelection(selEff4); apiContentLayout.addView(spinnerReasoning4);
 
 // --- API 5 ---
-apiContentLayout.addView(lab("★ 备用 API 5 (留空则跳过):"));
-apiContentLayout.addView(lab("API Key 5:"));
-etKey5 = edit(prefs.getString("api_key_5", ""));
-apiContentLayout.addView(etKey5);
-apiContentLayout.addView(lab("API URL 5:"));
-etUrl5 = edit(prefs.getString("api_url_5", ""));
-apiContentLayout.addView(etUrl5);
-apiContentLayout.addView(lab("模型 5:"));
-etModel5 = edit(prefs.getString("model_5", ""));
-apiContentLayout.addView(etModel5);
-Button btnFetch5 = btn("获取模型");
-btnFetch5.setOnClickListener(v -> fetchModelsForApi(etKey5.getText().toString().trim(), etUrl5.getText().toString().trim(), etModel5));
-apiContentLayout.addView(btnFetch5);
-apiContentLayout.addView(lab("调用权重 5:"));
-etWeight5 = edit(prefs.getString("api_weight_5", "3"));
-apiContentLayout.addView(etWeight5);
-apiContentLayout.addView(lab("翻译方向 5:"));
-spinnerDir5 = new android.widget.Spinner(this);
-android.widget.ArrayAdapter<String> dirAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
-dirAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-spinnerDir5.setAdapter(dirAdapter5);
-spinnerDir5.setSelection(prefs.getInt("api_direction_5", 0));
-apiContentLayout.addView(spinnerDir5);
-apiContentLayout.addView(lab("思考模式 5:"));
-spinnerReasoning5 = new android.widget.Spinner(this);
-android.widget.ArrayAdapter<String> effAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2);
-effAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-spinnerReasoning5.setAdapter(effAdapter5);
-String savedEff5 = prefs.getString("reasoning_effort_5", "default");
-int selEff5 = 0;
-if ("low".equals(savedEff5)) selEff5 = 1;
-else if ("medium".equals(savedEff5)) selEff5 = 2;
-else if ("high".equals(savedEff5)) selEff5 = 3;
-spinnerReasoning5.setSelection(selEff5);
-apiContentLayout.addView(spinnerReasoning5);
+TextView t5 = new TextView(this); t5.setText("🟤 备用 API 5"); t5.setTextColor(Color.parseColor("#92400E")); t5.setTextSize(15f); t5.setTypeface(null, android.graphics.Typeface.BOLD); t5.setPadding(20, 20, 20, 20); t5.setBackground(titleBg);
+LinearLayout.LayoutParams lp5 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp5.setMargins(0, 40, 0, 10); t5.setLayoutParams(lp5);
+apiContentLayout.addView(t5);
+apiContentLayout.addView(lab("API Key 5:")); etKey5 = edit(prefs.getString("api_key_5", "")); apiContentLayout.addView(etKey5);
+apiContentLayout.addView(lab("API URL 5:")); etUrl5 = edit(prefs.getString("api_url_5", "")); apiContentLayout.addView(etUrl5);
+apiContentLayout.addView(lab("模型 5:")); etModel5 = edit(prefs.getString("model_5", "")); apiContentLayout.addView(etModel5);
+Button btnFetch5 = btn("获取模型"); btnFetch5.setOnClickListener(v -> fetchModelsForApi(etKey5.getText().toString().trim(), etUrl5.getText().toString().trim(), etModel5)); apiContentLayout.addView(btnFetch5);
+apiContentLayout.addView(lab("调用权重 5:")); etWeight5 = edit(prefs.getString("api_weight_5", "3")); apiContentLayout.addView(etWeight5);
+apiContentLayout.addView(lab("翻译方向 5:")); spinnerDir5 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir5.setAdapter(dirAdapter5); spinnerDir5.setSelection(prefs.getInt("api_direction_5", 0)); apiContentLayout.addView(spinnerDir5);
+apiContentLayout.addView(lab("思考模式 5:")); spinnerReasoning5 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning5.setAdapter(effAdapter5); String savedEff5 = prefs.getString("reasoning_effort_5", "default"); int selEff5 = 0; if ("low".equals(savedEff5)) selEff5 = 1; else if ("medium".equals(savedEff5)) selEff5 = 2; else if ("high".equals(savedEff5)) selEff5 = 3; spinnerReasoning5.setSelection(selEff5); apiContentLayout.addView(spinnerReasoning5);
 
 ll.addView(apiContentLayout);
 setupToggle(apiHeaderLayout, apiHeaderTitle, apiContentLayout, "🔄 多API智能密钥配置", "api_expanded");
@@ -1087,8 +987,7 @@ editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelecte
     }
 
 
-        private void testTranslate() {
-        // 放宽检测：只要5个配置里任意一个填写了Key，就允许放行
+            private void testTranslate() {
         String k1 = etKey.getText().toString().trim();
         String k2 = etKey2.getText().toString().trim();
         String k3 = etKey3.getText().toString().trim();
@@ -1108,7 +1007,6 @@ editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelecte
 
         new Thread(() -> {
             try {
-                // 底层的新逻辑会自动读取配置文件里的所有多 API 节点，所以这里就算主框为空传进去也没事
                 AITranslator.init(k1, url, mdl);
                 String result = AITranslator.translateTest("你好世界", "English");
                 runOnUiThread(() -> {
@@ -1129,5 +1027,6 @@ editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelecte
             }
         }).start();
     }
+
 
 }
