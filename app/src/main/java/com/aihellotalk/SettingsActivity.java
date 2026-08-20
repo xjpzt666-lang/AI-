@@ -38,7 +38,15 @@ public class SettingsActivity extends Activity {
     private EditText etQuick1Tag, etQuick1Content, etQuick2Tag, etQuick2Content;
     private EditText etQuick3Tag, etQuick3Content, etQuick4Tag, etQuick4Content;
     private EditText etQuick5;
-
+// ★ 多API備用配置
+private EditText etKey2, etUrl2, etModel2, etWeight2;
+private android.widget.Spinner spinnerDir2;
+private EditText etKey3, etUrl3, etModel3, etWeight3;
+private android.widget.Spinner spinnerDir3;
+private EditText etKey4, etUrl4, etModel4, etWeight4;
+private android.widget.Spinner spinnerDir4;
+private EditText etKey5, etUrl5, etModel5, etWeight5;
+private android.widget.Spinner spinnerDir5;
     private EditText etSearchPrompt;
     private Button btnFetch, btnSave, btnTest;
     private Button btnSearchPrompt;
@@ -152,7 +160,113 @@ public class SettingsActivity extends Activity {
 
         ll.addView(advContentLayout);
         setupToggle(advHeaderLayout, advHeaderTitle, advContentLayout, "⚙️ 高级与安全设置", "adv_expanded");
+// ================= 折叠区 1.5：多API智能輪換配置 =================
+LinearLayout apiHeaderLayout = createHeaderLayout();
+TextView apiHeaderTitle = new TextView(this);
+boolean isApiExpanded = prefs.getBoolean("api_expanded", false);
+styleHeaderTitle(apiHeaderTitle, isApiExpanded ? "▼ 🔄 多API智能輪換配置（最多5個） (点击折叠)" : "▶ 🔄 多API智能輪換配置（最多5個） (点击展开)");
+apiHeaderLayout.addView(apiHeaderTitle);
+ll.addView(apiHeaderLayout);
 
+LinearLayout apiContentLayout = new LinearLayout(this);
+apiContentLayout.setOrientation(LinearLayout.VERTICAL);
+apiContentLayout.setVisibility(isApiExpanded ? View.VISIBLE : View.GONE);
+apiContentLayout.setPadding(20, 10, 0, 10);
+
+// --- API 2 ---
+apiContentLayout.addView(lab("★ 備用 API 2 (留空則跳過):"));
+apiContentLayout.addView(lab("API Key 2:"));
+etKey2 = edit(prefs.getString("api_key_2", ""));
+apiContentLayout.addView(etKey2);
+apiContentLayout.addView(lab("API URL 2:"));
+etUrl2 = edit(prefs.getString("api_url_2", ""));
+apiContentLayout.addView(etUrl2);
+apiContentLayout.addView(lab("模型 2:"));
+etModel2 = edit(prefs.getString("model_2", ""));
+apiContentLayout.addView(etModel2);
+apiContentLayout.addView(lab("調用權重 2 (數字越大用得越多，建議1~10):"));
+etWeight2 = edit(prefs.getString("api_weight_2", "3"));
+apiContentLayout.addView(etWeight2);
+apiContentLayout.addView(lab("翻譯方向 2:"));
+spinnerDir2 = new android.widget.Spinner(this);
+String[] dirs = {"發送+接收", "僅接收", "僅發送"};
+android.widget.ArrayAdapter<String> dirAdapter2 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
+dirAdapter2.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+spinnerDir2.setAdapter(dirAdapter2);
+spinnerDir2.setSelection(prefs.getInt("api_direction_2", 0));
+apiContentLayout.addView(spinnerDir2);
+apiContentLayout.addView(div());
+
+// --- API 3 ---
+apiContentLayout.addView(lab("★ 備用 API 3 (留空則跳過):"));
+apiContentLayout.addView(lab("API Key 3:"));
+etKey3 = edit(prefs.getString("api_key_3", ""));
+apiContentLayout.addView(etKey3);
+apiContentLayout.addView(lab("API URL 3:"));
+etUrl3 = edit(prefs.getString("api_url_3", ""));
+apiContentLayout.addView(etUrl3);
+apiContentLayout.addView(lab("模型 3:"));
+etModel3 = edit(prefs.getString("model_3", ""));
+apiContentLayout.addView(etModel3);
+apiContentLayout.addView(lab("調用權重 3:"));
+etWeight3 = edit(prefs.getString("api_weight_3", "3"));
+apiContentLayout.addView(etWeight3);
+apiContentLayout.addView(lab("翻譯方向 3:"));
+spinnerDir3 = new android.widget.Spinner(this);
+android.widget.ArrayAdapter<String> dirAdapter3 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
+dirAdapter3.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+spinnerDir3.setAdapter(dirAdapter3);
+spinnerDir3.setSelection(prefs.getInt("api_direction_3", 0));
+apiContentLayout.addView(spinnerDir3);
+apiContentLayout.addView(div());
+
+// --- API 4 ---
+apiContentLayout.addView(lab("★ 備用 API 4 (留空則跳過):"));
+apiContentLayout.addView(lab("API Key 4:"));
+etKey4 = edit(prefs.getString("api_key_4", ""));
+apiContentLayout.addView(etKey4);
+apiContentLayout.addView(lab("API URL 4:"));
+etUrl4 = edit(prefs.getString("api_url_4", ""));
+apiContentLayout.addView(etUrl4);
+apiContentLayout.addView(lab("模型 4:"));
+etModel4 = edit(prefs.getString("model_4", ""));
+apiContentLayout.addView(etModel4);
+apiContentLayout.addView(lab("調用權重 4:"));
+etWeight4 = edit(prefs.getString("api_weight_4", "3"));
+apiContentLayout.addView(etWeight4);
+apiContentLayout.addView(lab("翻譯方向 4:"));
+spinnerDir4 = new android.widget.Spinner(this);
+android.widget.ArrayAdapter<String> dirAdapter4 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
+dirAdapter4.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+spinnerDir4.setAdapter(dirAdapter4);
+spinnerDir4.setSelection(prefs.getInt("api_direction_4", 0));
+apiContentLayout.addView(spinnerDir4);
+apiContentLayout.addView(div());
+
+// --- API 5 ---
+apiContentLayout.addView(lab("★ 備用 API 5 (留空則跳過):"));
+apiContentLayout.addView(lab("API Key 5:"));
+etKey5 = edit(prefs.getString("api_key_5", ""));
+apiContentLayout.addView(etKey5);
+apiContentLayout.addView(lab("API URL 5:"));
+etUrl5 = edit(prefs.getString("api_url_5", ""));
+apiContentLayout.addView(etUrl5);
+apiContentLayout.addView(lab("模型 5:"));
+etModel5 = edit(prefs.getString("model_5", ""));
+apiContentLayout.addView(etModel5);
+apiContentLayout.addView(lab("調用權重 5:"));
+etWeight5 = edit(prefs.getString("api_weight_5", "3"));
+apiContentLayout.addView(etWeight5);
+apiContentLayout.addView(lab("翻譯方向 5:"));
+spinnerDir5 = new android.widget.Spinner(this);
+android.widget.ArrayAdapter<String> dirAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs);
+dirAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+spinnerDir5.setAdapter(dirAdapter5);
+spinnerDir5.setSelection(prefs.getInt("api_direction_5", 0));
+apiContentLayout.addView(spinnerDir5);
+
+ll.addView(apiContentLayout);
+setupToggle(apiHeaderLayout, apiHeaderTitle, apiContentLayout, "🔄 多API智能輪換配置", "api_expanded");
         // ================= 折叠区 2：语言专属指令 =================
         LinearLayout promptHeaderLayout = createHeaderLayout();
         promptHeaderTitle = new TextView(this);
@@ -726,6 +840,26 @@ public class SettingsActivity extends Activity {
         editor.putString("quick_2", q2);
         editor.putString("quick_3", q3);
         editor.putString("quick_4", q4);
+        editor.putString("api_key_2", etKey2.getText().toString().trim());
+editor.putString("api_url_2", etUrl2.getText().toString().trim());
+editor.putString("model_2", etModel2.getText().toString().trim());
+editor.putString("api_weight_2", etWeight2.getText().toString().trim());
+editor.putInt("api_direction_2", spinnerDir2.getSelectedItemPosition());
+editor.putString("api_key_3", etKey3.getText().toString().trim());
+editor.putString("api_url_3", etUrl3.getText().toString().trim());
+editor.putString("model_3", etModel3.getText().toString().trim());
+editor.putString("api_weight_3", etWeight3.getText().toString().trim());
+editor.putInt("api_direction_3", spinnerDir3.getSelectedItemPosition());
+editor.putString("api_key_4", etKey4.getText().toString().trim());
+editor.putString("api_url_4", etUrl4.getText().toString().trim());
+editor.putString("model_4", etModel4.getText().toString().trim());
+editor.putString("api_weight_4", etWeight4.getText().toString().trim());
+editor.putInt("api_direction_4", spinnerDir4.getSelectedItemPosition());
+editor.putString("api_key_5", etKey5.getText().toString().trim());
+editor.putString("api_url_5", etUrl5.getText().toString().trim());
+editor.putString("model_5", etModel5.getText().toString().trim());
+editor.putString("api_weight_5", etWeight5.getText().toString().trim());
+editor.putInt("api_direction_5", spinnerDir5.getSelectedItemPosition());
         editor.putString("quick_5", q5);
         editor.apply();
 
@@ -754,7 +888,27 @@ public class SettingsActivity extends Activity {
                         + "quick_3=" + fq3 + "\n"
                         + "quick_4=" + fq4 + "\n"
                         + "quick_5=" + fq5 + "\n"
-                        + "EOF\n";
++ "api_key_2=" + prefs.getString("api_key_2", "") + "\n"
++ "api_url_2=" + prefs.getString("api_url_2", "") + "\n"
++ "model_2=" + prefs.getString("model_2", "") + "\n"
++ "api_weight_2=" + prefs.getString("api_weight_2", "3") + "\n"
++ "api_direction_2=" + prefs.getInt("api_direction_2", 0) + "\n"
++ "api_key_3=" + prefs.getString("api_key_3", "") + "\n"
++ "api_url_3=" + prefs.getString("api_url_3", "") + "\n"
++ "model_3=" + prefs.getString("model_3", "") + "\n"
++ "api_weight_3=" + prefs.getString("api_weight_3", "3") + "\n"
++ "api_direction_3=" + prefs.getInt("api_direction_3", 0) + "\n"
++ "api_key_4=" + prefs.getString("api_key_4", "") + "\n"
++ "api_url_4=" + prefs.getString("api_url_4", "") + "\n"
++ "model_4=" + prefs.getString("model_4", "") + "\n"
++ "api_weight_4=" + prefs.getString("api_weight_4", "3") + "\n"
++ "api_direction_4=" + prefs.getInt("api_direction_4", 0) + "\n"
++ "api_key_5=" + prefs.getString("api_key_5", "") + "\n"
++ "api_url_5=" + prefs.getString("api_url_5", "") + "\n"
++ "model_5=" + prefs.getString("model_5", "") + "\n"
++ "api_weight_5=" + prefs.getString("api_weight_5", "3") + "\n"
++ "api_direction_5=" + prefs.getInt("api_direction_5", 0) + "\n"
++ "EOF\n";
                 runRoot(cfg);
 
                 String prompts = "cat > /data/local/tmp/htai_prompts.txt << 'EOF'\n"
