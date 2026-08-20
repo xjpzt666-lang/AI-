@@ -1087,24 +1087,29 @@ editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelecte
     }
 
 
-    private void testTranslate() {
-        String key = etKey.getText().toString().trim();
-        if (key.isEmpty()) {
-            toast("先填 Key");
+        private void testTranslate() {
+        // 放宽检测：只要5个配置里任意一个填写了Key，就允许放行
+        String k1 = etKey.getText().toString().trim();
+        String k2 = etKey2.getText().toString().trim();
+        String k3 = etKey3.getText().toString().trim();
+        String k4 = etKey4.getText().toString().trim();
+        String k5 = etKey5.getText().toString().trim();
+
+        if (k1.isEmpty() && k2.isEmpty() && k3.isEmpty() && k4.isEmpty() && k5.isEmpty()) {
+            toast("请至少在任意一个 API 配置中填写 Key");
             return;
         }
-        String mdl = etModel.getText().toString().trim();
-        if (mdl.isEmpty()) {
-            toast("先选模型");
-            return;
-        }
+
         btnTest.setEnabled(false);
         btnTest.setText("翻译中...");
+        
         String url = etUrl.getText().toString().trim();
+        String mdl = etModel.getText().toString().trim();
 
         new Thread(() -> {
             try {
-                AITranslator.init(key, url, mdl);
+                // 底层的新逻辑会自动读取配置文件里的所有多 API 节点，所以这里就算主框为空传进去也没事
+                AITranslator.init(k1, url, mdl);
                 String result = AITranslator.translateTest("你好世界", "English");
                 runOnUiThread(() -> {
                     btnTest.setEnabled(true);
@@ -1124,4 +1129,5 @@ editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelecte
             }
         }).start();
     }
+
 }
