@@ -1111,7 +1111,7 @@ public class SettingsActivity extends Activity {
         }).start();
     }
 
-        private void testTranslate() {
+            private void testTranslate() {
         // 收集所有已配置的 API 通道信息
         List<ApiTestInfo> list = new ArrayList<>();
         
@@ -1121,7 +1121,7 @@ public class SettingsActivity extends Activity {
             list.add(new ApiTestInfo("主 API", k1, etUrl.getText().toString().trim(), etModel.getText().toString().trim()));
         }
         
-        // 检查 2-8 备用 API（智能非空过滤，没填 Key 的自动跳过，绝对不笨）
+        // 检查 2-8 备用 API（智能非空过滤）
         EditText[] keys = {etKey2, etKey3, etKey4, etKey5, etKey6, etKey7, etKey8};
         EditText[] urls = {etUrl2, etUrl3, etUrl4, etUrl5, etUrl6, etUrl7, etUrl8};
         EditText[] models = {etModel2, etModel3, etModel4, etModel5, etModel6, etModel7, etModel8};
@@ -1195,7 +1195,6 @@ public class SettingsActivity extends Activity {
                             report.append("✅ ").append(info.name).append("：畅通\n");
                             successCount++;
                         } else {
-                            // 提取精准的 HTTP 错误码
                             report.append("❌ ").append(info.name).append("：HTTP ").append(resp.code()).append("\n");
                             failCount++;
                         }
@@ -1216,13 +1215,88 @@ public class SettingsActivity extends Activity {
                 btnTest.setEnabled(true);
                 btnTest.setText("一键测试大盘全链路");
                 
-                // 实事求是地弹窗展示体检报告
                 new AlertDialog.Builder(SettingsActivity.this)
                         .setTitle("📊 通道精准体检报告")
                         .setMessage(finalReport + "\n总结：成功 " + fSuccess + " 个，失败 " + fFail + " 个")
                         .setPositiveButton("确定", null)
                         .show();
             });
+        }).start();
+    }
+
+    // 补回每个单独通道旁边的“测试通道”按钮所需要的方法
+    private void testSingleApi(String key, String url, String model) {
+        if (key.isEmpty() || model.isEmpty()) {
+            toast("请先填写 Key 和 模型");
+            return;
+        }
+        
+        String baseUrl = url.isEmpty() ? "https://api.openai.com/v1/chat/completions" : url.trim();
+        if (!baseUrl.endsWith("/chat/completions")) {
+            if (!baseUrl.endsWith("/")) baseUrl += "/";
+            if (!baseUrl.contains("generativelanguage.googleapis.com")) {
+                if (!baseUrl.contains("/v1/")) {
+                    baseUrl += "v1/";
+                } else {
+                    int idx = baseUrl.indexOf("/v1/");
+                    baseUrl = baseUrl.substring(0, idx + 4);
+                }
+            }
+            baseUrl += "chat/completions";
+        }
+        
+        Toast.makeText(this, "正在直接测试该通道...", Toast.LENGTH_SHORT).show();
+        
+        String finalUrl = baseUrl;
+        new Thread(() -> {
+            try {
+                OkHttpClient client = new OkHttpClient.Builder()
+                        .connectTimeout(8, TimeUnit.SECONDS)
+                        .readTimeout(15, TimeUnit.SECONDS)
+                        .build();
+                        
+                JSONObject bodyObj = new JSONObject();
+                bodyObj.put("model", model);
+                bodyObj.put("max_tokens", 10); 
+                JSONArray msgs = new JSONArray();
+                JSONObject m = new JSONObject();
+                m.put("role", "user");
+                m.put("content", "hello");
+                msgs.put(m);
+                bodyObj.put("messages", msgs);
+                
+                okhttp3.RequestBody reqBody = okhttp3.RequestBody.create(bodyObj.toString(), okhttp3.MediaType.get("application/json; charset=utf-8"));
+                Request req = new Request.Builder()
+                        .url(finalUrl)
+                        .header("Authorization", "Bearer " + key)
+                        .header("Content-Type", "application/json")
+                        .header("User-Agent", "Mozilla/5.0")
+                        .post(reqBody)
+                        .build();
+                        
+                try (Response resp = client.newCall(req).execute()) {
+                    String respStr = resp.body() != null ? resp.body().string() : "";
+                    if (resp.isSuccessful()) {
+                        runOnUiThread(() -> toast("✅ 测试成功！该 API 通道正常畅通。"));
+                    } else {
+                        runOnUiThread(() -> {
+                            new AlertDialog.Builder(SettingsActivity.this)
+                                .setTitle("❌ 测试失败")
+                                .setMessage("HTTP " + resp.code() + "\n" + respStr)
+                                .setPositiveButton("关闭", null)
+                                .show();
+                        });
+                    }
+                }
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    new AlertDialog.Builder(SettingsActivity.this)
+                        .setTitle("❌ 请求异常")
+                        .setMessage(e.getMessage())
+                        .setPositiveButton("关闭", null)
+                        .show();
+                });
+            }
         }).start();
     }
 
@@ -1233,5 +1307,3 @@ public class SettingsActivity extends Activity {
             this.name = name; this.key = key; this.url = url; this.model = model;
         }
     }
-
-}
