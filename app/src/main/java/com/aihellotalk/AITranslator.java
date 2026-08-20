@@ -1951,9 +1951,7 @@ private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
 
     
             private static String callChatSimple(String prompt) throws IOException {
-    if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
-    if (client == null) throw new IOException("未初始化");
-    try {
+    if (endpoints.isEmpty()) throw new IOException("Key未配置");
         JSONObject body = new JSONObject();
         body.put("model", model);
         body.put("max_tokens", getMaxTokens());
@@ -1966,9 +1964,7 @@ private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
 }
 
     private static String callChatMessages(JSONArray messages) throws IOException {
-    if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
-    if (client == null) throw new IOException("未初始化");
-    try {
+    if (endpoints.isEmpty()) throw new IOException("Key未配置");
         JSONObject body = new JSONObject();
         body.put("model", model);
         body.put("max_tokens", getMaxTokens());
@@ -1979,7 +1975,7 @@ private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
     }
     
     private static String callChatMessages(JSONArray messages, int maxTokens) throws IOException {
-if (apiKey == null || apiKey.isEmpty()) throw new IOException("Key未配置");
+if (endpoints.isEmpty()) throw new IOException("Key未配置");
 if (client == null) throw new IOException("未初始化");
 try {
     JSONObject body = new JSONObject();
