@@ -31,33 +31,35 @@ import java.util.concurrent.TimeUnit;
 public class SettingsActivity extends Activity {
 
     private EditText etKey, etUrl, etModel, etTemperature, etMaxTokens, etMaxChat, etBannedWords;
-private android.widget.Spinner spinnerReasoning;
+    private android.widget.Spinner spinnerReasoning;
     private EditText etPromptZH, etPromptEN, etPromptRU, etPromptUK, etPromptKO, etPromptES;
     private EditText etPromptAR, etPromptPT, etPromptFR, etPromptDE, etPromptIT;
     private EditText etPromptTR, etPromptNL, etPromptPL, etPromptKK, etPromptCS;
     private EditText etQuick1Tag, etQuick1Content, etQuick2Tag, etQuick2Content;
     private EditText etQuick3Tag, etQuick3Content, etQuick4Tag, etQuick4Content;
     private EditText etQuick5;
-// API 1 新增字段
-private EditText etWeight1;
-private android.widget.Spinner spinnerDir1;
-// API 2-5 思考模式
-private android.widget.Spinner spinnerReasoning2, spinnerReasoning3, spinnerReasoning4, spinnerReasoning5;
-// ★ 多API备用配置 (加入别名声明)
-private EditText etKey2, etUrl2, etModel2, etWeight2, etAlias2;
-private android.widget.Spinner spinnerDir2;
-private EditText etKey3, etUrl3, etModel3, etWeight3, etAlias3;
-private android.widget.Spinner spinnerDir3;
-private EditText etKey4, etUrl4, etModel4, etWeight4, etAlias4;
-private android.widget.Spinner spinnerDir4;
-private EditText etKey5, etUrl5, etModel5, etWeight5, etAlias5;
-private android.widget.Spinner spinnerDir5;
+    
+    // API 1 字段
+    private EditText etWeight1;
+    private android.widget.Spinner spinnerDir1;
+    
+    // API 2-8 字段及自定义别名框
+    private android.widget.Spinner spinnerReasoning2, spinnerReasoning3, spinnerReasoning4, spinnerReasoning5;
+    private EditText etKey2, etUrl2, etModel2, etWeight2, etAlias2;
+    private android.widget.Spinner spinnerDir2;
+    private EditText etKey3, etUrl3, etModel3, etWeight3, etAlias3;
+    private android.widget.Spinner spinnerDir3;
+    private EditText etKey4, etUrl4, etModel4, etWeight4, etAlias4;
+    private android.widget.Spinner spinnerDir4;
+    private EditText etKey5, etUrl5, etModel5, etWeight5, etAlias5;
+    private android.widget.Spinner spinnerDir5;
     private EditText etKey6, etUrl6, etModel6, etWeight6, etAlias6;
     private android.widget.Spinner spinnerDir6, spinnerReasoning6;
     private EditText etKey7, etUrl7, etModel7, etWeight7, etAlias7;
     private android.widget.Spinner spinnerDir7, spinnerReasoning7;
     private EditText etKey8, etUrl8, etModel8, etWeight8, etAlias8;
     private android.widget.Spinner spinnerDir8, spinnerReasoning8;
+    
     private EditText etSearchPrompt;
     private Button btnFetch, btnSave, btnTest;
     private Button btnSearchPrompt;
@@ -65,7 +67,6 @@ private android.widget.Spinner spinnerDir5;
     private ScrollView settingsScroll;
     private LinearLayout settingsContent;
     
-    // 新增：用于控制折叠面板的容器和标题
     private LinearLayout advContentLayout;
     private TextView advHeaderTitle;
     private LinearLayout promptContentLayout;
@@ -87,7 +88,7 @@ private android.widget.Spinner spinnerDir5;
         settingsScroll = sv;
         settingsContent = ll;
 
-        ll.addView(tip("HT AI翻译 v5.14 (带智能折叠)\n接收自动翻译 + 点[文A]按钮选版本"));
+        ll.addView(tip("HT AI翻译 v5.16 (增强测试直连版)\n接收自动翻译 + 点[文A]按钮选版本"));
 
         etSearchPrompt = edit("");
         etSearchPrompt.setHint("🔍 搜索语言跳转，例如：阿拉伯、葡萄牙、法语");
@@ -103,7 +104,7 @@ private android.widget.Spinner spinnerDir5;
 
         ll.addView(div());
 
-                // ================= 常驻显示区：API 基础配置 =================
+        // ================= 常驻显示区：API 基础配置 =================
         ll.addView(lab("API Key:"));
         etKey = edit(prefs.getString("api_key", ""));
         etKey.setHint("输入你的 API Key");
@@ -113,9 +114,13 @@ private android.widget.Spinner spinnerDir5;
         etUrl = edit(prefs.getString("api_url", "https://api.openai.com/v1/chat/completions"));
         ll.addView(etUrl);
 
-        btnFetch = btn("获取模型列表");
-        btnFetch.setOnClickListener(v -> fetchModels());
-        ll.addView(btnFetch);
+        // 核心修改：左右并列的双按钮（获取模型 + 测试API）
+        LinearLayout rowBtn1 = new LinearLayout(this); rowBtn1.setOrientation(LinearLayout.HORIZONTAL);
+        btnFetch = btn("获取模型"); btnFetch.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); 
+        btnFetch.setOnClickListener(v -> fetchModels()); rowBtn1.addView(btnFetch);
+        Button btnTestApi1 = btn("测试通道"); btnTestApi1.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); 
+        btnTestApi1.setOnClickListener(v -> testSingleApi(etKey.getText().toString().trim(), etUrl.getText().toString().trim(), etModel.getText().toString().trim())); rowBtn1.addView(btnTestApi1);
+        ll.addView(rowBtn1);
 
         ll.addView(lab("模型:"));
         etModel = edit(prefs.getString("model", ""));
@@ -140,7 +145,7 @@ private android.widget.Spinner spinnerDir5;
         dirAdapter1.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spinnerDir1.setAdapter(dirAdapter1);
         spinnerDir1.setSelection(prefs.getInt("api_direction", 0));
-        spinnerDir1.setEnabled(false); // 默认锁定
+        spinnerDir1.setEnabled(false); 
         ll.addView(spinnerDir1);
 
         ll.addView(lab("思考模式:"));
@@ -156,7 +161,7 @@ private android.widget.Spinner spinnerDir5;
         else if ("high".equals(savedEff1)) selEff1 = 3;
         spinnerReasoning.setSelection(selEff1);                        
         spinnerReasoning.setTag("reasoning1"); 
-        spinnerReasoning.setEnabled(false); // 默认锁定                        
+        spinnerReasoning.setEnabled(false);                       
         ll.addView(spinnerReasoning);                                  
 
         btnUnlock1.setOnClickListener(v -> {
@@ -216,7 +221,7 @@ private android.widget.Spinner spinnerDir5;
         apiContentLayout.setVisibility(isApiExpanded ? View.VISIBLE : View.GONE);
         apiContentLayout.setPadding(20, 10, 0, 10);
 
-        // 辅助背景与选项定义
+        // 辅助选项定义
         android.graphics.drawable.GradientDrawable titleBg = new android.graphics.drawable.GradientDrawable();
         titleBg.setColor(Color.parseColor("#E8EAF6"));
         titleBg.setCornerRadius(8f);
@@ -234,7 +239,10 @@ private android.widget.Spinner spinnerDir5;
         apiContentLayout.addView(lab("API Key 2:")); etKey2 = edit(prefs.getString("api_key_2", "")); apiContentLayout.addView(etKey2);
         apiContentLayout.addView(lab("API URL 2:")); etUrl2 = edit(prefs.getString("api_url_2", "")); apiContentLayout.addView(etUrl2);
         apiContentLayout.addView(lab("模型 2:")); etModel2 = edit(prefs.getString("model_2", "")); apiContentLayout.addView(etModel2);
-        Button btnFetch2 = btn("获取模型"); btnFetch2.setOnClickListener(v -> fetchModelsForApi(etKey2.getText().toString().trim(), etUrl2.getText().toString().trim(), etModel2)); apiContentLayout.addView(btnFetch2);
+        LinearLayout rowBtn2 = new LinearLayout(this); rowBtn2.setOrientation(LinearLayout.HORIZONTAL);
+        Button btnFetch2 = btn("获取模型"); btnFetch2.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnFetch2.setOnClickListener(v -> fetchModelsForApi(etKey2.getText().toString().trim(), etUrl2.getText().toString().trim(), etModel2)); rowBtn2.addView(btnFetch2);
+        Button btnTestApi2 = btn("测试通道"); btnTestApi2.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnTestApi2.setOnClickListener(v -> testSingleApi(etKey2.getText().toString().trim(), etUrl2.getText().toString().trim(), etModel2.getText().toString().trim())); rowBtn2.addView(btnTestApi2);
+        apiContentLayout.addView(rowBtn2);
         apiContentLayout.addView(lab("调用权重 2:")); etWeight2 = edit(prefs.getString("api_weight_2", "3")); apiContentLayout.addView(etWeight2);
         apiContentLayout.addView(lab("翻译方向 2:")); spinnerDir2 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter2 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter2.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir2.setAdapter(dirAdapter2); spinnerDir2.setSelection(prefs.getInt("api_direction_2", 0)); spinnerDir2.setEnabled(false); apiContentLayout.addView(spinnerDir2);
         apiContentLayout.addView(lab("思考模式 2:")); spinnerReasoning2 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter2 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter2.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning2.setAdapter(effAdapter2); String savedEff2 = prefs.getString("reasoning_effort_2", "default"); spinnerReasoning2.setSelection("low".equals(savedEff2) ? 1 : ("medium".equals(savedEff2) ? 2 : ("high".equals(savedEff2) ? 3 : 0))); spinnerReasoning2.setEnabled(false); apiContentLayout.addView(spinnerReasoning2);
@@ -251,7 +259,10 @@ private android.widget.Spinner spinnerDir5;
         apiContentLayout.addView(lab("API Key 3:")); etKey3 = edit(prefs.getString("api_key_3", "")); apiContentLayout.addView(etKey3);
         apiContentLayout.addView(lab("API URL 3:")); etUrl3 = edit(prefs.getString("api_url_3", "")); apiContentLayout.addView(etUrl3);
         apiContentLayout.addView(lab("模型 3:")); etModel3 = edit(prefs.getString("model_3", "")); apiContentLayout.addView(etModel3);
-        Button btnFetch3 = btn("获取模型"); btnFetch3.setOnClickListener(v -> fetchModelsForApi(etKey3.getText().toString().trim(), etUrl3.getText().toString().trim(), etModel3)); apiContentLayout.addView(btnFetch3);
+        LinearLayout rowBtn3 = new LinearLayout(this); rowBtn3.setOrientation(LinearLayout.HORIZONTAL);
+        Button btnFetch3 = btn("获取模型"); btnFetch3.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnFetch3.setOnClickListener(v -> fetchModelsForApi(etKey3.getText().toString().trim(), etUrl3.getText().toString().trim(), etModel3)); rowBtn3.addView(btnFetch3);
+        Button btnTestApi3 = btn("测试通道"); btnTestApi3.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnTestApi3.setOnClickListener(v -> testSingleApi(etKey3.getText().toString().trim(), etUrl3.getText().toString().trim(), etModel3.getText().toString().trim())); rowBtn3.addView(btnTestApi3);
+        apiContentLayout.addView(rowBtn3);
         apiContentLayout.addView(lab("调用权重 3:")); etWeight3 = edit(prefs.getString("api_weight_3", "3")); apiContentLayout.addView(etWeight3);
         apiContentLayout.addView(lab("翻译方向 3:")); spinnerDir3 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter3 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter3.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir3.setAdapter(dirAdapter3); spinnerDir3.setSelection(prefs.getInt("api_direction_3", 0)); spinnerDir3.setEnabled(false); apiContentLayout.addView(spinnerDir3);
         apiContentLayout.addView(lab("思考模式 3:")); spinnerReasoning3 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter3 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter3.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning3.setAdapter(effAdapter3); String savedEff3 = prefs.getString("reasoning_effort_3", "default"); spinnerReasoning3.setSelection("low".equals(savedEff3) ? 1 : ("medium".equals(savedEff3) ? 2 : ("high".equals(savedEff3) ? 3 : 0))); spinnerReasoning3.setEnabled(false); apiContentLayout.addView(spinnerReasoning3);
@@ -268,7 +279,10 @@ private android.widget.Spinner spinnerDir5;
         apiContentLayout.addView(lab("API Key 4:")); etKey4 = edit(prefs.getString("api_key_4", "")); apiContentLayout.addView(etKey4);
         apiContentLayout.addView(lab("API URL 4:")); etUrl4 = edit(prefs.getString("api_url_4", "")); apiContentLayout.addView(etUrl4);
         apiContentLayout.addView(lab("模型 4:")); etModel4 = edit(prefs.getString("model_4", "")); apiContentLayout.addView(etModel4);
-        Button btnFetch4 = btn("获取模型"); btnFetch4.setOnClickListener(v -> fetchModelsForApi(etKey4.getText().toString().trim(), etUrl4.getText().toString().trim(), etModel4)); apiContentLayout.addView(btnFetch4);
+        LinearLayout rowBtn4 = new LinearLayout(this); rowBtn4.setOrientation(LinearLayout.HORIZONTAL);
+        Button btnFetch4 = btn("获取模型"); btnFetch4.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnFetch4.setOnClickListener(v -> fetchModelsForApi(etKey4.getText().toString().trim(), etUrl4.getText().toString().trim(), etModel4)); rowBtn4.addView(btnFetch4);
+        Button btnTestApi4 = btn("测试通道"); btnTestApi4.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnTestApi4.setOnClickListener(v -> testSingleApi(etKey4.getText().toString().trim(), etUrl4.getText().toString().trim(), etModel4.getText().toString().trim())); rowBtn4.addView(btnTestApi4);
+        apiContentLayout.addView(rowBtn4);
         apiContentLayout.addView(lab("调用权重 4:")); etWeight4 = edit(prefs.getString("api_weight_4", "3")); apiContentLayout.addView(etWeight4);
         apiContentLayout.addView(lab("翻译方向 4:")); spinnerDir4 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter4 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter4.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir4.setAdapter(dirAdapter4); spinnerDir4.setSelection(prefs.getInt("api_direction_4", 0)); spinnerDir4.setEnabled(false); apiContentLayout.addView(spinnerDir4);
         apiContentLayout.addView(lab("思考模式 4:")); spinnerReasoning4 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter4 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter4.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning4.setAdapter(effAdapter4); String savedEff4 = prefs.getString("reasoning_effort_4", "default"); spinnerReasoning4.setSelection("low".equals(savedEff4) ? 1 : ("medium".equals(savedEff4) ? 2 : ("high".equals(savedEff4) ? 3 : 0))); spinnerReasoning4.setEnabled(false); apiContentLayout.addView(spinnerReasoning4);
@@ -285,7 +299,10 @@ private android.widget.Spinner spinnerDir5;
         apiContentLayout.addView(lab("API Key 5:")); etKey5 = edit(prefs.getString("api_key_5", "")); apiContentLayout.addView(etKey5);
         apiContentLayout.addView(lab("API URL 5:")); etUrl5 = edit(prefs.getString("api_url_5", "")); apiContentLayout.addView(etUrl5);
         apiContentLayout.addView(lab("模型 5:")); etModel5 = edit(prefs.getString("model_5", "")); apiContentLayout.addView(etModel5);
-        Button btnFetch5 = btn("获取模型"); btnFetch5.setOnClickListener(v -> fetchModelsForApi(etKey5.getText().toString().trim(), etUrl5.getText().toString().trim(), etModel5)); apiContentLayout.addView(btnFetch5);
+        LinearLayout rowBtn5 = new LinearLayout(this); rowBtn5.setOrientation(LinearLayout.HORIZONTAL);
+        Button btnFetch5 = btn("获取模型"); btnFetch5.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnFetch5.setOnClickListener(v -> fetchModelsForApi(etKey5.getText().toString().trim(), etUrl5.getText().toString().trim(), etModel5)); rowBtn5.addView(btnFetch5);
+        Button btnTestApi5 = btn("测试通道"); btnTestApi5.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnTestApi5.setOnClickListener(v -> testSingleApi(etKey5.getText().toString().trim(), etUrl5.getText().toString().trim(), etModel5.getText().toString().trim())); rowBtn5.addView(btnTestApi5);
+        apiContentLayout.addView(rowBtn5);
         apiContentLayout.addView(lab("调用权重 5:")); etWeight5 = edit(prefs.getString("api_weight_5", "3")); apiContentLayout.addView(etWeight5);
         apiContentLayout.addView(lab("翻译方向 5:")); spinnerDir5 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir5.setAdapter(dirAdapter5); spinnerDir5.setSelection(prefs.getInt("api_direction_5", 0)); spinnerDir5.setEnabled(false); apiContentLayout.addView(spinnerDir5);
         apiContentLayout.addView(lab("思考模式 5:")); spinnerReasoning5 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning5.setAdapter(effAdapter5); String savedEff5 = prefs.getString("reasoning_effort_5", "default"); spinnerReasoning5.setSelection("low".equals(savedEff5) ? 1 : ("medium".equals(savedEff5) ? 2 : ("high".equals(savedEff5) ? 3 : 0))); spinnerReasoning5.setEnabled(false); apiContentLayout.addView(spinnerReasoning5);
@@ -295,14 +312,17 @@ private android.widget.Spinner spinnerDir5;
         LinearLayout.LayoutParams lpRow6 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lpRow6.setMargins(0, 40, 0, 10); row6.setLayoutParams(lpRow6);
         TextView t6 = new TextView(this); t6.setText("🔵 备用 API 6 | "); t6.setTextColor(Color.parseColor("#0284C7")); t6.setTextSize(15f); t6.setTypeface(null, android.graphics.Typeface.BOLD); row6.addView(t6);
         etAlias6 = new EditText(this); etAlias6.setText(prefs.getString("api_alias_6", "")); etAlias6.setHint("点右侧解锁"); etAlias6.setHintTextColor(Color.parseColor("#800284C7")); etAlias6.setTextColor(Color.parseColor("#0284C7")); etAlias6.setTextSize(14f); etAlias6.setTypeface(null, android.graphics.Typeface.BOLD); etAlias6.setBackgroundColor(Color.TRANSPARENT); etAlias6.setEnabled(false); etAlias6.setPadding(0,0,0,0);
-        etAlias6.setLayoutParams(lpAlias2); row6.addView(etAlias6);
+        LinearLayout.LayoutParams lpAlias6 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); etAlias6.setLayoutParams(lpAlias6); row6.addView(etAlias6);
         Button btnEdit6 = new Button(this); btnEdit6.setText("🔓解锁"); btnEdit6.setTextSize(12f); btnEdit6.setBackgroundColor(Color.TRANSPARENT); btnEdit6.setPadding(0,0,0,0);
         btnEdit6.setOnClickListener(v -> { etAlias6.setEnabled(true); etAlias6.setFocusableInTouchMode(true); etAlias6.requestFocus(); spinnerDir6.setEnabled(true); spinnerReasoning6.setEnabled(true); Toast.makeText(this, "API 6 已解锁", Toast.LENGTH_SHORT).show(); btnEdit6.setText("已解"); btnEdit6.setEnabled(false); });
         row6.addView(btnEdit6); apiContentLayout.addView(row6);
         apiContentLayout.addView(lab("API Key 6:")); etKey6 = edit(prefs.getString("api_key_6", "")); apiContentLayout.addView(etKey6);
         apiContentLayout.addView(lab("API URL 6:")); etUrl6 = edit(prefs.getString("api_url_6", "")); apiContentLayout.addView(etUrl6);
         apiContentLayout.addView(lab("模型 6:")); etModel6 = edit(prefs.getString("model_6", "")); apiContentLayout.addView(etModel6);
-        Button btnFetch6 = btn("获取模型"); btnFetch6.setOnClickListener(v -> fetchModelsForApi(etKey6.getText().toString().trim(), etUrl6.getText().toString().trim(), etModel6)); apiContentLayout.addView(btnFetch6);
+        LinearLayout rowBtn6 = new LinearLayout(this); rowBtn6.setOrientation(LinearLayout.HORIZONTAL);
+        Button btnFetch6 = btn("获取模型"); btnFetch6.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnFetch6.setOnClickListener(v -> fetchModelsForApi(etKey6.getText().toString().trim(), etUrl6.getText().toString().trim(), etModel6)); rowBtn6.addView(btnFetch6);
+        Button btnTestApi6 = btn("测试通道"); btnTestApi6.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnTestApi6.setOnClickListener(v -> testSingleApi(etKey6.getText().toString().trim(), etUrl6.getText().toString().trim(), etModel6.getText().toString().trim())); rowBtn6.addView(btnTestApi6);
+        apiContentLayout.addView(rowBtn6);
         apiContentLayout.addView(lab("调用权重 6:")); etWeight6 = edit(prefs.getString("api_weight_6", "3")); apiContentLayout.addView(etWeight6);
         apiContentLayout.addView(lab("翻译方向 6:")); spinnerDir6 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter6 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter6.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir6.setAdapter(dirAdapter6); spinnerDir6.setSelection(prefs.getInt("api_direction_6", 0)); spinnerDir6.setEnabled(false); apiContentLayout.addView(spinnerDir6);
         apiContentLayout.addView(lab("思考模式 6:")); spinnerReasoning6 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter6 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter6.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning6.setAdapter(effAdapter6); String savedEff6 = prefs.getString("reasoning_effort_6", "default"); spinnerReasoning6.setSelection("low".equals(savedEff6) ? 1 : ("medium".equals(savedEff6) ? 2 : ("high".equals(savedEff6) ? 3 : 0))); spinnerReasoning6.setEnabled(false); apiContentLayout.addView(spinnerReasoning6);
@@ -312,14 +332,17 @@ private android.widget.Spinner spinnerDir5;
         LinearLayout.LayoutParams lpRow7 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lpRow7.setMargins(0, 40, 0, 10); row7.setLayoutParams(lpRow7);
         TextView t7 = new TextView(this); t7.setText("🔴 备用 API 7 | "); t7.setTextColor(Color.parseColor("#BE185D")); t7.setTextSize(15f); t7.setTypeface(null, android.graphics.Typeface.BOLD); row7.addView(t7);
         etAlias7 = new EditText(this); etAlias7.setText(prefs.getString("api_alias_7", "")); etAlias7.setHint("点右侧解锁"); etAlias7.setHintTextColor(Color.parseColor("#80BE185D")); etAlias7.setTextColor(Color.parseColor("#BE185D")); etAlias7.setTextSize(14f); etAlias7.setTypeface(null, android.graphics.Typeface.BOLD); etAlias7.setBackgroundColor(Color.TRANSPARENT); etAlias7.setEnabled(false); etAlias7.setPadding(0,0,0,0);
-        etAlias7.setLayoutParams(lpAlias2); row7.addView(etAlias7);
+        LinearLayout.LayoutParams lpAlias7 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); etAlias7.setLayoutParams(lpAlias7); row7.addView(etAlias7);
         Button btnEdit7 = new Button(this); btnEdit7.setText("🔓解锁"); btnEdit7.setTextSize(12f); btnEdit7.setBackgroundColor(Color.TRANSPARENT); btnEdit7.setPadding(0,0,0,0);
         btnEdit7.setOnClickListener(v -> { etAlias7.setEnabled(true); etAlias7.setFocusableInTouchMode(true); etAlias7.requestFocus(); spinnerDir7.setEnabled(true); spinnerReasoning7.setEnabled(true); Toast.makeText(this, "API 7 已解锁", Toast.LENGTH_SHORT).show(); btnEdit7.setText("已解"); btnEdit7.setEnabled(false); });
         row7.addView(btnEdit7); apiContentLayout.addView(row7);
         apiContentLayout.addView(lab("API Key 7:")); etKey7 = edit(prefs.getString("api_key_7", "")); apiContentLayout.addView(etKey7);
         apiContentLayout.addView(lab("API URL 7:")); etUrl7 = edit(prefs.getString("api_url_7", "")); apiContentLayout.addView(etUrl7);
         apiContentLayout.addView(lab("模型 7:")); etModel7 = edit(prefs.getString("model_7", "")); apiContentLayout.addView(etModel7);
-        Button btnFetch7 = btn("获取模型"); btnFetch7.setOnClickListener(v -> fetchModelsForApi(etKey7.getText().toString().trim(), etUrl7.getText().toString().trim(), etModel7)); apiContentLayout.addView(btnFetch7);
+        LinearLayout rowBtn7 = new LinearLayout(this); rowBtn7.setOrientation(LinearLayout.HORIZONTAL);
+        Button btnFetch7 = btn("获取模型"); btnFetch7.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnFetch7.setOnClickListener(v -> fetchModelsForApi(etKey7.getText().toString().trim(), etUrl7.getText().toString().trim(), etModel7)); rowBtn7.addView(btnFetch7);
+        Button btnTestApi7 = btn("测试通道"); btnTestApi7.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnTestApi7.setOnClickListener(v -> testSingleApi(etKey7.getText().toString().trim(), etUrl7.getText().toString().trim(), etModel7.getText().toString().trim())); rowBtn7.addView(btnTestApi7);
+        apiContentLayout.addView(rowBtn7);
         apiContentLayout.addView(lab("调用权重 7:")); etWeight7 = edit(prefs.getString("api_weight_7", "3")); apiContentLayout.addView(etWeight7);
         apiContentLayout.addView(lab("翻译方向 7:")); spinnerDir7 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter7 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter7.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir7.setAdapter(dirAdapter7); spinnerDir7.setSelection(prefs.getInt("api_direction_7", 0)); spinnerDir7.setEnabled(false); apiContentLayout.addView(spinnerDir7);
         apiContentLayout.addView(lab("思考模式 7:")); spinnerReasoning7 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter7 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter7.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning7.setAdapter(effAdapter7); String savedEff7 = prefs.getString("reasoning_effort_7", "default"); spinnerReasoning7.setSelection("low".equals(savedEff7) ? 1 : ("medium".equals(savedEff7) ? 2 : ("high".equals(savedEff7) ? 3 : 0))); spinnerReasoning7.setEnabled(false); apiContentLayout.addView(spinnerReasoning7);
@@ -329,14 +352,17 @@ private android.widget.Spinner spinnerDir5;
         LinearLayout.LayoutParams lpRow8 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lpRow8.setMargins(0, 40, 0, 10); row8.setLayoutParams(lpRow8);
         TextView t8 = new TextView(this); t8.setText("⚫ 备用 API 8 | "); t8.setTextColor(Color.parseColor("#475569")); t8.setTextSize(15f); t8.setTypeface(null, android.graphics.Typeface.BOLD); row8.addView(t8);
         etAlias8 = new EditText(this); etAlias8.setText(prefs.getString("api_alias_8", "")); etAlias8.setHint("点右侧解锁"); etAlias8.setHintTextColor(Color.parseColor("#80475569")); etAlias8.setTextColor(Color.parseColor("#475569")); etAlias8.setTextSize(14f); etAlias8.setTypeface(null, android.graphics.Typeface.BOLD); etAlias8.setBackgroundColor(Color.TRANSPARENT); etAlias8.setEnabled(false); etAlias8.setPadding(0,0,0,0);
-        etAlias8.setLayoutParams(lpAlias2); row8.addView(etAlias8);
+        LinearLayout.LayoutParams lpAlias8 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); etAlias8.setLayoutParams(lpAlias8); row8.addView(etAlias8);
         Button btnEdit8 = new Button(this); btnEdit8.setText("🔓解锁"); btnEdit8.setTextSize(12f); btnEdit8.setBackgroundColor(Color.TRANSPARENT); btnEdit8.setPadding(0,0,0,0);
         btnEdit8.setOnClickListener(v -> { etAlias8.setEnabled(true); etAlias8.setFocusableInTouchMode(true); etAlias8.requestFocus(); spinnerDir8.setEnabled(true); spinnerReasoning8.setEnabled(true); Toast.makeText(this, "API 8 已解锁", Toast.LENGTH_SHORT).show(); btnEdit8.setText("已解"); btnEdit8.setEnabled(false); });
         row8.addView(btnEdit8); apiContentLayout.addView(row8);
         apiContentLayout.addView(lab("API Key 8:")); etKey8 = edit(prefs.getString("api_key_8", "")); apiContentLayout.addView(etKey8);
         apiContentLayout.addView(lab("API URL 8:")); etUrl8 = edit(prefs.getString("api_url_8", "")); apiContentLayout.addView(etUrl8);
         apiContentLayout.addView(lab("模型 8:")); etModel8 = edit(prefs.getString("model_8", "")); apiContentLayout.addView(etModel8);
-        Button btnFetch8 = btn("获取模型"); btnFetch8.setOnClickListener(v -> fetchModelsForApi(etKey8.getText().toString().trim(), etUrl8.getText().toString().trim(), etModel8)); apiContentLayout.addView(btnFetch8);
+        LinearLayout rowBtn8 = new LinearLayout(this); rowBtn8.setOrientation(LinearLayout.HORIZONTAL);
+        Button btnFetch8 = btn("获取模型"); btnFetch8.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnFetch8.setOnClickListener(v -> fetchModelsForApi(etKey8.getText().toString().trim(), etUrl8.getText().toString().trim(), etModel8)); rowBtn8.addView(btnFetch8);
+        Button btnTestApi8 = btn("测试通道"); btnTestApi8.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); btnTestApi8.setOnClickListener(v -> testSingleApi(etKey8.getText().toString().trim(), etUrl8.getText().toString().trim(), etModel8.getText().toString().trim())); rowBtn8.addView(btnTestApi8);
+        apiContentLayout.addView(rowBtn8);
         apiContentLayout.addView(lab("调用权重 8:")); etWeight8 = edit(prefs.getString("api_weight_8", "3")); apiContentLayout.addView(etWeight8);
         apiContentLayout.addView(lab("翻译方向 8:")); spinnerDir8 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter8 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter8.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir8.setAdapter(dirAdapter8); spinnerDir8.setSelection(prefs.getInt("api_direction_8", 0)); spinnerDir8.setEnabled(false); apiContentLayout.addView(spinnerDir8);
         apiContentLayout.addView(lab("思考模式 8:")); spinnerReasoning8 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter8 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter8.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning8.setAdapter(effAdapter8); String savedEff8 = prefs.getString("reasoning_effort_8", "default"); spinnerReasoning8.setSelection("low".equals(savedEff8) ? 1 : ("medium".equals(savedEff8) ? 2 : ("high".equals(savedEff8) ? 3 : 0))); spinnerReasoning8.setEnabled(false); apiContentLayout.addView(spinnerReasoning8);
@@ -344,18 +370,17 @@ private android.widget.Spinner spinnerDir5;
         ll.addView(apiContentLayout);
         setupToggle(apiHeaderLayout, apiHeaderTitle, apiContentLayout, "🔄 多API智能密钥配置", "api_expanded");
 
-
         // ================= 折叠区 2：语言专属指令 =================
         LinearLayout promptHeaderLayout = createHeaderLayout();
         promptHeaderTitle = new TextView(this);
-        boolean isPromptExpanded = prefs.getBoolean("prompt_expanded", false); // 读取记忆
+        boolean isPromptExpanded = prefs.getBoolean("prompt_expanded", false);
         styleHeaderTitle(promptHeaderTitle, isPromptExpanded ? "▼ 🌐 语言专属指令设置 (点击折叠)" : "▶ 🌐 语言专属指令设置 (点击展开)");
         promptHeaderLayout.addView(promptHeaderTitle);
         ll.addView(promptHeaderLayout);
 
         promptContentLayout = new LinearLayout(this);
         promptContentLayout.setOrientation(LinearLayout.VERTICAL);
-        promptContentLayout.setVisibility(isPromptExpanded ? View.VISIBLE : View.GONE); // 恢复记忆状态
+        promptContentLayout.setVisibility(isPromptExpanded ? View.VISIBLE : View.GONE);
         promptContentLayout.setPadding(20, 10, 0, 10);
 
         promptContentLayout.addView(lab("接收翻译 Prompt (外语→中文):"));
@@ -426,7 +451,8 @@ private android.widget.Spinner spinnerDir5;
 
         ll.addView(promptContentLayout);
         setupToggle(promptHeaderLayout, promptHeaderTitle, promptContentLayout, "🌐 语言专属指令设置", "prompt_expanded");
-                // ================= 折叠区 3：弹窗快捷选项 =================
+
+        // ================= 折叠区 3：弹窗快捷选项 =================
         LinearLayout quickHeaderLayout = createHeaderLayout();
         TextView quickHeaderTitle = new TextView(this);
         boolean isQuickExpanded = prefs.getBoolean("quick_expanded", false);
@@ -477,14 +503,13 @@ private android.widget.Spinner spinnerDir5;
         ll.addView(quickContentLayout);
         setupToggle(quickHeaderLayout, quickHeaderTitle, quickContentLayout, "⚡ 弹窗快捷选项", "quick_expanded");
 
-
         ll.addView(div());
 
         btnSave = btn("保存全部配置");
         btnSave.setOnClickListener(v -> saveAll());
         ll.addView(btnSave);
 
-        btnTest = btn("测试翻译");
+        btnTest = btn("一键测试大盘全链路 (测试底层的切换器)");
         btnTest.setOnClickListener(v -> testTranslate());
         ll.addView(btnTest);
 
@@ -516,11 +541,11 @@ private android.widget.Spinner spinnerDir5;
             if (contentLayout.getVisibility() == View.GONE) {
                 contentLayout.setVisibility(View.VISIBLE);
                 headerText.setText("▼ " + title + " (点击折叠)");
-                prefs.edit().putBoolean(prefKey, true).apply(); // 保存为展开状态
+                prefs.edit().putBoolean(prefKey, true).apply(); 
             } else {
                 contentLayout.setVisibility(View.GONE);
                 headerText.setText("▶ " + title + " (点击展开)");
-                prefs.edit().putBoolean(prefKey, false).apply(); // 保存为折叠状态
+                prefs.edit().putBoolean(prefKey, false).apply(); 
             }
         });
     }
@@ -582,77 +607,28 @@ private android.widget.Spinner spinnerDir5;
 
         String s = q.trim().toLowerCase();
 
-        // 智能联动：搜索时自动展开折叠面板
         if (promptContentLayout != null && promptContentLayout.getVisibility() == View.GONE) {
             promptContentLayout.setVisibility(View.VISIBLE);
             if (promptHeaderTitle != null) promptHeaderTitle.setText("▼ 🌐 语言专属指令设置 (点击折叠)");
-            prefs.edit().putBoolean("prompt_expanded", true).apply(); // 同步记录展开状态
+            prefs.edit().putBoolean("prompt_expanded", true).apply(); 
         }
 
-        if (s.contains("接收") || s.contains("中文")) {
-            scrollToView(etPromptZH);
-            return;
-        }
-        if (s.contains("英语") || s.contains("英文") || s.contains("en")) {
-            scrollToView(etPromptEN);
-            return;
-        }
-        if (s.contains("俄语") || s.contains("俄罗斯") || s.contains("ru")) {
-            scrollToView(etPromptRU);
-            return;
-        }
-        if (s.contains("乌克兰") || s.contains("uk")) {
-            scrollToView(etPromptUK);
-            return;
-        }
-        if (s.contains("韩语") || s.contains("韩国") || s.contains("ko")) {
-            scrollToView(etPromptKO);
-            return;
-        }
-        if (s.contains("西班牙") || s.contains("es")) {
-            scrollToView(etPromptES);
-            return;
-        }
-        if (s.contains("阿拉伯") || s.contains("ar")) {
-            scrollToView(etPromptAR);
-            return;
-        }
-        if (s.contains("葡萄牙") || s.contains("pt")) {
-            scrollToView(etPromptPT);
-            return;
-        }
-        if (s.contains("法语") || s.contains("法国") || s.contains("fr")) {
-            scrollToView(etPromptFR);
-            return;
-        }
-        if (s.contains("德语") || s.contains("德国") || s.contains("de")) {
-            scrollToView(etPromptDE);
-            return;
-        }
-        if (s.contains("意大利") || s.contains("it")) {
-            scrollToView(etPromptIT);
-            return;
-        }
-        if (s.contains("土耳其") || s.contains("tr")) {
-            scrollToView(etPromptTR);
-            return;
-        }
-        if (s.contains("荷兰") || s.contains("nl")) {
-            scrollToView(etPromptNL);
-            return;
-        }
-        if (s.contains("波兰") || s.contains("pl")) {
-            scrollToView(etPromptPL);
-            return;
-        }
-        if (s.contains("哈萨克") || s.contains("kk")) {
-            scrollToView(etPromptKK);
-            return;
-        }
-        if (s.contains("捷克") || s.contains("cs")) {
-            scrollToView(etPromptCS);
-            return;
-        }
+        if (s.contains("接收") || s.contains("中文")) { scrollToView(etPromptZH); return; }
+        if (s.contains("英语") || s.contains("英文") || s.contains("en")) { scrollToView(etPromptEN); return; }
+        if (s.contains("俄语") || s.contains("俄罗斯") || s.contains("ru")) { scrollToView(etPromptRU); return; }
+        if (s.contains("乌克兰") || s.contains("uk")) { scrollToView(etPromptUK); return; }
+        if (s.contains("韩语") || s.contains("韩国") || s.contains("ko")) { scrollToView(etPromptKO); return; }
+        if (s.contains("西班牙") || s.contains("es")) { scrollToView(etPromptES); return; }
+        if (s.contains("阿拉伯") || s.contains("ar")) { scrollToView(etPromptAR); return; }
+        if (s.contains("葡萄牙") || s.contains("pt")) { scrollToView(etPromptPT); return; }
+        if (s.contains("法语") || s.contains("法国") || s.contains("fr")) { scrollToView(etPromptFR); return; }
+        if (s.contains("德语") || s.contains("德国") || s.contains("de")) { scrollToView(etPromptDE); return; }
+        if (s.contains("意大利") || s.contains("it")) { scrollToView(etPromptIT); return; }
+        if (s.contains("土耳其") || s.contains("tr")) { scrollToView(etPromptTR); return; }
+        if (s.contains("荷兰") || s.contains("nl")) { scrollToView(etPromptNL); return; }
+        if (s.contains("波兰") || s.contains("pl")) { scrollToView(etPromptPL); return; }
+        if (s.contains("哈萨克") || s.contains("kk")) { scrollToView(etPromptKK); return; }
+        if (s.contains("捷克") || s.contains("cs")) { scrollToView(etPromptCS); return; }
 
         toast("没找到匹配语言");
     }
@@ -680,39 +656,41 @@ private android.widget.Spinner spinnerDir5;
             return null;
         }
     }
-private void fetchModelsForApi(String keyStr, String urlStr, EditText targetModelEdit) {
-    if (keyStr.isEmpty()) {
-        toast("请先填写该 API 的 Key");
-        return;
-    }
-    String baseUrl = urlStr.isEmpty() ? "https://api.openai.com/v1/chat/completions" : urlStr;
-    new Thread(() -> {
-        try {
-            List<String> models = autoFetchModels(keyStr, baseUrl);
-            runOnUiThread(() -> {
-                if (models.isEmpty()) {
-                    toast("该 API 获取模型列表失败，请手动输入模型名");
-                } else {
-                    showModelPickerForApi(models, targetModelEdit);
-                }
-            });
-        } catch (Exception e) {
-            runOnUiThread(() -> toast("获取失败: " + e.getMessage()));
+    
+    private void fetchModelsForApi(String keyStr, String urlStr, EditText targetModelEdit) {
+        if (keyStr.isEmpty()) {
+            toast("请先填写该 API 的 Key");
+            return;
         }
-    }).start();
-}
+        String baseUrl = urlStr.isEmpty() ? "https://api.openai.com/v1/chat/completions" : urlStr;
+        new Thread(() -> {
+            try {
+                List<String> models = autoFetchModels(keyStr, baseUrl);
+                runOnUiThread(() -> {
+                    if (models.isEmpty()) {
+                        toast("该 API 获取模型列表失败，请手动输入模型名");
+                    } else {
+                        showModelPickerForApi(models, targetModelEdit);
+                    }
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> toast("获取失败: " + e.getMessage()));
+            }
+        }).start();
+    }
 
-private void showModelPickerForApi(List<String> models, EditText targetEdit) {
-    String[] items = models.toArray(new String[0]);
-    new AlertDialog.Builder(this)
-        .setTitle("选择模型")
-        .setItems(items, (d, w) -> {
-            targetEdit.setText(items[w]);
-            toast("已选择: " + items[w]);
-        })
-        .setNegativeButton("取消", null)
-        .show();
-}
+    private void showModelPickerForApi(List<String> models, EditText targetEdit) {
+        String[] items = models.toArray(new String[0]);
+        new AlertDialog.Builder(this)
+            .setTitle("选择模型")
+            .setItems(items, (d, w) -> {
+                targetEdit.setText(items[w]);
+                toast("已选择: " + items[w]);
+            })
+            .setNegativeButton("取消", null)
+            .show();
+    }
+
     private void fetchModels() {
         String key = etKey.getText().toString().trim();
         if (key.isEmpty()) {
@@ -871,7 +849,7 @@ private void showModelPickerForApi(List<String> models, EditText targetEdit) {
         builder.show();
     }
 
-        private void saveAll() {
+    private void saveAll() {
         btnSave.setEnabled(false);
         btnSave.setText("保存中...");
 
@@ -1148,7 +1126,7 @@ private void showModelPickerForApi(List<String> models, EditText targetEdit) {
         }
 
         btnTest.setEnabled(false);
-        btnTest.setText("翻译中...");
+        btnTest.setText("测试中...");
         
         String url = etUrl.getText().toString().trim();
         String mdl = etModel.getText().toString().trim();
@@ -1159,18 +1137,88 @@ private void showModelPickerForApi(List<String> models, EditText targetEdit) {
                 String result = AITranslator.translateTest("你好世界", "English");
                 runOnUiThread(() -> {
                     btnTest.setEnabled(true);
-                    btnTest.setText("测试翻译");
+                    btnTest.setText("一键测试大盘全链路");
                     if ("你好世界".equals(result)) {
                         toast("未翻译");
                     } else {
-                        toast("翻译结果: " + result);
+                        toast("大盘链路畅通！翻译结果: " + result);
                     }
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {
                     btnTest.setEnabled(true);
-                    btnTest.setText("测试翻译");
-                    toast("翻译失败: " + e.getMessage());
+                    btnTest.setText("一键测试大盘全链路");
+                    toast("链路测试失败: " + e.getMessage());
+                });
+            }
+        }).start();
+    }
+
+    // 独立测试通道方法，绕开调度限制
+    private void testSingleApi(String key, String url, String model) {
+        if (key.isEmpty() || model.isEmpty()) {
+            toast("请先填写 Key 和 模型");
+            return;
+        }
+        String baseUrl = url.isEmpty() ? "https://api.openai.com/v1/chat/completions" : url;
+        if (!baseUrl.contains("/v1/") && !baseUrl.contains("generativelanguage.googleapis.com")) {
+            if (!baseUrl.endsWith("/")) baseUrl += "/";
+            baseUrl += "v1/";
+        }
+        if (!baseUrl.endsWith("/chat/completions")) {
+            if (!baseUrl.endsWith("/")) baseUrl += "/";
+            baseUrl += "chat/completions";
+        }
+        
+        Toast.makeText(this, "正在直接测试该通道...", Toast.LENGTH_SHORT).show();
+        
+        String finalUrl = baseUrl;
+        new Thread(() -> {
+            try {
+                OkHttpClient client = new OkHttpClient.Builder()
+                        .connectTimeout(8, TimeUnit.SECONDS)
+                        .readTimeout(15, TimeUnit.SECONDS)
+                        .build();
+                        
+                JSONObject bodyObj = new JSONObject();
+                bodyObj.put("model", model);
+                bodyObj.put("max_tokens", 10); 
+                JSONArray msgs = new JSONArray();
+                JSONObject m = new JSONObject();
+                m.put("role", "user");
+                m.put("content", "hello");
+                msgs.put(m);
+                bodyObj.put("messages", msgs);
+                
+                okhttp3.RequestBody reqBody = okhttp3.RequestBody.create(bodyObj.toString(), okhttp3.MediaType.get("application/json; charset=utf-8"));
+                Request req = new Request.Builder()
+                        .url(finalUrl)
+                        .header("Authorization", "Bearer " + key)
+                        .header("Content-Type", "application/json")
+                        .post(reqBody)
+                        .build();
+                        
+                try (Response resp = client.newCall(req).execute()) {
+                    String respStr = resp.body() != null ? resp.body().string() : "";
+                    if (resp.isSuccessful()) {
+                        runOnUiThread(() -> toast("✅ 测试成功！该 API 通道正常畅通。"));
+                    } else {
+                        runOnUiThread(() -> {
+                            new AlertDialog.Builder(SettingsActivity.this)
+                                .setTitle("❌ 测试失败")
+                                .setMessage("HTTP " + resp.code() + "\n" + respStr)
+                                .setPositiveButton("关闭", null)
+                                .show();
+                        });
+                    }
+                }
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    new AlertDialog.Builder(SettingsActivity.this)
+                        .setTitle("❌ 请求异常")
+                        .setMessage(e.getMessage())
+                        .setPositiveButton("关闭", null)
+                        .show();
                 });
             }
         }).start();
