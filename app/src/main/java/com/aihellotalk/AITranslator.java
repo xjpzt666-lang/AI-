@@ -129,7 +129,7 @@ private static class ApiEndpoint {
         if (client == null) {
             client = new OkHttpClient.Builder()
                 .connectTimeout(20, TimeUnit.SECONDS)
-                .readTimeout(90, TimeUnit.SECONDS)
+                .readTimeout(55, TimeUnit.SECONDS)
                 .writeTimeout(45, TimeUnit.SECONDS)
                 .build();
         }
@@ -477,7 +477,7 @@ private static String getReasoningEffort() {
 
         client = new OkHttpClient.Builder()
                 .connectTimeout(20, TimeUnit.SECONDS)
-                .readTimeout(90, TimeUnit.SECONDS)
+                .readTimeout(55, TimeUnit.SECONDS)
                 .writeTimeout(45, TimeUnit.SECONDS)
                 .build();
 
@@ -521,7 +521,7 @@ private static int readConfigInt(String key, int defaultVal) {
 
 private static void loadEndpoints() {
     endpoints.clear();
-    for (int i = 1; i <= 5; i++) {
+    for (int i = 1; i <= 8; i++) {
         String suffix = (i == 1) ? "" : ("_" + i);
         String key = readConfigValue("api_key" + suffix);
         if (key == null || key.isEmpty()) continue;
@@ -593,7 +593,7 @@ private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
         apiUrl = url;
         client = new OkHttpClient.Builder()
                 .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(45, TimeUnit.SECONDS)
+                .readTimeout(55, TimeUnit.SECONDS)
                 .build();
     }
 
@@ -757,7 +757,7 @@ private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
             synchronized (AITranslator.class) {
                 if (distillClient == null) {
                     distillClient = new OkHttpClient.Builder()
-                            .connectTimeout(15, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS)
+                            .connectTimeout(15, TimeUnit.SECONDS).readTimeout(55, TimeUnit.SECONDS)
                             .writeTimeout(30, TimeUnit.SECONDS).build();
                 }
             }
@@ -1076,7 +1076,7 @@ private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
             synchronized (AITranslator.class) {
                 if (reverseTranslateClient == null) {
                     reverseTranslateClient = new OkHttpClient.Builder()
-                            .connectTimeout(12, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS)
+                            .connectTimeout(12, TimeUnit.SECONDS).readTimeout(55, TimeUnit.SECONDS)
                             .writeTimeout(20, TimeUnit.SECONDS).build();
                 }
             }
