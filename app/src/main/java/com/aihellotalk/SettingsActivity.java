@@ -52,6 +52,12 @@ private EditText etKey4, etUrl4, etModel4, etWeight4;
 private android.widget.Spinner spinnerDir4;
 private EditText etKey5, etUrl5, etModel5, etWeight5;
 private android.widget.Spinner spinnerDir5;
+    private EditText etKey6, etUrl6, etModel6, etWeight6, etAlias6;
+    private android.widget.Spinner spinnerDir6, spinnerReasoning6;
+    private EditText etKey7, etUrl7, etModel7, etWeight7, etAlias7;
+    private android.widget.Spinner spinnerDir7, spinnerReasoning7;
+    private EditText etKey8, etUrl8, etModel8, etWeight8, etAlias8;
+    private android.widget.Spinner spinnerDir8, spinnerReasoning8;
     private EditText etSearchPrompt;
     private Button btnFetch, btnSave, btnTest;
     private Button btnSearchPrompt;
@@ -184,7 +190,9 @@ ll.addView(spinnerReasoning);                                  // ← 改
 // ================= 折叠区 1.5：多API智能密钥配置 =================
 LinearLayout apiHeaderLayout = createHeaderLayout();
 TextView apiHeaderTitle = new TextView(this);
-boolean isApiExpanded = prefs.getBoolean("api_expanded", true);
+boolean isApiExpanded = prefs.getBoolean("api_expanded", false);
+        styleHeaderTitle(apiHeaderTitle, isApiExpanded ? "▼ 🔄 多API智能密钥配置（最多8個） (点击折叠)" : "▶ 🔄 多API智能密钥配置（最多8個） (点击展开)");
+        apiHeaderLayout.addView(apiHeaderTitle);
 styleHeaderTitle(apiHeaderTitle, isApiExpanded ? "▼ 🔄 多API智能密钥配置（最多5個） (点击折叠)" : "▶ 🔄 多API智能密钥配置（最多5個） (点击展开)");
 apiHeaderLayout.addView(apiHeaderTitle);
 ll.addView(apiHeaderLayout);
@@ -246,7 +254,108 @@ apiContentLayout.addView(lab("模型 5:")); etModel5 = edit(prefs.getString("mod
 Button btnFetch5 = btn("获取模型"); btnFetch5.setOnClickListener(v -> fetchModelsForApi(etKey5.getText().toString().trim(), etUrl5.getText().toString().trim(), etModel5)); apiContentLayout.addView(btnFetch5);
 apiContentLayout.addView(lab("调用权重 5:")); etWeight5 = edit(prefs.getString("api_weight_5", "3")); apiContentLayout.addView(etWeight5);
 apiContentLayout.addView(lab("翻译方向 5:")); spinnerDir5 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir5.setAdapter(dirAdapter5); spinnerDir5.setSelection(prefs.getInt("api_direction_5", 0)); apiContentLayout.addView(spinnerDir5);
-apiContentLayout.addView(lab("思考模式 5:")); spinnerReasoning5 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning5.setAdapter(effAdapter5); String savedEff5 = prefs.getString("reasoning_effort_5", "default"); int selEff5 = 0; if ("low".equals(savedEff5)) selEff5 = 1; else if ("medium".equals(savedEff5)) selEff5 = 2; else if ("high".equals(savedEff5)) selEff5 = 3; spinnerReasoning5.setSelection(selEff5); apiContentLayout.addView(spinnerReasoning5);
+apiContentLayout.addView(lab("思考模式 5:")); spinnerReasoning5 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter5 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter5.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning5.setAdapter(effAdapter5); String savedEff5 = prefs.getString("reasoning_effort_5", "default"); int selEff5 = 0; if ("low".equals(savedEff5)) selEff5 = 1; else if ("medium".equals(savedEff5)) selEff5 = 2; else if ("high".equals(savedEff5)) selEff5 = 3; spinnerReasoning5.setSelection(selEff5); 
+// --- API 6 ---
+        LinearLayout row6 = new LinearLayout(this); row6.setOrientation(LinearLayout.HORIZONTAL); row6.setBackground(titleBg); row6.setPadding(20, 20, 20, 20); row6.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams lpRow6 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lpRow6.setMargins(0, 40, 0, 10); row6.setLayoutParams(lpRow6);
+        TextView t6 = new TextView(this); t6.setText("🔵 备用 API 6 | "); t6.setTextColor(Color.parseColor("#0284C7")); t6.setTextSize(15f); t6.setTypeface(null, android.graphics.Typeface.BOLD); row6.addView(t6);
+        etAlias6 = new EditText(this); etAlias6.setText(prefs.getString("api_alias_6", "")); etAlias6.setHint("点右侧修改备注"); etAlias6.setHintTextColor(Color.parseColor("#800284C7")); etAlias6.setTextColor(Color.parseColor("#0284C7")); etAlias6.setTextSize(14f); etAlias6.setTypeface(null, android.graphics.Typeface.BOLD); etAlias6.setBackgroundColor(Color.TRANSPARENT); etAlias6.setEnabled(false); etAlias6.setPadding(0,0,0,0);
+        LinearLayout.LayoutParams lpAlias6 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); etAlias6.setLayoutParams(lpAlias6); row6.addView(etAlias6);
+        Button btnEdit6 = new Button(this); btnEdit6.setText("✏️"); btnEdit6.setBackgroundColor(Color.TRANSPARENT); btnEdit6.setPadding(0,0,0,0);
+        btnEdit6.setOnClickListener(v -> { etAlias6.setEnabled(true); etAlias6.setFocusableInTouchMode(true); etAlias6.requestFocus(); Toast.makeText(this, "已解锁，可修改API 6备注", Toast.LENGTH_SHORT).show(); });
+        row6.addView(btnEdit6); apiContentLayout.addView(row6);
+        apiContentLayout.addView(lab("API Key 6:")); etKey6 = edit(prefs.getString("api_key_6", "")); apiContentLayout.addView(etKey6);
+        apiContentLayout.addView(lab("API URL 6:")); etUrl6 = edit(prefs.getString("api_url_6", "")); apiContentLayout.addView(etUrl6);
+        apiContentLayout.addView(lab("模型 6:")); etModel6 = edit(prefs.getString("model_6", "")); apiContentLayout.addView(etModel6);
+        Button btnFetch6 = btn("获取模型"); btnFetch6.setOnClickListener(v -> fetchModelsForApi(etKey6.getText().toString().trim(), etUrl6.getText().toString().trim(), etModel6)); apiContentLayout.addView(btnFetch6);
+        apiContentLayout.addView(lab("调用权重 6:")); etWeight6 = edit(prefs.getString("api_weight_6", "3")); apiContentLayout.addView(etWeight6);
+        apiContentLayout.addView(lab("翻译方向 6:")); spinnerDir6 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter6 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter6.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir6.setAdapter(dirAdapter6); spinnerDir6.setSelection(prefs.getInt("api_direction_6", 0)); apiContentLayout.addView(spinnerDir6);
+        apiContentLayout.addView(lab("思考模式 6:")); spinnerReasoning6 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter6 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter6.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning6.setAdapter(effAdapter6); String savedEff6 = prefs.getString("reasoning_effort_6", "default"); int selEff6 = 0; if ("low".equals(savedEff6)) selEff6 = 1; else if ("medium".equals(savedEff6)) selEff6 = 2; else if ("high".equals(savedEff6)) selEff6 = 3; spinnerReasoning6.setSelection(selEff6); apiContentLayout.addView(spinnerReasoning6);
+
+        // --- API 7 ---
+        LinearLayout row7 = new LinearLayout(this); row7.setOrientation(LinearLayout.HORIZONTAL); row7.setBackground(titleBg); row7.setPadding(20, 20, 20, 20); row7.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams lpRow7 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lpRow7.setMargins(0, 40, 0, 10); row7.setLayoutParams(lpRow7);
+        TextView t7 = new TextView(this); t7.setText("🔴 备用 API 7 | "); t7.setTextColor(Color.parseColor("#BE185D")); t7.setTextSize(15f); t7.setTypeface(null, android.graphics.Typeface.BOLD); row7.addView(t7);
+        etAlias7 = new EditText(this); etAlias7.setText(prefs.getString("api_alias_7", "")); etAlias7.setHint("点右侧修改备注"); etAlias7.setHintTextColor(Color.parseColor("#80BE185D")); etAlias7.setTextColor(Color.parseColor("#BE185D")); etAlias7.setTextSize(14f); etAlias7.setTypeface(null, android.graphics.Typeface.BOLD); etAlias7.setBackgroundColor(Color.TRANSPARENT); etAlias7.setEnabled(false); etAlias7.setPadding(0,0,0,0);
+        LinearLayout.LayoutParams lpAlias7 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); etAlias7.setLayoutParams(lpAlias7); row7.addView(etAlias7);
+        Button btnEdit7 = new Button(this); btnEdit7.setText("✏️"); btnEdit7.setBackgroundColor(Color.TRANSPARENT); btnEdit7.setPadding(0,0,0,0);
+        btnEdit7.setOnClickListener(v -> { etAlias7.setEnabled(true); etAlias7.setFocusableInTouchMode(true); etAlias7.requestFocus(); Toast.makeText(this, "已解锁，可修改API 7备注", Toast.LENGTH_SHORT).show(); });
+        row7.addView(btnEdit7); apiContentLayout.addView(row7);
+        apiContentLayout.addView(lab("API Key 7:")); etKey7 = edit(prefs.getString("api_key_7", "")); apiContentLayout.addView(etKey7);
+        apiContentLayout.addView(lab("API URL 7:")); etUrl7 = edit(prefs.getString("api_url_7", "")); apiContentLayout.addView(etUrl7);
+        apiContentLayout.addView(lab("模型 7:")); etModel7 = edit(prefs.getString("model_7", "")); apiContentLayout.addView(etModel7);
+        Button btnFetch7 = btn("获取模型"); btnFetch7.setOnClickListener(v -> fetchModelsForApi(etKey7.getText().toString().trim(), etUrl7.getText().toString().trim(), etModel7)); apiContentLayout.addView(btnFetch7);
+        apiContentLayout.addView(lab("调用权重 7:")); etWeight7 = edit(prefs.getString("api_weight_7", "3")); apiContentLayout.addView(etWeight7);
+        apiContentLayout.addView(lab("翻译方向 7:")); spinnerDir7 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter7 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter7.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir7.setAdapter(dirAdapter7); spinnerDir7.setSelection(prefs.getInt("api_direction_7", 0)); apiContentLayout.addView(spinnerDir7);
+        apiContentLayout.addView(lab("思考模式 7:")); spinnerReasoning7 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter7 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter7.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning7.setAdapter(effAdapter7); String savedEff7 = prefs.getString("reasoning_effort_7", "default"); int selEff7 = 0; if ("low".equals(savedEff7)) selEff7 = 1; else if ("medium".equals(savedEff7)) selEff7 = 2; else if ("high".equals(savedEff7)) selEff7 = 3; spinnerReasoning7.setSelection(selEff7); apiContentLayout.addView(spinnerReasoning7);
+
+        // --- API 8 ---
+        LinearLayout row8 = new LinearLayout(this); row8.setOrientation(LinearLayout.HORIZONTAL); row8.setBackground(titleBg); row8.setPadding(20, 20, 20, 20); row8.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams lpRow8 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lpRow8.setMargins(0, 40, 0, 10); row8.setLayoutParams(lpRow8);
+        TextView t8 = new TextView(this); t8.setText("🟤 备用 API 8 | "); t8.setTextColor(Color.parseColor("#0F766E")); t8.setTextSize(15f); t8.setTypeface(null, android.graphics.Typeface.BOLD); row8.addView(t8);
+        etAlias8 = new EditText(this); etAlias8.setText(prefs.getString("api_alias_8", "")); etAlias8.setHint("点右侧修改备注"); etAlias8.setHintTextColor(Color.parseColor("#800F766E")); etAlias8.setTextColor(Color.parseColor("#0F766E")); etAlias8.setTextSize(14f); etAlias8.setTypeface(null, android.graphics.Typeface.BOLD); etAlias8.setBackgroundColor(Color.TRANSPARENT); etAlias8.setEnabled(false); etAlias8.setPadding(0,0,0,0);
+        LinearLayout.LayoutParams lpAlias8 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); etAlias8.setLayoutParams(lpAlias8); row8.addView(etAlias8);
+        Button btnEdit8 = new Button(this); btnEdit8.setText("✏️"); btnEdit8.setBackgroundColor(Color.TRANSPARENT); btnEdit8.setPadding(0,0,0,0);
+        btnEdit8.setOnClickListener(v -> { etAlias8.setEnabled(true); etAlias8.setFocusableInTouchMode(true); etAlias8.requestFocus(); Toast.makeText(this, "已解锁，可修改API 8备注", Toast.LENGTH_SHORT).show(); });
+        row8.addView(btnEdit8); apiContentLayout.addView(row8);
+        apiContentLayout.addView(lab("API Key 8:")); etKey8 = edit(prefs.getString("api_key_8", "")); apiContentLayout.addView(etKey8);
+        apiContentLayout.addView(lab("API URL 8:")); etUrl8 = edit(prefs.getString("api_url_8", "")); apiContentLayout.addView(etUrl8);
+        apiContentLayout.addView(lab("模型 8:")); etModel8 = edit(prefs.getString("model_8", "")); apiContentLayout.addView(etModel8);
+        Button btnFetch8 = btn("获取模型"); btnFetch8.setOnClickListener(v -> fetchModelsForApi(etKey8.getText().toString().trim(), etUrl8.getText().toString().trim(), etModel8)); apiContentLayout.addView(btnFetch8);
+        apiContentLayout.addView(lab("调用权重 8:")); etWeight8 = edit(prefs.getString("api_weight_8", "3")); apiContentLayout.addView(etWeight8);
+        apiContentLayout.addView(lab("翻译方向 8:")); spinnerDir8 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter8 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter8.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir8.setAdapter(dirAdapter8); spinnerDir8.setSelection(prefs.getInt("api_direction_8", 0)); apiContentLayout.addView(spinnerDir8);
+        apiContentLayout.addView(lab("思考模式 8:")); spinnerReasoning8 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter8 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter8.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning8.setAdapter(effAdapter8); String savedEff8 = prefs.getString("reasoning_effort_8", "default"); int selEff8 = 0; if ("low".equals(savedEff8)) selEff8 = 1; else if ("medium".equals(savedEff8)) selEff8 = 2; else if ("high".equals(savedEff8)) selEff8 = 3; spinnerReasoning8.setSelection(selEff8); apiContentLayout.addView(spinnerReasoning8);
+// --- API 6 ---
+        LinearLayout row6 = new LinearLayout(this); row6.setOrientation(LinearLayout.HORIZONTAL); row6.setBackground(titleBg); row6.setPadding(20, 20, 20, 20); row6.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams lpRow6 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lpRow6.setMargins(0, 40, 0, 10); row6.setLayoutParams(lpRow6);
+        TextView t6 = new TextView(this); t6.setText("🔵 备用 API 6 | "); t6.setTextColor(Color.parseColor("#0284C7")); t6.setTextSize(15f); t6.setTypeface(null, android.graphics.Typeface.BOLD); row6.addView(t6);
+        etAlias6 = new EditText(this); etAlias6.setText(prefs.getString("api_alias_6", "")); etAlias6.setHint("点右侧修改备注"); etAlias6.setHintTextColor(Color.parseColor("#800284C7")); etAlias6.setTextColor(Color.parseColor("#0284C7")); etAlias6.setTextSize(14f); etAlias6.setTypeface(null, android.graphics.Typeface.BOLD); etAlias6.setBackgroundColor(Color.TRANSPARENT); etAlias6.setEnabled(false); etAlias6.setPadding(0,0,0,0);
+        LinearLayout.LayoutParams lpAlias6 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); etAlias6.setLayoutParams(lpAlias6); row6.addView(etAlias6);
+        Button btnEdit6 = new Button(this); btnEdit6.setText("✏️"); btnEdit6.setBackgroundColor(Color.TRANSPARENT); btnEdit6.setPadding(0,0,0,0);
+        btnEdit6.setOnClickListener(v -> { etAlias6.setEnabled(true); etAlias6.setFocusableInTouchMode(true); etAlias6.requestFocus(); Toast.makeText(this, "已解锁，可修改API 6备注", Toast.LENGTH_SHORT).show(); });
+        row6.addView(btnEdit6); apiContentLayout.addView(row6);
+        apiContentLayout.addView(lab("API Key 6:")); etKey6 = edit(prefs.getString("api_key_6", "")); apiContentLayout.addView(etKey6);
+        apiContentLayout.addView(lab("API URL 6:")); etUrl6 = edit(prefs.getString("api_url_6", "")); apiContentLayout.addView(etUrl6);
+        apiContentLayout.addView(lab("模型 6:")); etModel6 = edit(prefs.getString("model_6", "")); apiContentLayout.addView(etModel6);
+        Button btnFetch6 = btn("获取模型"); btnFetch6.setOnClickListener(v -> fetchModelsForApi(etKey6.getText().toString().trim(), etUrl6.getText().toString().trim(), etModel6)); apiContentLayout.addView(btnFetch6);
+        apiContentLayout.addView(lab("调用权重 6:")); etWeight6 = edit(prefs.getString("api_weight_6", "3")); apiContentLayout.addView(etWeight6);
+        apiContentLayout.addView(lab("翻译方向 6:")); spinnerDir6 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter6 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter6.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir6.setAdapter(dirAdapter6); spinnerDir6.setSelection(prefs.getInt("api_direction_6", 0)); apiContentLayout.addView(spinnerDir6);
+        apiContentLayout.addView(lab("思考模式 6:")); spinnerReasoning6 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter6 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter6.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning6.setAdapter(effAdapter6); String savedEff6 = prefs.getString("reasoning_effort_6", "default"); int selEff6 = 0; if ("low".equals(savedEff6)) selEff6 = 1; else if ("medium".equals(savedEff6)) selEff6 = 2; else if ("high".equals(savedEff6)) selEff6 = 3; spinnerReasoning6.setSelection(selEff6); apiContentLayout.addView(spinnerReasoning6);
+
+        // --- API 7 ---
+        LinearLayout row7 = new LinearLayout(this); row7.setOrientation(LinearLayout.HORIZONTAL); row7.setBackground(titleBg); row7.setPadding(20, 20, 20, 20); row7.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams lpRow7 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lpRow7.setMargins(0, 40, 0, 10); row7.setLayoutParams(lpRow7);
+        TextView t7 = new TextView(this); t7.setText("🔴 备用 API 7 | "); t7.setTextColor(Color.parseColor("#BE185D")); t7.setTextSize(15f); t7.setTypeface(null, android.graphics.Typeface.BOLD); row7.addView(t7);
+        etAlias7 = new EditText(this); etAlias7.setText(prefs.getString("api_alias_7", "")); etAlias7.setHint("点右侧修改备注"); etAlias7.setHintTextColor(Color.parseColor("#80BE185D")); etAlias7.setTextColor(Color.parseColor("#BE185D")); etAlias7.setTextSize(14f); etAlias7.setTypeface(null, android.graphics.Typeface.BOLD); etAlias7.setBackgroundColor(Color.TRANSPARENT); etAlias7.setEnabled(false); etAlias7.setPadding(0,0,0,0);
+        LinearLayout.LayoutParams lpAlias7 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); etAlias7.setLayoutParams(lpAlias7); row7.addView(etAlias7);
+        Button btnEdit7 = new Button(this); btnEdit7.setText("✏️"); btnEdit7.setBackgroundColor(Color.TRANSPARENT); btnEdit7.setPadding(0,0,0,0);
+        btnEdit7.setOnClickListener(v -> { etAlias7.setEnabled(true); etAlias7.setFocusableInTouchMode(true); etAlias7.requestFocus(); Toast.makeText(this, "已解锁，可修改API 7备注", Toast.LENGTH_SHORT).show(); });
+        row7.addView(btnEdit7); apiContentLayout.addView(row7);
+        apiContentLayout.addView(lab("API Key 7:")); etKey7 = edit(prefs.getString("api_key_7", "")); apiContentLayout.addView(etKey7);
+        apiContentLayout.addView(lab("API URL 7:")); etUrl7 = edit(prefs.getString("api_url_7", "")); apiContentLayout.addView(etUrl7);
+        apiContentLayout.addView(lab("模型 7:")); etModel7 = edit(prefs.getString("model_7", "")); apiContentLayout.addView(etModel7);
+        Button btnFetch7 = btn("获取模型"); btnFetch7.setOnClickListener(v -> fetchModelsForApi(etKey7.getText().toString().trim(), etUrl7.getText().toString().trim(), etModel7)); apiContentLayout.addView(btnFetch7);
+        apiContentLayout.addView(lab("调用权重 7:")); etWeight7 = edit(prefs.getString("api_weight_7", "3")); apiContentLayout.addView(etWeight7);
+        apiContentLayout.addView(lab("翻译方向 7:")); spinnerDir7 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter7 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter7.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir7.setAdapter(dirAdapter7); spinnerDir7.setSelection(prefs.getInt("api_direction_7", 0)); apiContentLayout.addView(spinnerDir7);
+        apiContentLayout.addView(lab("思考模式 7:")); spinnerReasoning7 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter7 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter7.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning7.setAdapter(effAdapter7); String savedEff7 = prefs.getString("reasoning_effort_7", "default"); int selEff7 = 0; if ("low".equals(savedEff7)) selEff7 = 1; else if ("medium".equals(savedEff7)) selEff7 = 2; else if ("high".equals(savedEff7)) selEff7 = 3; spinnerReasoning7.setSelection(selEff7); apiContentLayout.addView(spinnerReasoning7);
+
+        // --- API 8 ---
+        LinearLayout row8 = new LinearLayout(this); row8.setOrientation(LinearLayout.HORIZONTAL); row8.setBackground(titleBg); row8.setPadding(20, 20, 20, 20); row8.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams lpRow8 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lpRow8.setMargins(0, 40, 0, 10); row8.setLayoutParams(lpRow8);
+        TextView t8 = new TextView(this); t8.setText("⚫ 备用 API 8 | "); t8.setTextColor(Color.parseColor("#374151")); t8.setTextSize(15f); t8.setTypeface(null, android.graphics.Typeface.BOLD); row8.addView(t8);
+        etAlias8 = new EditText(this); etAlias8.setText(prefs.getString("api_alias_8", "")); etAlias8.setHint("点右侧修改备注"); etAlias8.setHintTextColor(Color.parseColor("#80374151")); etAlias8.setTextColor(Color.parseColor("#374151")); etAlias8.setTextSize(14f); etAlias8.setTypeface(null, android.graphics.Typeface.BOLD); etAlias8.setBackgroundColor(Color.TRANSPARENT); etAlias8.setEnabled(false); etAlias8.setPadding(0,0,0,0);
+        LinearLayout.LayoutParams lpAlias8 = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f); etAlias8.setLayoutParams(lpAlias8); row8.addView(etAlias8);
+        Button btnEdit8 = new Button(this); btnEdit8.setText("✏️"); btnEdit8.setBackgroundColor(Color.TRANSPARENT); btnEdit8.setPadding(0,0,0,0);
+        btnEdit8.setOnClickListener(v -> { etAlias8.setEnabled(true); etAlias8.setFocusableInTouchMode(true); etAlias8.requestFocus(); Toast.makeText(this, "已解锁，可修改API 8备注", Toast.LENGTH_SHORT).show(); });
+        row8.addView(btnEdit8); apiContentLayout.addView(row8);
+        apiContentLayout.addView(lab("API Key 8:")); etKey8 = edit(prefs.getString("api_key_8", "")); apiContentLayout.addView(etKey8);
+        apiContentLayout.addView(lab("API URL 8:")); etUrl8 = edit(prefs.getString("api_url_8", "")); apiContentLayout.addView(etUrl8);
+        apiContentLayout.addView(lab("模型 8:")); etModel8 = edit(prefs.getString("model_8", "")); apiContentLayout.addView(etModel8);
+        Button btnFetch8 = btn("获取模型"); btnFetch8.setOnClickListener(v -> fetchModelsForApi(etKey8.getText().toString().trim(), etUrl8.getText().toString().trim(), etModel8)); apiContentLayout.addView(btnFetch8);
+        apiContentLayout.addView(lab("调用权重 8:")); etWeight8 = edit(prefs.getString("api_weight_8", "3")); apiContentLayout.addView(etWeight8);
+        apiContentLayout.addView(lab("翻译方向 8:")); spinnerDir8 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> dirAdapter8 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, dirs); dirAdapter8.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerDir8.setAdapter(dirAdapter8); spinnerDir8.setSelection(prefs.getInt("api_direction_8", 0)); apiContentLayout.addView(spinnerDir8);
+        apiContentLayout.addView(lab("思考模式 8:")); spinnerReasoning8 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter8 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter8.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning8.setAdapter(effAdapter8); String savedEff8 = prefs.getString("reasoning_effort_8", "default"); int selEff8 = 0; if ("low".equals(savedEff8)) selEff8 = 1; else if ("medium".equals(savedEff8)) selEff8 = 2; else if ("high".equals(savedEff8)) selEff8 = 3; spinnerReasoning8.setSelection(selEff8); apiContentLayout.addView(spinnerReasoning8);
+apiContentLayout.addView(spinnerReasoning5);
 
 
 ll.addView(apiContentLayout);
@@ -814,13 +923,12 @@ private void showModelPickerForApi(List<String> models, EditText targetEdit) {
         if (maxTokensStr.isEmpty()) maxTokensStr = "8000";
         try { Integer.parseInt(maxTokensStr); } catch (NumberFormatException e) { maxTokensStr = "8000"; }
 
-int selectedPos = spinnerReasoning.getSelectedItemPosition();
-String effortStr = "default";
-if (selectedPos == 1) effortStr = "low";
-else if (selectedPos == 2) effortStr = "medium";
-else if (selectedPos == 3) effortStr = "high";
+        int selectedPos = spinnerReasoning.getSelectedItemPosition();
+        String effortStr = "default";
+        if (selectedPos == 1) effortStr = "low";
+        else if (selectedPos == 2) effortStr = "medium";
+        else if (selectedPos == 3) effortStr = "high";
         
-        // 后台静默强制拼接标签名字和内容，并用 | 隔开
         String q1 = etQuick1Tag.getText().toString().trim() + "|" + etQuick1Content.getText().toString().trim();
         String q2 = etQuick2Tag.getText().toString().trim() + "|" + etQuick2Content.getText().toString().trim();
         String q3 = etQuick3Tag.getText().toString().trim() + "|" + etQuick3Content.getText().toString().trim();
@@ -832,7 +940,7 @@ else if (selectedPos == 3) effortStr = "high";
         editor.putString("api_key", key);
         editor.putString("api_url", url);
         editor.putString("api_weight", etWeight1.getText().toString().trim());
-editor.putInt("api_direction", spinnerDir1.getSelectedItemPosition());
+        editor.putInt("api_direction", spinnerDir1.getSelectedItemPosition());
         editor.putString("model", mdl);
         editor.putString("temperature", tempStr);
         editor.putString("max_chat_messages", maxChatStr);
@@ -858,31 +966,64 @@ editor.putInt("api_direction", spinnerDir1.getSelectedItemPosition());
         editor.putString("quick_2", q2);
         editor.putString("quick_3", q3);
         editor.putString("quick_4", q4);
+        
+        editor.putString("api_alias_2", etAlias2.getText().toString().trim());
         editor.putString("api_key_2", etKey2.getText().toString().trim());
-editor.putString("api_url_2", etUrl2.getText().toString().trim());
-editor.putString("model_2", etModel2.getText().toString().trim());
-editor.putString("api_weight_2", etWeight2.getText().toString().trim());
-editor.putInt("api_direction_2", spinnerDir2.getSelectedItemPosition());
-editor.putString("api_key_3", etKey3.getText().toString().trim());
-editor.putString("api_url_3", etUrl3.getText().toString().trim());
-editor.putString("model_3", etModel3.getText().toString().trim());
-editor.putString("api_weight_3", etWeight3.getText().toString().trim());
-editor.putInt("api_direction_3", spinnerDir3.getSelectedItemPosition());
-editor.putString("api_key_4", etKey4.getText().toString().trim());
-editor.putString("api_url_4", etUrl4.getText().toString().trim());
-editor.putString("model_4", etModel4.getText().toString().trim());
-editor.putString("api_weight_4", etWeight4.getText().toString().trim());
-editor.putInt("api_direction_4", spinnerDir4.getSelectedItemPosition());
-editor.putString("api_key_5", etKey5.getText().toString().trim());
-editor.putString("api_url_5", etUrl5.getText().toString().trim());
-editor.putString("model_5", etModel5.getText().toString().trim());
-editor.putString("api_weight_5", etWeight5.getText().toString().trim());
-editor.putInt("api_direction_5", spinnerDir5.getSelectedItemPosition());
+        editor.putString("api_url_2", etUrl2.getText().toString().trim());
+        editor.putString("model_2", etModel2.getText().toString().trim());
+        editor.putString("api_weight_2", etWeight2.getText().toString().trim());
+        editor.putInt("api_direction_2", spinnerDir2.getSelectedItemPosition());
+        
+        editor.putString("api_alias_3", etAlias3.getText().toString().trim());
+        editor.putString("api_key_3", etKey3.getText().toString().trim());
+        editor.putString("api_url_3", etUrl3.getText().toString().trim());
+        editor.putString("model_3", etModel3.getText().toString().trim());
+        editor.putString("api_weight_3", etWeight3.getText().toString().trim());
+        editor.putInt("api_direction_3", spinnerDir3.getSelectedItemPosition());
+        
+        editor.putString("api_alias_4", etAlias4.getText().toString().trim());
+        editor.putString("api_key_4", etKey4.getText().toString().trim());
+        editor.putString("api_url_4", etUrl4.getText().toString().trim());
+        editor.putString("model_4", etModel4.getText().toString().trim());
+        editor.putString("api_weight_4", etWeight4.getText().toString().trim());
+        editor.putInt("api_direction_4", spinnerDir4.getSelectedItemPosition());
+        
+        editor.putString("api_alias_5", etAlias5.getText().toString().trim());
+        editor.putString("api_key_5", etKey5.getText().toString().trim());
+        editor.putString("api_url_5", etUrl5.getText().toString().trim());
+        editor.putString("model_5", etModel5.getText().toString().trim());
+        editor.putString("api_weight_5", etWeight5.getText().toString().trim());
+        editor.putInt("api_direction_5", spinnerDir5.getSelectedItemPosition());
+
+        editor.putString("api_alias_6", etAlias6.getText().toString().trim());
+        editor.putString("api_key_6", etKey6.getText().toString().trim());
+        editor.putString("api_url_6", etUrl6.getText().toString().trim());
+        editor.putString("model_6", etModel6.getText().toString().trim());
+        editor.putString("api_weight_6", etWeight6.getText().toString().trim());
+        editor.putInt("api_direction_6", spinnerDir6.getSelectedItemPosition());
+
+        editor.putString("api_alias_7", etAlias7.getText().toString().trim());
+        editor.putString("api_key_7", etKey7.getText().toString().trim());
+        editor.putString("api_url_7", etUrl7.getText().toString().trim());
+        editor.putString("model_7", etModel7.getText().toString().trim());
+        editor.putString("api_weight_7", etWeight7.getText().toString().trim());
+        editor.putInt("api_direction_7", spinnerDir7.getSelectedItemPosition());
+
+        editor.putString("api_alias_8", etAlias8.getText().toString().trim());
+        editor.putString("api_key_8", etKey8.getText().toString().trim());
+        editor.putString("api_url_8", etUrl8.getText().toString().trim());
+        editor.putString("model_8", etModel8.getText().toString().trim());
+        editor.putString("api_weight_8", etWeight8.getText().toString().trim());
+        editor.putInt("api_direction_8", spinnerDir8.getSelectedItemPosition());
+        
         String[] effortValues = {"default", "low", "medium", "high"};
-editor.putString("reasoning_effort_2", effortValues[spinnerReasoning2.getSelectedItemPosition()]);
-editor.putString("reasoning_effort_3", effortValues[spinnerReasoning3.getSelectedItemPosition()]);
-editor.putString("reasoning_effort_4", effortValues[spinnerReasoning4.getSelectedItemPosition()]);
-editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelectedItemPosition()]);
+        editor.putString("reasoning_effort_2", effortValues[spinnerReasoning2.getSelectedItemPosition()]);
+        editor.putString("reasoning_effort_3", effortValues[spinnerReasoning3.getSelectedItemPosition()]);
+        editor.putString("reasoning_effort_4", effortValues[spinnerReasoning4.getSelectedItemPosition()]);
+        editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelectedItemPosition()]);
+        editor.putString("reasoning_effort_6", effortValues[spinnerReasoning6.getSelectedItemPosition()]);
+        editor.putString("reasoning_effort_7", effortValues[spinnerReasoning7.getSelectedItemPosition()]);
+        editor.putString("reasoning_effort_8", effortValues[spinnerReasoning8.getSelectedItemPosition()]);
         editor.putString("quick_5", q5);
         editor.apply();
 
@@ -898,11 +1039,11 @@ editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelecte
                 String modelList = prefs.getString("model_list", "");
                 String cfg = "cat > /data/local/tmp/htai_config.txt << 'EOF'\n"
                         + "api_key=" + key + "\n"
-+ "api_url=" + url + "\n"
-+ "model=" + mdl + "\n"
-+ "model_list=" + modelList + "\n"
-+ "api_weight=" + prefs.getString("api_weight", "3") + "\n"
-+ "api_direction=" + prefs.getInt("api_direction", 0) + "\n"
+                        + "api_url=" + url + "\n"
+                        + "model=" + mdl + "\n"
+                        + "model_list=" + modelList + "\n"
+                        + "api_weight=" + prefs.getString("api_weight", "3") + "\n"
+                        + "api_direction=" + prefs.getInt("api_direction", 0) + "\n"
                         + "temperature=" + finalTempStr + "\n"
                         + "max_chat_messages=" + finalMaxChatStr + "\n"
                         + "max_tokens=" + finalMaxTokensStr + "\n"
@@ -913,31 +1054,49 @@ editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelecte
                         + "quick_3=" + fq3 + "\n"
                         + "quick_4=" + fq4 + "\n"
                         + "quick_5=" + fq5 + "\n"
-+ "api_key_2=" + prefs.getString("api_key_2", "") + "\n"
-+ "api_url_2=" + prefs.getString("api_url_2", "") + "\n"
-+ "model_2=" + prefs.getString("model_2", "") + "\n"
-+ "api_weight_2=" + prefs.getString("api_weight_2", "3") + "\n"
-+ "api_direction_2=" + prefs.getInt("api_direction_2", 0) + "\n"
-+ "api_key_3=" + prefs.getString("api_key_3", "") + "\n"
-+ "api_url_3=" + prefs.getString("api_url_3", "") + "\n"
-+ "model_3=" + prefs.getString("model_3", "") + "\n"
-+ "api_weight_3=" + prefs.getString("api_weight_3", "3") + "\n"
-+ "api_direction_3=" + prefs.getInt("api_direction_3", 0) + "\n"
-+ "api_key_4=" + prefs.getString("api_key_4", "") + "\n"
-+ "api_url_4=" + prefs.getString("api_url_4", "") + "\n"
-+ "model_4=" + prefs.getString("model_4", "") + "\n"
-+ "api_weight_4=" + prefs.getString("api_weight_4", "3") + "\n"
-+ "api_direction_4=" + prefs.getInt("api_direction_4", 0) + "\n"
-+ "api_key_5=" + prefs.getString("api_key_5", "") + "\n"
-+ "api_url_5=" + prefs.getString("api_url_5", "") + "\n"
-+ "model_5=" + prefs.getString("model_5", "") + "\n"
-+ "api_weight_5=" + prefs.getString("api_weight_5", "3") + "\n"
-+ "api_direction_5=" + prefs.getInt("api_direction_5", 0) + "\n"
-+ "reasoning_effort_2=" + prefs.getString("reasoning_effort_2", "default") + "\n"
-+ "reasoning_effort_3=" + prefs.getString("reasoning_effort_3", "default") + "\n"
-+ "reasoning_effort_4=" + prefs.getString("reasoning_effort_4", "default") + "\n"
-+ "reasoning_effort_5=" + prefs.getString("reasoning_effort_5", "default") + "\n"
-+ "EOF\n";
+                        + "api_key_2=" + prefs.getString("api_key_2", "") + "\n"
+                        + "api_url_2=" + prefs.getString("api_url_2", "") + "\n"
+                        + "model_2=" + prefs.getString("model_2", "") + "\n"
+                        + "api_weight_2=" + prefs.getString("api_weight_2", "3") + "\n"
+                        + "api_direction_2=" + prefs.getInt("api_direction_2", 0) + "\n"
+                        + "api_key_3=" + prefs.getString("api_key_3", "") + "\n"
+                        + "api_url_3=" + prefs.getString("api_url_3", "") + "\n"
+                        + "model_3=" + prefs.getString("model_3", "") + "\n"
+                        + "api_weight_3=" + prefs.getString("api_weight_3", "3") + "\n"
+                        + "api_direction_3=" + prefs.getInt("api_direction_3", 0) + "\n"
+                        + "api_key_4=" + prefs.getString("api_key_4", "") + "\n"
+                        + "api_url_4=" + prefs.getString("api_url_4", "") + "\n"
+                        + "model_4=" + prefs.getString("model_4", "") + "\n"
+                        + "api_weight_4=" + prefs.getString("api_weight_4", "3") + "\n"
+                        + "api_direction_4=" + prefs.getInt("api_direction_4", 0) + "\n"
+                        + "api_key_5=" + prefs.getString("api_key_5", "") + "\n"
+                        + "api_url_5=" + prefs.getString("api_url_5", "") + "\n"
+                        + "model_5=" + prefs.getString("model_5", "") + "\n"
+                        + "api_weight_5=" + prefs.getString("api_weight_5", "3") + "\n"
+                        + "api_direction_5=" + prefs.getInt("api_direction_5", 0) + "\n"
+                        + "api_key_6=" + prefs.getString("api_key_6", "") + "\n"
+                        + "api_url_6=" + prefs.getString("api_url_6", "") + "\n"
+                        + "model_6=" + prefs.getString("model_6", "") + "\n"
+                        + "api_weight_6=" + prefs.getString("api_weight_6", "3") + "\n"
+                        + "api_direction_6=" + prefs.getInt("api_direction_6", 0) + "\n"
+                        + "api_key_7=" + prefs.getString("api_key_7", "") + "\n"
+                        + "api_url_7=" + prefs.getString("api_url_7", "") + "\n"
+                        + "model_7=" + prefs.getString("model_7", "") + "\n"
+                        + "api_weight_7=" + prefs.getString("api_weight_7", "3") + "\n"
+                        + "api_direction_7=" + prefs.getInt("api_direction_7", 0) + "\n"
+                        + "api_key_8=" + prefs.getString("api_key_8", "") + "\n"
+                        + "api_url_8=" + prefs.getString("api_url_8", "") + "\n"
+                        + "model_8=" + prefs.getString("model_8", "") + "\n"
+                        + "api_weight_8=" + prefs.getString("api_weight_8", "3") + "\n"
+                        + "api_direction_8=" + prefs.getInt("api_direction_8", 0) + "\n"
+                        + "reasoning_effort_2=" + prefs.getString("reasoning_effort_2", "default") + "\n"
+                        + "reasoning_effort_3=" + prefs.getString("reasoning_effort_3", "default") + "\n"
+                        + "reasoning_effort_4=" + prefs.getString("reasoning_effort_4", "default") + "\n"
+                        + "reasoning_effort_5=" + prefs.getString("reasoning_effort_5", "default") + "\n"
+                        + "reasoning_effort_6=" + prefs.getString("reasoning_effort_6", "default") + "\n"
+                        + "reasoning_effort_7=" + prefs.getString("reasoning_effort_7", "default") + "\n"
+                        + "reasoning_effort_8=" + prefs.getString("reasoning_effort_8", "default") + "\n"
+                        + "EOF\n";
                 runRoot(cfg);
 
                 String prompts = "cat > /data/local/tmp/htai_prompts.txt << 'EOF'\n"
@@ -988,15 +1147,17 @@ editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelecte
         }).start();
     }
 
-
-            private void testTranslate() {
+    private void testTranslate() {
         String k1 = etKey.getText().toString().trim();
         String k2 = etKey2.getText().toString().trim();
         String k3 = etKey3.getText().toString().trim();
         String k4 = etKey4.getText().toString().trim();
         String k5 = etKey5.getText().toString().trim();
+        String k6 = etKey6.getText().toString().trim();
+        String k7 = etKey7.getText().toString().trim();
+        String k8 = etKey8.getText().toString().trim();
 
-        if (k1.isEmpty() && k2.isEmpty() && k3.isEmpty() && k4.isEmpty() && k5.isEmpty()) {
+        if (k1.isEmpty() && k2.isEmpty() && k3.isEmpty() && k4.isEmpty() && k5.isEmpty() && k6.isEmpty() && k7.isEmpty() && k8.isEmpty()) {
             toast("请至少在任意一个 API 配置中填写 Key");
             return;
         }
@@ -1029,6 +1190,4 @@ editor.putString("reasoning_effort_5", effortValues[spinnerReasoning5.getSelecte
             }
         }).start();
     }
-
-
 }
