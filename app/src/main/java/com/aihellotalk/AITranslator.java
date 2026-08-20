@@ -1952,6 +1952,7 @@ private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
     
             private static String callChatSimple(String prompt) throws IOException {
     if (endpoints.isEmpty()) throw new IOException("Key未配置");
+    try {
         JSONObject body = new JSONObject();
         body.put("model", model);
         body.put("max_tokens", getMaxTokens());
@@ -1965,6 +1966,7 @@ private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
 
     private static String callChatMessages(JSONArray messages) throws IOException {
     if (endpoints.isEmpty()) throw new IOException("Key未配置");
+    try {
         JSONObject body = new JSONObject();
         body.put("model", model);
         body.put("max_tokens", getMaxTokens());
@@ -1976,7 +1978,6 @@ private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
     
     private static String callChatMessages(JSONArray messages, int maxTokens) throws IOException {
 if (endpoints.isEmpty()) throw new IOException("Key未配置");
-if (client == null) throw new IOException("未初始化");
 try {
     JSONObject body = new JSONObject();
     body.put("model", model);
