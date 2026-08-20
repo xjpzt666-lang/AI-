@@ -763,13 +763,7 @@ public class SettingsActivity extends Activity {
                 Request req = new Request.Builder()
                         .url(url)
                         .header("Authorization", "Bearer " + key)
-Request req = new Request.Builder()
-        .url(url)
-        .header("Authorization", "Bearer " + key)
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)") // 添加这行防拦截
-        .get()
-        .build();
-
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                         .get()
                         .build();
 
