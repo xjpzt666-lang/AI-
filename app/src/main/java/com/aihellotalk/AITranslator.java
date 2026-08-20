@@ -129,7 +129,7 @@ private static class ApiEndpoint {
         if (client == null) {
             client = new OkHttpClient.Builder()
                 .connectTimeout(20, TimeUnit.SECONDS)
-                .readTimeout(55, TimeUnit.SECONDS)
+                .readTimeout(35, TimeUnit.SECONDS)
                 .writeTimeout(45, TimeUnit.SECONDS)
                 .build();
         }
@@ -456,7 +456,7 @@ private static String getReasoningEffort() {
 
     private static volatile OkHttpClient distillClient = null;
     private static volatile OkHttpClient reverseTranslateClient = null;
-
+private static volatile OkHttpClient receiveClient = null;
     private static final String DISTILL_SYSTEM_PROMPT =
             "\u4f60\u662f\u8bed\u8a00\u4ea4\u6362\u804a\u5929\u52a9\u624b\u7684\u8bb0\u5fc6\u6863\u6848\u7ba1\u7406\u5458\u3002" +
             "\u6211\u4f1a\u7ed9\u4f60\u4e00\u4efd\u73b0\u6709\u6863\u6848\u548c\u4e00\u6279\u5373\u5c06\u5f52\u6863\u7684\u65e7\u804a\u5929\u8bb0\u5f55\uff0c" +
@@ -1070,7 +1070,20 @@ private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
         }
         return symbolText;
     }
-
+private static OkHttpClient getReceiveClient() {
+    if (receiveClient == null) {
+        synchronized (AITranslator.class) {
+            if (receiveClient == null) {
+                receiveClient = new OkHttpClient.Builder()
+                        .connectTimeout(8, TimeUnit.SECONDS)
+                        .readTimeout(25, TimeUnit.SECONDS)
+                        .writeTimeout(15, TimeUnit.SECONDS)
+                        .build();
+            }
+        }
+    }
+    return receiveClient;
+}
     private static OkHttpClient getReverseTranslateClient() {
         if (reverseTranslateClient == null) {
             synchronized (AITranslator.class) {
@@ -2062,7 +2075,14 @@ private static String executeRequestWithRotation(JSONObject body, OkHttpClient f
                 try { body.put("reasoning_effort", targetEp.reasoningEffort); } catch (JSONException ignored) {}
             }
 
-            OkHttpClient useClient = (forceClient != null) ? forceClient : targetEp.ensureClient();
+            OkHttpClient useClient;
+if (forceClient != null) {
+    useClient = forceClient;
+} else if (isReceive) {
+    useClient = getReceiveClient();
+} else {
+    useClient = targetEp.ensureClient();
+}
             String result = executeSingleRequest(useClient, body, targetEp);
             targetEp.onSuccess(); 
             return result;
