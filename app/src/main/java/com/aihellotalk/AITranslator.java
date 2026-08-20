@@ -2092,6 +2092,14 @@ private static String executeSingleRequest(OkHttpClient useClient, JSONObject bo
             .url(fixUrl(ep.url))
             .header("Authorization", "Bearer " + ep.key)
             .header("Content-Type", "application/json")
+            Request req = new Request.Builder()
+        .url(fixUrl(ep.url))
+        .header("Authorization", "Bearer " + ep.key)
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)") // 伪装成电脑浏览器，硬解防火墙拦截
+        .post(RequestBody.create(body.toString(), JSON_TYPE))
+        .build();
+
             .post(RequestBody.create(body.toString(), JSON_TYPE))
             .build();
     try (Response resp = useClient.newCall(req).execute()) {
