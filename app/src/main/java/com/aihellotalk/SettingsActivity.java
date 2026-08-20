@@ -198,6 +198,10 @@ apiContentLayout.setPadding(20, 10, 0, 10);
 android.graphics.drawable.GradientDrawable titleBg = new android.graphics.drawable.GradientDrawable();
 titleBg.setColor(Color.parseColor("#E8EAF6"));
 titleBg.setCornerRadius(8f);
+String[] efforts2 = {"默认(不干预)", "轻度思考", "中度思考", "深度思考"};
+// --- API 2 ---
+TextView t2 = new TextView(this); t2.setText("🟢 备用 API 2"); 
+// ... 下面是原有的代码
 
 // --- API 2 ---
 TextView t2 = new TextView(this); t2.setText("🟢 备用 API 2"); t2.setTextColor(Color.parseColor("#198754")); t2.setTextSize(15f); t2.setTypeface(null, android.graphics.Typeface.BOLD); t2.setPadding(20, 20, 20, 20); t2.setBackground(titleBg);
