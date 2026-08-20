@@ -529,7 +529,7 @@ private static void loadEndpoints() {
         int weight = readConfigInt("api_weight" + suffix, 3);
         String enabledStr = readConfigValue("api_enabled" + suffix);
 boolean enabled = enabledStr == null || "true".equalsIgnoreCase(enabledStr);
-                |
+                
         int direction = readConfigInt("api_direction" + suffix, 0);
         endpoints.add(new ApiEndpoint(key, url, model, weight, enabled, direction));
         Log.i(TAG, "HT_AI 端點[" + i + "]: model=" + model + " 權重=" + weight + " 方向=" + direction);
