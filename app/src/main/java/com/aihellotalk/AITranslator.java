@@ -1526,250 +1526,68 @@ private static OkHttpClient getReceiveClient() {
     }
 
       // ========================================================================
-    // ★★★ 彻底重写：不依赖 AI 格式自觉，代码主动扫描抓取外语行 ★★★
+    // ★★★ 终极方案：锚点提取法 (只要 👉) ★★★
     // ========================================================================
     public static List<String[]> parseTranslateOptions(String result) {
         List<String[]> items = new ArrayList<>();
         if (result == null || result.trim().isEmpty()) return items;
 
-        String text = result
-                .replace("\r\n", "\n")
-                .replace("\r", "\n")
-                .replace("```", "")
-                .replace("*", "");
-
-        // ── 扫描每一行，找「外语行」 ──
-        List<String> foreignLines = new ArrayList<>();
-        String[] lines = text.split("\n");
-
-        for (String rawLine : lines) {
-            String line = rawLine.trim();
-            if (line.isEmpty()) continue;
-            if (line.matches("^[=\\-*─_#~]{3,}$")) continue;
-            if (line.matches("^[\\d\\s.,;:!?]+$")) continue;
-            if (line.length() < 2) continue;
-            // 【修复点 1】：把非法的 \$ 换回了正确的括号转义 \\(
-            if (line.matches("^[\\(（]?\\d{1,2}[\\)）\\.、]\\s*$")) continue;
-            if (line.matches("^[Oo]ption\\s*\\d+.*$")) continue;
-            if (line.matches("^(版本|选项|翻译|外语|译文|原文|中文|分析|标签|备注|说明|注意|提示|解释|下半部分|选项区|选项如下).*$")) continue;
-            if (line.startsWith("【") && line.endsWith("】")) continue;
-            if (line.startsWith("##")) continue;
-
-            // 【修复点 2】：同上，修复替换逻辑里的转义符
-            String cleaned = line
-                    .replaceFirst("^[\\(（]?\\d{1,2}[\\)）\\.、:：]\\s*", "")
-                    .replaceFirst("^[①②③④⑤⑥⑦⑧⑨⑩]\\s*", "")
-                    .replaceFirst("^[一二三四五六七八九十]\\s*[.、]\\s*", "")
-                    .replaceFirst("^[Oo]ption\\s*\\d+\\s*[:：]?\\s*", "")
-                    .trim();
-
-            if (cleaned.isEmpty()) continue;
-            if (!looksLikeForeignText(cleaned)) continue;
-
-            String foreign = stripTrailingChineseParen(cleaned);
-            if (foreign != null && !foreign.isEmpty() && looksLikeForeignText(foreign)) {
-                foreignLines.add(foreign);
-            } else {
-                foreignLines.add(cleaned);
-            }
-        }
-
-        // ── 去重，取前 4 个 ──
+        String[] lines = result.replace("\r\n", "\n").replace("\r", "\n").replace("*", "").split("\n");
         Set<String> seen = new HashSet<>();
-        for (String f : foreignLines) {
-            if (items.size() >= 4) break;
-            String normalized = f.toLowerCase().replaceAll("\\s+", " ").trim();
-            if (normalized.length() < 2) continue;
-            if (!seen.add(normalized)) continue;
-            String meaning = extractMeaningForLine(result, f);
-            String tone = extractToneForLine(result, f);
-            items.add(new String[]{
-                sanitizeForeignText(f),
-                meaning != null ? meaning : "",
-                tone != null ? tone : ""
-            });
-        }
 
-        if (!items.isEmpty()) {
-            Log.i(TAG, "HT_AI 扫描抓取成功，抓到" + items.size() + "个外语版本");
-            return items;
-        }
-
-        return parseOptionsXmlFallback(result);
-    }
-
-
-/**
- * 判断一行文本是否「看起来像外语」
- */
-    /**
-     * 判断一行文本是否「看起来像外语」
-     */
-    private static boolean looksLikeForeignText(String line) {
-        if (line == null || line.isEmpty()) return false;
-        
-        int chineseCount = 0;
-        int foreignCount = 0;
-        
-        for (int i = 0; i < line.length(); i++) {
-            char c = line.charAt(i);
-            Character.UnicodeBlock b = Character.UnicodeBlock.of(c);
-            if (b == null) continue;
+        for (String line : lines) {
+            String t = line.trim();
+            int idx = t.indexOf("👉");
             
-            // 精准识别真正的汉字区块
-            if (b == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                    || b == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-                    || b == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
-                    || b == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
-                chineseCount++;
-            } 
-            // 识别真正的外语字母（俄语、英语、阿拉伯语、日韩等）
-            else if (Character.isLetter(c)) {
-                foreignCount++;
+            // 只要这一行包含 👉，直接从它后面开始切
+            if (idx >= 0) {
+                String content = t.substring(idx + 1).trim();
+                
+                // 剃掉大模型可能自作多情加的数字，比如 "👉 1. "
+                content = content.replaceFirst("^[\\d\\.\\s、]+", "").trim();
+                if (content.isEmpty()) continue;
+
+                String foreign = content;
+                String meaning = "";
+                String tone = "";
+
+                String[] parts = content.split("\\|");
+                if (parts.length >= 1) foreign = parts[0].trim();
+                if (parts.length >= 2) meaning = parts[1].trim();
+                if (parts.length >= 3) tone = parts[2].trim();
+
+                foreign = sanitizeForeignText(foreign);
+                if (foreign.isEmpty()) continue;
+
+                // 去重
+                String norm = foreign.toLowerCase().replaceAll("\\s+", "");
+                if (!seen.add(norm)) continue;
+
+                items.add(new String[]{foreign, meaning, tone});
+                
+                // 抓够4个立刻收手，绝不多要
+                if (items.size() >= 4) break;
             }
         }
-        
-        // 1. 如果连一个外语字母/假名都没有，绝对不是外语（彻底过滤纯中文废话）
-        if (foreignCount == 0) return false;
-        
-        // 2. 如果汉字数量特别多，且比外语字母还多，说明是“混杂了几个英文字母的中文分析”（比如：欢快的AI腔调）
-        if (chineseCount > 3 && chineseCount > foreignCount) {
-            return false;
-        }
-        
-        return true;
+        return items;
     }
 
-
-/**
- * 去掉行尾的中文括号注释
- */
-private static String stripTrailingChineseParen(String line) {
-    if (line == null || line.isEmpty()) return null;
-    Pattern p = Pattern.compile("\\s*[（(]\\s*[^）)]*[\\u4e00-\\u9fa5][^）)]*\\s*[）)]\\s*$");
-    Matcher m = p.matcher(line);
-    if (m.find()) {
-        String stripped = line.substring(0, m.start()).trim();
-        if (stripped.length() >= 2) return stripped;
-    }
-    return line;
-}
-
-private static String extractMeaningForLine(String fullText, String foreignLine) {
-    String escaped = Pattern.quote(foreignLine.substring(0, Math.min(20, foreignLine.length())));
-    Pattern p = Pattern.compile(escaped + ".*?[（(]([^）)]{1,60})[）)]", Pattern.DOTALL);
-    Matcher m = p.matcher(fullText);
-    if (m.find()) {
-        String paren = m.group(1).trim();
-        if (paren.length() <= 60 && containsChinese(paren)) return paren;
-    }
-    return null;
-}
-
-private static String extractToneForLine(String fullText, String foreignLine) {
-    return null;
-}
-
-private static boolean containsChinese(String s) {
-    if (s == null) return false;
-    for (char c : s.toCharArray()) {
-        Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
-        if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
-                || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
-                || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B) {
-            return true;
-        }
-    }
-    return false;
-}
-
-private static List<String[]> parseOptionsXmlFallback(String result) {
-    List<String[]> items = new ArrayList<>();
-    Pattern xmlPattern = Pattern.compile(
-        "<o\\s+f=\"(.*?)\"\\s+m=\"(.*?)\"\\s+t=\"(.*?)\"\\s*/>", Pattern.DOTALL);
-    Matcher xmlMatcher = xmlPattern.matcher(result);
-    Set<String> seen = new HashSet<>();
-    while (xmlMatcher.find() && items.size() < 4) {
-        String foreign = xmlMatcher.group(1).trim()
-                .replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
-        String meaning = xmlMatcher.group(2).trim()
-                .replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
-        String tone = xmlMatcher.group(3).trim()
-                .replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
-        foreign = sanitizeForeignText(foreign);
-        if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
-        if (!seen.add(foreign.toLowerCase())) continue;
-        items.add(new String[]{foreign, meaning, tone});
-    }
-    if (items.isEmpty()) {
-        JSONObject json = tryParseJsonResult(result);
-        if (json != null) {
-            JSONArray opts = json.optJSONArray("options");
-            if (opts != null) {
-                seen.clear();
-                for (int i = 0; i < opts.length(); i++) {
-                    if (items.size() >= 4) break;
-                    JSONObject o = opts.optJSONObject(i);
-                    if (o == null) continue;
-                    String foreign = o.optString("foreign", "").trim();
-                    String meaning = o.optString("meaning", "").trim();
-                    String tone = o.optString("tone", "").trim();
-                    foreign = sanitizeForeignText(foreign);
-                    if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
-                    if (!seen.add(foreign.toLowerCase())) continue;
-                    items.add(new String[]{foreign, meaning, tone});
-                }
-            }
-        }
-    }
-    return items;
-}
 
     
 
-    public static String extractAnalysis(String result) {
-    if (result == null) return "";
-
-    Pattern p = Pattern.compile("<analysis>\\s*(.*?)\\s*</analysis>", Pattern.DOTALL);
-    Matcher m = p.matcher(result);
-    if (m.find()) return m.group(1).trim().replace("*", "");
-
-    JSONObject json = tryParseJsonResult(result);
-    if (json != null) {
-        String analysis = json.optString("analysis", "").trim();
-        if (!analysis.isEmpty()) return analysis.replace("*", "");
+        public static String extractAnalysis(String result) {
+        if (result == null) return "";
+        String text = result.replace("\r\n", "\n").replace("\r", "\n").replace("*", "");
+        
+        // 找到第一个 👉 的位置，它前面的全是分析废话
+        int idx = text.indexOf("👉");
+        if (idx >= 0) {
+            return text.substring(0, idx).replaceAll("```[a-zA-Z]*", "").trim();
+        }
+        
+        return text.trim();
     }
 
-    // ★ 找到第一个「外语行」之前的文本就是分析
-    String[] lines = result.split("\n");
-    StringBuilder analysis = new StringBuilder();
-    boolean foundForeign = false;
-
-    for (String rawLine : lines) {
-        String line = rawLine.trim().replace("*", "");
-        if (line.isEmpty()) {
-            if (!foundForeign) analysis.append("\n");
-            continue;
-        }
-        if (line.startsWith("```") || line.startsWith("##")) continue;
-
-        String cleaned = line
-                .replaceFirst("^[\\(（]?\\d{1,2}[\\)）\\.、:：]\\s*", "")
-                .replaceFirst("^[①②③④⑤⑥⑦⑧⑨⑩]\\s*", "")
-                .trim();
-
-        if (!foundForeign && looksLikeForeignText(cleaned)) {
-            foundForeign = true;
-            continue;
-        }
-        if (foundForeign) break;
-        if (line.matches("^[=\\-*─_#~]{3,}$")) continue;
-        if (line.matches("^(版本|选项|翻译|外语|译文|格式|输出|注意|提示|说明|解释|标签|备注|下半部分|选项区|选项如下).*$")) continue;
-        if (line.startsWith("【") && line.endsWith("】")) continue;
-        if (line.length() > 2) analysis.append(line).append("\n\n");
-    }
-    return analysis.toString().trim().replace("*", "");
-}
 
     public static String toChinese(String text) throws IOException { return toChinese(text, "0"); }
 
@@ -1900,46 +1718,14 @@ private static List<String[]> parseOptionsXmlFallback(String result) {
             String spanishDirective = "";
             if ("es".equals(langCode)) spanishDirective = getSpanishRegionDirective(null, 0, chatId);
 
-            boolean useCustomPipeFormat = sysPrompt != null && (
-                    sysPrompt.contains("==========")
-                            || sysPrompt.contains("选项区")
-                            || sysPrompt.contains("下半部分"));
+                        String formatProtocol = "\n\n【最高优先级输出格式控制：锚点提取法】\n"
+                    + "必须严格按以下格式输出，绝对禁止输出 JSON 或 Markdown 代码块！\n"
+                    + "1. 先写你的上半部分分析（例如推断语境等）。\n"
+                    + "2. 分析写完后，换行，直接输出 4 个翻译选项。\n"
+                    + "3. 【核心死命令】：这4个选项的每一行开头，必须且只能用 👉 这个表情符号作为唯一标记！（不要带任何肤色，直接用 👉，不要在前面加 1. 2. 3. 这种数字编号）。\n"
+                    + "4. 选项的单行格式：👉 外语文本 | 中文大意 | 语气标签\n"
+                    + "5. 注意：👉 符号绝对不能出现在你的分析中，它只能作为选项的开头锚点！";
 
-            String formatProtocol;
-            if (useCustomPipeFormat) {
-                if (retry) {
-                    formatProtocol = "\n\n【！！！格式警告：最高优先级！！！】\n"
-                            + "你刚才的回复格式完全错误！导致系统解析崩溃！现在请你：\n"
-                            + "1. 绝对不许输出 JSON 代码块！\n"
-                            + "2. 必须且只能用 ========== 作为上下部分的唯一分割线！\n"
-                            + "3. 下半部分只允许有4行，每行就是一个翻译选项，必须严格用 | 分隔（外语 | 中文大意 | 标签）！\n"
-                            + "4. 严格遵守上面的格式，不允许有任何其他的废话、前缀或后缀！\n";
-                } else {
-                    formatProtocol = "\n\n【输出格式补充】\n"
-                            + "请严格遵循你上面收到的【最终输出格式】，不要输出JSON。\n"
-                            + "中间必须用 ========== 隔开。\n"
-                            + "下半部分只输出4个选项，每个选项用 | 分隔。\n";
-                }
-            }
- else {
-                if (retry) {
-                    formatProtocol = "\n\n【最高优先级输出格式】\n"
-                            + "忽略你之前提到的 ========== 和 | 格式。\n"
-                            + "必须只输出一个JSON对象，不要输出任何额外文字。\n"
-                            + "JSON格式如下：\n"
-                            + "{\"analysis\":\"\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n"
-                            + "必须输出4个选项。\n"
-                            + "foreign、meaning、tone字段名不能改。\n";
-                } else {
-                    formatProtocol = "\n\n【最高优先级输出格式】\n"
-                            + "忽略你之前提到的 ========== 和 | 格式。\n"
-                            + "必须只输出一个JSON对象，不要输出任何额外文字。\n"
-                            + "JSON格式如下：\n"
-                            + "{\"analysis\":\"这里写上半部分分析\",\"options\":[{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"},{\"foreign\":\"外语文本\",\"meaning\":\"中文大意\",\"tone\":\"语气标签\"}]}\n"
-                            + "必须输出4个选项。\n"
-                            + "foreign、meaning、tone字段名不能改，内容按你的指令填写。\n";
-                }
-            }
 
             String bannedWords = getBannedWords();
             String bannedRule = bannedWords.isEmpty() ? "" : "\n9. 【全局黑名单强制执行】：绝对禁止在你的分析或翻译结果中出现以下词汇或标点：" + bannedWords + "。一旦出现将导致系统崩溃，请严格审查你的输出！\n";
