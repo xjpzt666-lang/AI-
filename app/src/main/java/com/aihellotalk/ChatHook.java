@@ -1632,66 +1632,47 @@ public class ChatHook {
         String at = AITranslator.extractAnalysis(result);
         List<String[]> items = AITranslator.parseTranslateOptions(result);
 
-if (items.isEmpty()) {
-    AITranslator.dumpDebug("picker_fail", result);
+        if (items.isEmpty()) {
+            AITranslator.dumpDebug("picker_fail", result);
 
-    boolean refused = AITranslator.isRefusalResponse(result);
-    String showText = result == null ? "" : result.trim();
+            boolean refused = AITranslator.isRefusalResponse(result);
+            String showText = result == null ? "" : result.trim();
 
-    android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
-    android.widget.LinearLayout failRoot = new android.widget.LinearLayout(ctx);
-    failRoot.setOrientation(android.widget.LinearLayout.VERTICAL);
-    failRoot.setPadding(32, 24, 32, 24);
+            android.widget.ScrollView sv = new android.widget.ScrollView(ctx);
+            TextView rawTv = new TextView(ctx);
+            rawTv.setText(showText);
+            rawTv.setTextIsSelectable(true);
+            rawTv.setTextSize(13f);
+            rawTv.setTextColor(Color.BLACK);
+            rawTv.setPadding(32, 24, 32, 24);
+            rawTv.setLineSpacing(4f, 1.1f);
+            sv.addView(rawTv, new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT));
 
-    TextView failTitle = new TextView(ctx);
-    failTitle.setText(refused
-            ? "⚠️ AI 可能触发了安全策略"
-            : "⚠️ 格式解析失败，但 AI 已返回内容");
-    failTitle.setTextSize(14f);
-    failTitle.setTextColor(Color.parseColor("#B02A37"));
-    failTitle.setPadding(0, 0, 0, 16);
-    failRoot.addView(failTitle);
+            android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
+                    .setTitle(refused ? "AI 拒绝或触发安全策略" : "AI 未按格式返回")
+                    .setView(sv)
+                    .setPositiveButton("重试", (d, w) -> edit.post(() -> btn.performClick()))
+                    .setNeutralButton("复制原文", (d, w) -> {
+                        try {
+                            ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
+                                    .setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", showText));
+                            Toast.makeText(ctx, "已复制", Toast.LENGTH_SHORT).show();
+                        } catch (Exception ignored) {}
+                    })
+                    .setNegativeButton("取消", null)
+                    .create();
 
-    TextView failHint = new TextView(ctx);
-    failHint.setText("以下是 AI 的原始返回（可能需要手动阅读）：\n如果其中包含外语翻译，请直接复制使用。\n点击「重试」可以让 AI 换一种格式输出。");
-    failHint.setTextSize(12f);
-    failHint.setTextColor(Color.parseColor("#666666"));
-    failHint.setPadding(0, 0, 0, 16);
-    failRoot.addView(failHint);
-
-    TextView rawTv = new TextView(ctx);
-    rawTv.setText(showText);
-    rawTv.setTextIsSelectable(true);
-    rawTv.setTextSize(13f);
-    rawTv.setTextColor(Color.BLACK);
-    rawTv.setPadding(0, 8, 0, 0);
-    rawTv.setLineSpacing(4f, 1.1f);
-    failRoot.addView(rawTv);
-    sv.addView(failRoot);
-
-    android.app.AlertDialog dialog = new android.app.AlertDialog.Builder(ctx)
-            .setTitle(refused ? "AI 拒绝或触发安全策略" : "AI 返回了内容但格式不标准")
-            .setView(sv)
-            .setPositiveButton("🔄 重试", (d, w) -> edit.post(() -> btn.performClick()))
-            .setNeutralButton("📋 复制原文", (d, w) -> {
-                try {
-                    ((android.content.ClipboardManager) ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE))
-                            .setPrimaryClip(ClipData.newPlainText("HT_AI_Copy", showText));
-                    Toast.makeText(ctx, "已复制到剪贴板", Toast.LENGTH_SHORT).show();
-                } catch (Exception ignored) {}
-            })
-            .setNegativeButton("关闭", null)
-            .create();
-
-    dialog.show();
-    if (dialog.getWindow() != null) {
-        android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
-        dialog.getWindow().setLayout(
-                (int) (dm.widthPixels * 0.92),
-                (int) (dm.heightPixels * 0.75));
-    }
-    return;
-}
+            dialog.show();
+            if (dialog.getWindow() != null) {
+                android.util.DisplayMetrics dm = ctx.getResources().getDisplayMetrics();
+                dialog.getWindow().setLayout(
+                        (int) (dm.widthPixels * 0.92),
+                        (int) (dm.heightPixels * 0.75));
+            }
+            return;
+        }
 
         android.widget.LinearLayout root = new android.widget.LinearLayout(ctx);
         root.setOrientation(android.widget.LinearLayout.VERTICAL);
