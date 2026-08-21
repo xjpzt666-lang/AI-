@@ -1602,23 +1602,44 @@ private static OkHttpClient getReceiveClient() {
 /**
  * 判断一行文本是否「看起来像外语」
  */
-private static boolean looksLikeForeignText(String line) {
-    if (line == null || line.isEmpty()) return false;
-    boolean hasForeignLetter = false;
-    int totalChars = 0;
-    for (int i = 0; i < line.length(); i++) {
-        char c = line.charAt(i);
-        if (Character.isWhitespace(c)) continue;
-        totalChars++;
-        if (Character.isLetter(c)) {
-            Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
-            if (block == Character.UnicodeBlock.HIRAGANA
-                    || block == Character.UnicodeBlock.KATAKANA) continue;
-            hasForeignLetter = true;
+    /**
+     * 判断一行文本是否「看起来像外语」
+     */
+    private static boolean looksLikeForeignText(String line) {
+        if (line == null || line.isEmpty()) return false;
+        
+        int chineseCount = 0;
+        int foreignCount = 0;
+        
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            Character.UnicodeBlock b = Character.UnicodeBlock.of(c);
+            if (b == null) continue;
+            
+            // 精准识别真正的汉字区块
+            if (b == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
+                    || b == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+                    || b == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B
+                    || b == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS) {
+                chineseCount++;
+            } 
+            // 识别真正的外语字母（俄语、英语、阿拉伯语、日韩等）
+            else if (Character.isLetter(c)) {
+                foreignCount++;
+            }
         }
+        
+        // 1. 如果连一个外语字母/假名都没有，绝对不是外语（彻底过滤纯中文废话）
+        if (foreignCount == 0) return false;
+        
+        // 2. 如果汉字数量特别多，且比外语字母还多，说明是“混杂了几个英文字母的中文分析”（比如：欢快的AI腔调）
+        if (chineseCount > 3 && chineseCount > foreignCount) {
+            return false;
+        }
+        
+        return true;
     }
-    return totalChars > 0 && hasForeignLetter;
-}
+
 
 /**
  * 去掉行尾的中文括号注释
