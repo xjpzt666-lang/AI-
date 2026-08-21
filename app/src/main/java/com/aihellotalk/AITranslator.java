@@ -1525,76 +1525,79 @@ private static OkHttpClient getReceiveClient() {
         }
     }
 
+      // ========================================================================
+    // ★★★ 彻底重写：不依赖 AI 格式自觉，代码主动扫描抓取外语行 ★★★
     // ========================================================================
-// ★★★ 彻底重写：不依赖 AI 格式自觉，代码主动扫描抓取外语行 ★★★
-// ========================================================================
-public static List<String[]> parseTranslateOptions(String result) {
-    List<String[]> items = new ArrayList<>();
-    if (result == null || result.trim().isEmpty()) return items;
+    public static List<String[]> parseTranslateOptions(String result) {
+        List<String[]> items = new ArrayList<>();
+        if (result == null || result.trim().isEmpty()) return items;
 
-    String text = result
-            .replace("\r\n", "\n")
-            .replace("\r", "\n")
-            .replace("```", "")
-            .replace("*", "");
+        String text = result
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+                .replace("```", "")
+                .replace("*", "");
 
-    // ── 扫描每一行，找「外语行」 ──
-    List<String> foreignLines = new ArrayList<>();
-    String[] lines = text.split("\n");
+        // ── 扫描每一行，找「外语行」 ──
+        List<String> foreignLines = new ArrayList<>();
+        String[] lines = text.split("\n");
 
-    for (String rawLine : lines) {
-        String line = rawLine.trim();
-        if (line.isEmpty()) continue;
-        if (line.matches("^[=\\-*─_#~]{3,}$")) continue;
-        if (line.matches("^[\\d\\s.,;:!?]+$")) continue;
-        if (line.length() < 2) continue;
-        if (line.matches("^[\$（]?\\d{1,2}[\$）\\.、]\\s*$")) continue;
-        if (line.matches("^[Oo]ption\\s*\\d+.*$")) continue;
-        if (line.matches("^(版本|选项|翻译|外语|译文|原文|中文|分析|标签|备注|说明|注意|提示|解释|下半部分|选项区|选项如下).*$")) continue;
-        if (line.startsWith("【") && line.endsWith("】")) continue;
-        if (line.startsWith("##")) continue;
+        for (String rawLine : lines) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) continue;
+            if (line.matches("^[=\\-*─_#~]{3,}$")) continue;
+            if (line.matches("^[\\d\\s.,;:!?]+$")) continue;
+            if (line.length() < 2) continue;
+            // 【修复点 1】：把非法的 \$ 换回了正确的括号转义 \\(
+            if (line.matches("^[\\(（]?\\d{1,2}[\\)）\\.、]\\s*$")) continue;
+            if (line.matches("^[Oo]ption\\s*\\d+.*$")) continue;
+            if (line.matches("^(版本|选项|翻译|外语|译文|原文|中文|分析|标签|备注|说明|注意|提示|解释|下半部分|选项区|选项如下).*$")) continue;
+            if (line.startsWith("【") && line.endsWith("】")) continue;
+            if (line.startsWith("##")) continue;
 
-        String cleaned = line
-                .replaceFirst("^[\$（]?\\d{1,2}[\$）\\.、:：]\\s*", "")
-                .replaceFirst("^[①②③④⑤⑥⑦⑧⑨⑩]\\s*", "")
-                .replaceFirst("^[一二三四五六七八九十]\\s*[.、]\\s*", "")
-                .replaceFirst("^[Oo]ption\\s*\\d+\\s*[:：]?\\s*", "")
-                .trim();
+            // 【修复点 2】：同上，修复替换逻辑里的转义符
+            String cleaned = line
+                    .replaceFirst("^[\\(（]?\\d{1,2}[\\)）\\.、:：]\\s*", "")
+                    .replaceFirst("^[①②③④⑤⑥⑦⑧⑨⑩]\\s*", "")
+                    .replaceFirst("^[一二三四五六七八九十]\\s*[.、]\\s*", "")
+                    .replaceFirst("^[Oo]ption\\s*\\d+\\s*[:：]?\\s*", "")
+                    .trim();
 
-        if (cleaned.isEmpty()) continue;
-        if (!looksLikeForeignText(cleaned)) continue;
+            if (cleaned.isEmpty()) continue;
+            if (!looksLikeForeignText(cleaned)) continue;
 
-        String foreign = stripTrailingChineseParen(cleaned);
-        if (foreign != null && !foreign.isEmpty() && looksLikeForeignText(foreign)) {
-            foreignLines.add(foreign);
-        } else {
-            foreignLines.add(cleaned);
+            String foreign = stripTrailingChineseParen(cleaned);
+            if (foreign != null && !foreign.isEmpty() && looksLikeForeignText(foreign)) {
+                foreignLines.add(foreign);
+            } else {
+                foreignLines.add(cleaned);
+            }
         }
+
+        // ── 去重，取前 4 个 ──
+        Set<String> seen = new HashSet<>();
+        for (String f : foreignLines) {
+            if (items.size() >= 4) break;
+            String normalized = f.toLowerCase().replaceAll("\\s+", " ").trim();
+            if (normalized.length() < 2) continue;
+            if (!seen.add(normalized)) continue;
+            String meaning = extractMeaningForLine(result, f);
+            String tone = extractToneForLine(result, f);
+            items.add(new String[]{
+                sanitizeForeignText(f),
+                meaning != null ? meaning : "",
+                tone != null ? tone : ""
+            });
+        }
+
+        if (!items.isEmpty()) {
+            Log.i(TAG, "HT_AI 扫描抓取成功，抓到" + items.size() + "个外语版本");
+            return items;
+        }
+
+        return parseOptionsXmlFallback(result);
     }
 
-    // ── 去重，取前 4 个 ──
-    Set<String> seen = new HashSet<>();
-    for (String f : foreignLines) {
-        if (items.size() >= 4) break;
-        String normalized = f.toLowerCase().replaceAll("\\s+", " ").trim();
-        if (normalized.length() < 2) continue;
-        if (!seen.add(normalized)) continue;
-        String meaning = extractMeaningForLine(result, f);
-        String tone = extractToneForLine(result, f);
-        items.add(new String[]{
-            sanitizeForeignText(f),
-            meaning != null ? meaning : "",
-            tone != null ? tone : ""
-        });
-    }
-
-    if (!items.isEmpty()) {
-        Log.i(TAG, "HT_AI 扫描抓取成功，抓到" + items.size() + "个外语版本");
-        return items;
-    }
-
-    return parseOptionsXmlFallback(result);
-}
 
 /**
  * 判断一行文本是否「看起来像外语」
