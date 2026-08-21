@@ -129,7 +129,7 @@ private static class ApiEndpoint {
         if (client == null) {
             client = new OkHttpClient.Builder()
                 .connectTimeout(20, TimeUnit.SECONDS)
-                .readTimeout(35, TimeUnit.SECONDS)
+                .readTimeout(50, TimeUnit.SECONDS)
                 .writeTimeout(45, TimeUnit.SECONDS)
                 .build();
         }
