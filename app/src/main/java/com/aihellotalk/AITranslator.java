@@ -1525,144 +1525,227 @@ private static OkHttpClient getReceiveClient() {
         }
     }
 
-    public static List<String[]> parseTranslateOptions(String result) {
-        List<String[]> items = new ArrayList<>();
-        if (result == null || result.trim().isEmpty()) return items;
+    // ========================================================================
+// ★★★ 彻底重写：不依赖 AI 格式自觉，代码主动扫描抓取外语行 ★★★
+// ========================================================================
+public static List<String[]> parseTranslateOptions(String result) {
+    List<String[]> items = new ArrayList<>();
+    if (result == null || result.trim().isEmpty()) return items;
 
+    String text = result
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+            .replace("```", "")
+            .replace("*", "");
+
+    // ── 扫描每一行，找「外语行」 ──
+    List<String> foreignLines = new ArrayList<>();
+    String[] lines = text.split("\n");
+
+    for (String rawLine : lines) {
+        String line = rawLine.trim();
+        if (line.isEmpty()) continue;
+        if (line.matches("^[=\\-*─_#~]{3,}$")) continue;
+        if (line.matches("^[\\d\\s.,;:!?]+$")) continue;
+        if (line.length() < 2) continue;
+        if (line.matches("^[\$（]?\\d{1,2}[\$）\\.、]\\s*$")) continue;
+        if (line.matches("^[Oo]ption\\s*\\d+.*$")) continue;
+        if (line.matches("^(版本|选项|翻译|外语|译文|原文|中文|分析|标签|备注|说明|注意|提示|解释|下半部分|选项区|选项如下).*$")) continue;
+        if (line.startsWith("【") && line.endsWith("】")) continue;
+        if (line.startsWith("##")) continue;
+
+        String cleaned = line
+                .replaceFirst("^[\$（]?\\d{1,2}[\$）\\.、:：]\\s*", "")
+                .replaceFirst("^[①②③④⑤⑥⑦⑧⑨⑩]\\s*", "")
+                .replaceFirst("^[一二三四五六七八九十]\\s*[.、]\\s*", "")
+                .replaceFirst("^[Oo]ption\\s*\\d+\\s*[:：]?\\s*", "")
+                .trim();
+
+        if (cleaned.isEmpty()) continue;
+        if (!looksLikeForeignText(cleaned)) continue;
+
+        String foreign = stripTrailingChineseParen(cleaned);
+        if (foreign != null && !foreign.isEmpty() && looksLikeForeignText(foreign)) {
+            foreignLines.add(foreign);
+        } else {
+            foreignLines.add(cleaned);
+        }
+    }
+
+    // ── 去重，取前 4 个 ──
+    Set<String> seen = new HashSet<>();
+    for (String f : foreignLines) {
+        if (items.size() >= 4) break;
+        String normalized = f.toLowerCase().replaceAll("\\s+", " ").trim();
+        if (normalized.length() < 2) continue;
+        if (!seen.add(normalized)) continue;
+        String meaning = extractMeaningForLine(result, f);
+        String tone = extractToneForLine(result, f);
+        items.add(new String[]{
+            sanitizeForeignText(f),
+            meaning != null ? meaning : "",
+            tone != null ? tone : ""
+        });
+    }
+
+    if (!items.isEmpty()) {
+        Log.i(TAG, "HT_AI 扫描抓取成功，抓到" + items.size() + "个外语版本");
+        return items;
+    }
+
+    return parseOptionsXmlFallback(result);
+}
+
+/**
+ * 判断一行文本是否「看起来像外语」
+ */
+private static boolean looksLikeForeignText(String line) {
+    if (line == null || line.isEmpty()) return false;
+    boolean hasForeignLetter = false;
+    int totalChars = 0;
+    for (int i = 0; i < line.length(); i++) {
+        char c = line.charAt(i);
+        if (Character.isWhitespace(c)) continue;
+        totalChars++;
+        if (Character.isLetter(c)) {
+            Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
+            if (block == Character.UnicodeBlock.HIRAGANA
+                    || block == Character.UnicodeBlock.KATAKANA) continue;
+            hasForeignLetter = true;
+        }
+    }
+    return totalChars > 0 && hasForeignLetter;
+}
+
+/**
+ * 去掉行尾的中文括号注释
+ */
+private static String stripTrailingChineseParen(String line) {
+    if (line == null || line.isEmpty()) return null;
+    Pattern p = Pattern.compile("\\s*[（(]\\s*[^）)]*[\\u4e00-\\u9fa5][^）)]*\\s*[）)]\\s*$");
+    Matcher m = p.matcher(line);
+    if (m.find()) {
+        String stripped = line.substring(0, m.start()).trim();
+        if (stripped.length() >= 2) return stripped;
+    }
+    return line;
+}
+
+private static String extractMeaningForLine(String fullText, String foreignLine) {
+    String escaped = Pattern.quote(foreignLine.substring(0, Math.min(20, foreignLine.length())));
+    Pattern p = Pattern.compile(escaped + ".*?[（(]([^）)]{1,60})[）)]", Pattern.DOTALL);
+    Matcher m = p.matcher(fullText);
+    if (m.find()) {
+        String paren = m.group(1).trim();
+        if (paren.length() <= 60 && containsChinese(paren)) return paren;
+    }
+    return null;
+}
+
+private static String extractToneForLine(String fullText, String foreignLine) {
+    return null;
+}
+
+private static boolean containsChinese(String s) {
+    if (s == null) return false;
+    for (char c : s.toCharArray()) {
+        Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
+        if (block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
+                || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+                || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B) {
+            return true;
+        }
+    }
+    return false;
+}
+
+private static List<String[]> parseOptionsXmlFallback(String result) {
+    List<String[]> items = new ArrayList<>();
+    Pattern xmlPattern = Pattern.compile(
+        "<o\\s+f=\"(.*?)\"\\s+m=\"(.*?)\"\\s+t=\"(.*?)\"\\s*/>", Pattern.DOTALL);
+    Matcher xmlMatcher = xmlPattern.matcher(result);
+    Set<String> seen = new HashSet<>();
+    while (xmlMatcher.find() && items.size() < 4) {
+        String foreign = xmlMatcher.group(1).trim()
+                .replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+        String meaning = xmlMatcher.group(2).trim()
+                .replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+        String tone = xmlMatcher.group(3).trim()
+                .replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+        foreign = sanitizeForeignText(foreign);
+        if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
+        if (!seen.add(foreign.toLowerCase())) continue;
+        items.add(new String[]{foreign, meaning, tone});
+    }
+    if (items.isEmpty()) {
         JSONObject json = tryParseJsonResult(result);
         if (json != null) {
             JSONArray opts = json.optJSONArray("options");
             if (opts != null) {
-                Set<String> seen = new HashSet<>();
+                seen.clear();
                 for (int i = 0; i < opts.length(); i++) {
                     if (items.size() >= 4) break;
                     JSONObject o = opts.optJSONObject(i);
                     if (o == null) continue;
-
                     String foreign = o.optString("foreign", "").trim();
-                    String chinese = o.optString("meaning", "").trim();
-                    String label = o.optString("tone", "").trim();
-
+                    String meaning = o.optString("meaning", "").trim();
+                    String tone = o.optString("tone", "").trim();
                     foreign = sanitizeForeignText(foreign);
-
                     if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
                     if (!seen.add(foreign.toLowerCase())) continue;
-                    items.add(new String[]{foreign, chinese, label});
-                }
-
-                if (!items.isEmpty()) return items;
-            }
-        }
-
-        String normalized = result.replace("\r\n", "\n").replace("\r", "\n").replace("```", "");
-        String optionsText = normalized;
-
-        String[] splitData = normalized.split("={3,}");
-        if (splitData.length >= 2) {
-            int bestIdx = -1;
-            int bestScore = -1;
-            for (int i = 0; i < splitData.length; i++) {
-                int score = countPipeOptionLines(splitData[i]);
-                if (score > bestScore) {
-                    bestScore = score;
-                    bestIdx = i;
+                    items.add(new String[]{foreign, meaning, tone});
                 }
             }
-            if (bestIdx >= 0 && bestScore > 0) optionsText = splitData[bestIdx];
-        } else {
-            StringBuilder sb = new StringBuilder();
-            boolean inOptions = false;
-            for (String line : normalized.split("\n")) {
-                String t = line.trim();
-                if (!inOptions) {
-                    boolean isSep = t.matches("^[=+\\-*\u2500]{3,}.*$")
-                            || t.contains("\u4e0b\u534a\u90e8\u5206")
-                            || t.contains("\u9009\u9879\u533a")
-                            || t.matches("^(\u7ffb\u8bd1\u9009\u9879|\u9009\u9879\u5982\u4e0b|\u4ee5\u4e0b\u662f.*\u7248\u672c|\u7ffb\u8bd1\u5982\u4e0b).{0,10}$");
-                    if (isSep) { inOptions = true; continue; }
-                }
-                if (inOptions) sb.append(line).append("\n");
-            }
-            if (sb.length() > 0) optionsText = sb.toString();
         }
-
-        Set<String> seen = new HashSet<>();
-        for (String rawLine : optionsText.split("\n")) {
-            if (items.size() >= 4) break;
-
-            String line = rawLine.trim().replace("*", "").replace("`", "").replace("\uff5c", "|").replace("｜", "|");
-            if (line.isEmpty()) continue;
-            if (line.matches("^[|\\s:\\-]+$")) continue;
-            if (!line.contains("|")) continue;
-
-            if (line.startsWith("|")) line = line.substring(1).trim();
-            if (line.endsWith("|")) line = line.substring(0, line.length() - 1).trim();
-            line = line.replaceFirst("^[\u2022\u00b7\u25e6\u25cb\u25aa]\\s*", "");
-            line = NUMBER_PREFIX.matcher(line).replaceFirst("").trim();
-
-            String[] parts = line.split("\\|");
-            List<String> cells = new ArrayList<>();
-            for (String p : parts) { String c = p.trim(); if (!c.isEmpty()) cells.add(c); }
-            if (cells.isEmpty()) continue;
-
-            String foreign = cells.get(0);
-            String chinese = cells.size() > 1 ? cells.get(1) : "";
-            String label = cells.size() > 2 ? cells.get(2) : "";
-
-            foreign = foreign.replaceAll("^[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+|[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+$", "").trim();
-            foreign = foreign.replaceFirst("^(英文|英语|俄语|乌克兰语|韩语|西班牙语|外语|译文|目标语言|原文|中文)\\s*[:：]?\\s*", "").trim();
-            chinese = chinese.replaceFirst("^(\u4e2d\u6587)?(\u5927\u610f|\u610f\u601d|\u542b\u4e49|\u7ffb\u8bd1)?\\s*[:\uff1a]?\\s*", "").trim();
-            label = label.replaceFirst("^(\u8bed\u6c14|\u98ce\u683c|\u6807\u7b7e)?\\s*[:\uff1a]?\\s*", "").trim();
-            foreign = sanitizeForeignText(foreign);
-
-            if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
-            if (!seen.add(foreign.toLowerCase())) continue;
-            items.add(new String[]{foreign, chinese, label});
-        }
-        return items;
     }
+    return items;
+}
 
-    private static int countPipeOptionLines(String segment) {
-        if (segment == null || segment.trim().isEmpty()) return 0;
-        int score = 0;
-        for (String rawLine : segment.split("\n")) {
-            String line = rawLine.trim();
-            if (line.isEmpty()) continue;
-            if (line.matches("^[|\\s:\\-]+$")) continue;
-            String norm = line.replace("｜", "|");
-            if (!norm.contains("|")) continue;
-            String[] parts = norm.split("\\|");
-            if (parts.length >= 1 && containsForeignLetters(parts[0].trim())) score++;
-        }
-        return score;
-    }
+    
 
     public static String extractAnalysis(String result) {
-        if (result == null) return "";
+    if (result == null) return "";
 
-        JSONObject json = tryParseJsonResult(result);
-        if (json != null) {
-            return json.optString("analysis", "").trim().replace("*", "");
-        }
+    Pattern p = Pattern.compile("<analysis>\\s*(.*?)\\s*</analysis>", Pattern.DOTALL);
+    Matcher m = p.matcher(result);
+    if (m.find()) return m.group(1).trim().replace("*", "");
 
-        String[] splitData = result.split("={3,}");
-        if (splitData.length >= 2) return splitData[0].trim().replace("*", "");
-
-        String[] lines = result.split("\n");
-        int firstOptionLine = -1;
-        for (int i = 0; i < lines.length; i++) {
-            String t = lines[i].trim().replace("*", "").replace("\uff5c", "|").replace("｜", "|");
-            if (t.isEmpty()) continue;
-            if (t.contains("|") || t.contains("下半部分") || t.contains("选项区")) { firstOptionLine = i; break; }
-        }
-        if (firstOptionLine <= 0) return "";
-        StringBuilder an = new StringBuilder();
-        for (int i = 0; i < firstOptionLine; i++) {
-            String t = lines[i].trim();
-            if (!t.isEmpty()) an.append(t).append("\n\n");
-        }
-        return an.toString().trim().replace("*", "");
+    JSONObject json = tryParseJsonResult(result);
+    if (json != null) {
+        String analysis = json.optString("analysis", "").trim();
+        if (!analysis.isEmpty()) return analysis.replace("*", "");
     }
+
+    // ★ 找到第一个「外语行」之前的文本就是分析
+    String[] lines = result.split("\n");
+    StringBuilder analysis = new StringBuilder();
+    boolean foundForeign = false;
+
+    for (String rawLine : lines) {
+        String line = rawLine.trim().replace("*", "");
+        if (line.isEmpty()) {
+            if (!foundForeign) analysis.append("\n");
+            continue;
+        }
+        if (line.startsWith("```") || line.startsWith("##")) continue;
+
+        String cleaned = line
+                .replaceFirst("^[\\(（]?\\d{1,2}[\\)）\\.、:：]\\s*", "")
+                .replaceFirst("^[①②③④⑤⑥⑦⑧⑨⑩]\\s*", "")
+                .trim();
+
+        if (!foundForeign && looksLikeForeignText(cleaned)) {
+            foundForeign = true;
+            continue;
+        }
+        if (foundForeign) break;
+        if (line.matches("^[=\\-*─_#~]{3,}$")) continue;
+        if (line.matches("^(版本|选项|翻译|外语|译文|格式|输出|注意|提示|说明|解释|标签|备注|下半部分|选项区|选项如下).*$")) continue;
+        if (line.startsWith("【") && line.endsWith("】")) continue;
+        if (line.length() > 2) analysis.append(line).append("\n\n");
+    }
+    return analysis.toString().trim().replace("*", "");
+}
 
     public static String toChinese(String text) throws IOException { return toChinese(text, "0"); }
 
