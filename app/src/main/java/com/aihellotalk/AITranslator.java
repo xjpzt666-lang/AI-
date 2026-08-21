@@ -1525,32 +1525,22 @@ private static OkHttpClient getReceiveClient() {
         }
     }
 
-      // ========================================================================
-    // ★★★ 终极方案：锚点提取法 (只要 👉) ★★★
-    // ========================================================================
-    public static List<String[]> parseTranslateOptions(String result) {
+        public static List<String[]> parseTranslateOptions(String result) {
         List<String[]> items = new ArrayList<>();
         if (result == null || result.trim().isEmpty()) return items;
 
+        // 1. 先用 👉 符号去抓取
         String[] lines = result.replace("\r\n", "\n").replace("\r", "\n").replace("*", "").split("\n");
-        Set<String> seen = new HashSet<>();
-
+        Set<String> seenAnchor = new HashSet<>();
         for (String line : lines) {
             String t = line.trim();
-            int idx = t.indexOf("👉");
-            
-            // 只要这一行包含 👉，直接从它后面开始切
-            if (idx >= 0) {
-                String content = t.substring(idx + 1).trim();
-                
-                // 剃掉大模型可能自作多情加的数字，比如 "👉 1. "
-                content = content.replaceFirst("^[\\d\\.\\s、]+", "").trim();
+            if (t.contains("👉")) {
+                // 把包含 👉 的一整行切出来，并把各种肤色的 👉 替换为空白，完美解决表情被劈开导致的乱码
+                String content = t.substring(t.indexOf("👉")).replace("👉🏻", "").replace("👉", "").replace("🏻", "").trim();
+                content = content.replaceFirst("^[\\d\\.\\s、]+", "").trim(); // 剃掉可能多余的序号
                 if (content.isEmpty()) continue;
 
-                String foreign = content;
-                String meaning = "";
-                String tone = "";
-
+                String foreign = content, meaning = "", tone = "";
                 String[] parts = content.split("\\|");
                 if (parts.length >= 1) foreign = parts[0].trim();
                 if (parts.length >= 2) meaning = parts[1].trim();
@@ -1559,33 +1549,158 @@ private static OkHttpClient getReceiveClient() {
                 foreign = sanitizeForeignText(foreign);
                 if (foreign.isEmpty()) continue;
 
-                // 去重
                 String norm = foreign.toLowerCase().replaceAll("\\s+", "");
-                if (!seen.add(norm)) continue;
+                if (!seenAnchor.add(norm)) continue;
 
                 items.add(new String[]{foreign, meaning, tone});
-                
-                // 抓够4个立刻收手，绝不多要
                 if (items.size() >= 4) break;
             }
+        }
+        // 如果靠 👉 抓到了，就直接返回，大功告成！
+        if (!items.isEmpty()) return items; 
+
+        // 2. 如果没抓到 👉，一字不差地保留你的原版兜底代码
+        JSONObject json = tryParseJsonResult(result);
+        if (json != null) {
+            JSONArray opts = json.optJSONArray("options");
+            if (opts != null) {
+                Set<String> seen = new HashSet<>();
+                for (int i = 0; i < opts.length(); i++) {
+                    if (items.size() >= 4) break;
+                    JSONObject o = opts.optJSONObject(i);
+                    if (o == null) continue;
+
+                    String foreign = o.optString("foreign", "").trim();
+                    String chinese = o.optString("meaning", "").trim();
+                    String label = o.optString("tone", "").trim();
+
+                    foreign = sanitizeForeignText(foreign);
+
+                    if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
+                    if (!seen.add(foreign.toLowerCase())) continue;
+                    items.add(new String[]{foreign, chinese, label});
+                }
+                if (!items.isEmpty()) return items;
+            }
+        }
+
+        String normalized = result.replace("\r\n", "\n").replace("\r", "\n").replace("```", "");
+        String optionsText = normalized;
+
+        String[] splitData = normalized.split("={3,}");
+        if (splitData.length >= 2) {
+            int bestIdx = -1;
+            int bestScore = -1;
+            for (int i = 0; i < splitData.length; i++) {
+                int score = countPipeOptionLines(splitData[i]);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestIdx = i;
+                }
+            }
+            if (bestIdx >= 0 && bestScore > 0) optionsText = splitData[bestIdx];
+        } else {
+            StringBuilder sb = new StringBuilder();
+            boolean inOptions = false;
+            for (String line : normalized.split("\n")) {
+                String t = line.trim();
+                if (!inOptions) {
+                    boolean isSep = t.matches("^[=+\\-*\u2500]{3,}.*$")
+                            || t.contains("\u4e0b\u534a\u90e8\u5206")
+                            || t.contains("\u9009\u9879\u533a")
+                            || t.matches("^(\u7ffb\u8bd1\u9009\u9879|\u9009\u9879\u5982\u4e0b|\u4ee5\u4e0b\u662f.*\u7248\u672c|\u7ffb\u8bd1\u5982\u4e0b).{0,10}$");
+                    if (isSep) { inOptions = true; continue; }
+                }
+                if (inOptions) sb.append(line).append("\n");
+            }
+            if (sb.length() > 0) optionsText = sb.toString();
+        }
+
+        Set<String> seen = new HashSet<>();
+        for (String rawLine : optionsText.split("\n")) {
+            if (items.size() >= 4) break;
+
+            String line = rawLine.trim().replace("*", "").replace("`", "").replace("\uff5c", "|").replace("｜", "|");
+            if (line.isEmpty()) continue;
+            if (line.matches("^[|\\s:\\-]+$")) continue;
+            if (!line.contains("|")) continue;
+
+            if (line.startsWith("|")) line = line.substring(1).trim();
+            if (line.endsWith("|")) line = line.substring(0, line.length() - 1).trim();
+            line = line.replaceFirst("^[\u2022\u00b7\u25e6\u25cb\u25aa]\\s*", "");
+            line = NUMBER_PREFIX.matcher(line).replaceFirst("").trim();
+
+            String[] parts = line.split("\\|");
+            List<String> cells = new ArrayList<>();
+            for (String p : parts) { String c = p.trim(); if (!c.isEmpty()) cells.add(c); }
+            if (cells.isEmpty()) continue;
+
+            String foreign = cells.get(0);
+            String chinese = cells.size() > 1 ? cells.get(1) : "";
+            String label = cells.size() > 2 ? cells.get(2) : "";
+
+            foreign = foreign.replaceAll("^[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+|[\\s\"'\u201c\u201d\u2018\u2019\u300c\u300d\u300e\u300f]+$", "").trim();
+            foreign = foreign.replaceFirst("^(英文|英语|俄语|乌克兰语|韩语|西班牙语|外语|译文|目标语言|原文|中文)\\s*[:：]?\\s*", "").trim();
+            chinese = chinese.replaceFirst("^(\u4e2d\u6587)?(\u5927\u610f|\u610f\u601d|\u542b\u4e49|\u7ffb\u8bd1)?\\s*[:\uff1a]?\\s*", "").trim();
+            label = label.replaceFirst("^(\u8bed\u6c14|\u98ce\u683c|\u6807\u7b7e)?\\s*[:\uff1a]?\\s*", "").trim();
+            foreign = sanitizeForeignText(foreign);
+
+            if (foreign.isEmpty() || !containsForeignLetters(foreign)) continue;
+            if (!seen.add(foreign.toLowerCase())) continue;
+            items.add(new String[]{foreign, chinese, label});
         }
         return items;
     }
 
 
-    
+    private static int countPipeOptionLines(String segment) {
+        if (segment == null || segment.trim().isEmpty()) return 0;
+        int score = 0;
+        for (String rawLine : segment.split("\n")) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) continue;
+            if (line.matches("^[|\\s:\\-]+$")) continue;
+            String norm = line.replace("｜", "|");
+            if (!norm.contains("|")) continue;
+            String[] parts = norm.split("\\|");
+            if (parts.length >= 1 && containsForeignLetters(parts[0].trim())) score++;
+        }
+        return score;
+    }
 
         public static String extractAnalysis(String result) {
         if (result == null) return "";
-        String text = result.replace("\r\n", "\n").replace("\r", "\n").replace("*", "");
         
-        // 找到第一个 👉 的位置，它前面的全是分析废话
+        // 1. 如果有 👉 符号，直接截取它前面的内容作为分析
+        String text = result.replace("\r\n", "\n").replace("\r", "\n").replace("*", "");
         int idx = text.indexOf("👉");
         if (idx >= 0) {
             return text.substring(0, idx).replaceAll("```[a-zA-Z]*", "").trim();
         }
-        
-        return text.trim();
+
+        // 2. 原版兜底提取逻辑
+        JSONObject json = tryParseJsonResult(result);
+        if (json != null) {
+            return json.optString("analysis", "").trim().replace("*", "");
+        }
+
+        String[] splitData = result.split("={3,}");
+        if (splitData.length >= 2) return splitData[0].trim().replace("*", "");
+
+        String[] lines = result.split("\n");
+        int firstOptionLine = -1;
+        for (int i = 0; i < lines.length; i++) {
+            String t = lines[i].trim().replace("*", "").replace("\uff5c", "|").replace("｜", "|");
+            if (t.isEmpty()) continue;
+            if (t.contains("|") || t.contains("下半部分") || t.contains("选项区")) { firstOptionLine = i; break; }
+        }
+        if (firstOptionLine <= 0) return "";
+        StringBuilder an = new StringBuilder();
+        for (int i = 0; i < firstOptionLine; i++) {
+            String t = lines[i].trim();
+            if (!t.isEmpty()) an.append(t).append("\n\n");
+        }
+        return an.toString().trim().replace("*", "");
     }
 
 
@@ -1718,13 +1833,13 @@ private static OkHttpClient getReceiveClient() {
             String spanishDirective = "";
             if ("es".equals(langCode)) spanishDirective = getSpanishRegionDirective(null, 0, chatId);
 
-                        String formatProtocol = "\n\n【最高优先级输出格式控制：锚点提取法】\n"
+                        String formatProtocol = "\n\n【最高优先级输出格式控制】\n"
                     + "必须严格按以下格式输出，绝对禁止输出 JSON 或 Markdown 代码块！\n"
-                    + "1. 先写你的上半部分分析（例如推断语境等）。\n"
+                    + "1. 先写你的上半部分简短分析（务必精简干练，直接说结论）。\n"
                     + "2. 分析写完后，换行，直接输出 4 个翻译选项。\n"
-                    + "3. 【核心死命令】：这4个选项的每一行开头，必须且只能用 👉 这个表情符号作为唯一标记！（不要带任何肤色，直接用 👉，不要在前面加 1. 2. 3. 这种数字编号）。\n"
+                    + "3. 【核心死命令】：这4个选项的每一行开头，必须且只能用 👉 这个表情符号作为唯一标记！（不要带肤色，直接用 👉，不要加 1. 2. 3. 这种数字）。\n"
                     + "4. 选项的单行格式：👉 外语文本 | 中文大意 | 语气标签\n"
-                    + "5. 注意：👉 符号绝对不能出现在你的分析中，它只能作为选项的开头锚点！";
+                    + "5. 注意：👉 符号绝对不能出现在分析中，它只能作为选项的开头！\n";
 
 
             String bannedWords = getBannedWords();
