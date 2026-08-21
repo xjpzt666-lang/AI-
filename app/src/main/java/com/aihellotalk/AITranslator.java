@@ -597,14 +597,24 @@ private static synchronized ApiEndpoint getNextEndpoint(boolean isReceive) {
                 .build();
     }
 
-    public static void cancelOngoingTranslation() {
-        if (client != null) {
-            try {
-                client.dispatcher().cancelAll();
-                Log.i(TAG, "\u5df2\u89e6\u53d1\u6025\u505c");
-            } catch (Exception ignored) {}
-        }
+        public static void cancelOngoingTranslation() {
+        try {
+            // 1. 踩死主通道刹车
+            if (client != null) client.dispatcher().cancelAll();
+            // 2. 踩死接收专用通道刹车
+            if (receiveClient != null) receiveClient.dispatcher().cancelAll();
+            // 3. 踩死反向翻译通道刹车
+            if (reverseTranslateClient != null) reverseTranslateClient.dispatcher().cancelAll();
+            // 4. 踩死记忆提炼通道刹车
+            if (distillClient != null) distillClient.dispatcher().cancelAll();
+            // 5. 遍历踩死 8 个备用轮换 API 的所有通道刹车
+            for (ApiEndpoint ep : endpoints) {
+                if (ep.client != null) ep.client.dispatcher().cancelAll();
+            }
+            Log.i(TAG, "\u5df2\u89e6\u53d1\u6025\u505c");
+        } catch (Exception ignored) {}
     }
+
 
     private static String runRoot(String cmd) {
         try {
