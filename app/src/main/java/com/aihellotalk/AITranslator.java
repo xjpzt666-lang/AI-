@@ -2044,8 +2044,8 @@ private static String executeRequestWithRotation(JSONObject body, OkHttpClient f
     // ===== 极其严谨的方向判定 =====
     boolean isReceive = false; // 默认全是主动发送
     String bodyStr = body.toString();
-    // 只有绝对匹配到这两句话，才算是“接收对方外语”
-    if (bodyStr.contains("下方只有<<<和>>>标记内") || bodyStr.contains("【表/标点深度分析协议】")) {
+// 只有绝对匹配到这些话，才算是“接收对方外语”
+    if (bodyStr.contains("下方只有<<<和>>>标记内") || bodyStr.contains("最高防分心警告") || bodyStr.contains("【表/标点深度分析协议】")) {
         isReceive = true;
     }
 
