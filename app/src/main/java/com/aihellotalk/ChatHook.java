@@ -1977,11 +1977,22 @@ public class ChatHook {
         return null;
     }
 
-    private static void hookOutgoingSetMsg(ClassLoader cl) {
-        try {
-            Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
-            XposedBridge.hookAllMethods(hm, "setMsgContent", new XC_MethodHook() {
-                @Override
+private static void hookOutgoingSetMsg(ClassLoader cl) {
+    try {
+        Class<?> hm = cl.loadClass("com.hellotalk.lib.im.entity.HTIMMessage");
+        XposedBridge.hookAllMethods(hm, "setMsgContent", new XC_MethodHook() {
+            @Override
+            protected void afterHookedMethod(MethodHookParam p) {
+                try {
+                    Object msg = p.thisObject;
+                    Object bean = (p.args != null && p.args.length > 0) ? p.args[0] : null;
+                    recordOutgoingIfNeeded(msg, bean);
+                } catch (Throwable ignored) {}
+            }
+        });
+    } catch (Throwable ignored) {}
+}
+
 private static void hookSendMessage(ClassLoader cl) {
     try {
         Class<?> vm = XposedHelpers.findClass(
