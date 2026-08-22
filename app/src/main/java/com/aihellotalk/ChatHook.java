@@ -1997,96 +1997,62 @@ public class ChatHook {
     }
 
         private static void hookSendMessage(ClassLoader cl) {
-        try {
-            Class<?> vm = XposedHelpers.findClass(
-                    "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
-                    cl
-            );
+    try {
+        Class<?> vm = XposedHelpers.findClass(
+                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+        Class<?> messageClass = XposedHelpers.findClass(
+                "com.hellotalk.lib.im.entity.HTIMMessage", cl);
+        Class<?> textBeanClass = XposedHelpers.findClassIfExists(
+                "com.hellotalk.talk.detail.delegate.text.IMTextBean", cl);
 
-            Class<?> messageClass = XposedHelpers.findClass(
-                    "com.hellotalk.lib.im.entity.HTIMMessage",
-                    cl
-            );
-            
-            // 提前准备好用来修改文字的类
-            Class<?> textBeanClass = XposedHelpers.findClassIfExists(
-                    "com.hellotalk.talk.detail.delegate.text.IMTextBean", 
-                    cl
-            );
+        XposedHelpers.findAndHookMethod(vm, "sendMessage",
+                String.class, Object.class, org.json.JSONArray.class, messageClass,
+                new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) {
+                        try {
+                            if (p.args == null || p.args.length < 4) return;
+                            Object replyInfo = p.args[3];
+                            if (replyInfo == null) return;
 
-            XposedHelpers.findAndHookMethod(
-                    vm,
-                    "sendMessage",
-                    String.class,
-                    Object.class,
-                    org.json.JSONArray.class,
-                    messageClass,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam p) {
-                            try {
-                                if (p.args == null || p.args.length < 4) return;
+                            String msgId = (String) invokeQuiet(mGetMsgId, replyInfo);
+                            String msgType = (String) invokeQuiet(mGetMsgType, replyInfo);
 
-                                Object replyInfo = p.args[3];
-                                if (replyInfo == null) return;
-
-                                // ====== 🚀 核心修复：狸猫换太子，拦截并彻底还原回复引用 ======
-                                String msgId = (String) invokeQuiet(mGetMsgId, replyInfo);
-                                String msgType = (String) invokeQuiet(mGetMsgType, replyInfo);
-                                String originalForeign = null;
-                                
-                                // 1. 尝试通过精准的 msgId 找回原始外语
-                                if (msgId != null && !msgId.isEmpty()) {
-                                    String[] cached = AITranslator.getCached(msgId);
-                                    if (cached != null && cached[0] != null) {
-                                        originalForeign = cached[0];
-                                    }
-                                }
-
-                                // 2. 执行深层修复逻辑：替换回原外语，并刷新 JSON 缓存
-                                if ("text".equals(msgType) && textBeanClass != null) {
-                                    Object textBean = invokeQuiet(mGetMsgContentTyped, replyInfo, textBeanClass, false);
-                                    if (textBean != null) {
-                                        Method gtm = ensureBeanGetText(textBean);
-                                        Object textObj = invokeQuiet(gtm, textBean);
-                                        String currentText = textObj != null ? String.valueOf(textObj) : null;
-                                        
-                                        // 如果没靠 ID 查到，走兜底纯文本倒查外语
-                                        if (originalForeign == null && currentText != null) {
-                                            String cleanText = currentText.replaceAll("[\\s🌐🔄]+$", "").trim();
-                                            originalForeign = AITranslator.getForeignByChinese(cleanText);
-                                            if (originalForeign == null) originalForeign = AITranslator.getForeignFuzzy(cleanText);
+                            if ("text".equals(msgType) && msgId != null && !msgId.isEmpty()) {
+                                Object textBean = XposedHelpers.getObjectField(replyInfo, "msgContent");
+                                if (textBean != null && textBeanClass.isInstance(textBean)) {
+                                    String currentText = (String) XposedHelpers.callMethod(textBean, "getText");
+                                    if (currentText != null) {
+                                        String clean = currentText.replaceAll("[\\s🌐🔄]+$", "").trim();
+                                        String[] cached = AITranslator.getCached(msgId);
+                                        String original = (cached != null && cached[0] != null) ? cached[0] : null;
+                                        if (original == null && AITranslator.isChineseOnly(clean)) {
+                                            original = AITranslator.getForeignByChinese(clean);
+                                            if (original == null) original = AITranslator.getForeignFuzzy(clean);
                                         }
-
-                                        // 绝对暴力的无脑替换：只要查到的外语原文跟屏幕上的字不一样，统统换掉！
-                                        if (originalForeign != null && currentText != null && !originalForeign.equals(currentText)) {
-                                            XposedHelpers.callMethod(textBean, "setText", originalForeign);
-                                            XposedHelpers.callMethod(replyInfo, "setMsgContent", textBean);
-                                            log("✅ 拦截发包成功！泄露的文本已被替换为原文: " + originalForeign);
+                                        if (original != null && !original.equals(clean)) {
+                                            XposedHelpers.callMethod(textBean, "setText", original);
+                                            XposedHelpers.setObjectField(replyInfo, "msgContent", textBean);
+                                            log("修复引用: " + clean + " -> " + original);
                                         }
                                     }
                                 }
-                                // =======================================================
-
-                                // 3. 拦截完成后，继续原有的历史记录捕获逻辑
-                                String quote = extractSelectedReplyText(replyInfo);
-                                if (quote != null && !quote.trim().isEmpty()) {
-                                    pendingSendQuote = quote.trim();
-                                    pendingSendChatId = currentChatId;
-                                    log("捕获发送引用(已修复为外语): " + pendingSendQuote);
-                                }
-
-                            } catch (Throwable t) {
-                                log("sendMessage引用修复与捕获失败: " + t.getMessage());
                             }
+
+                            String quote = extractSelectedReplyText(replyInfo);
+                            if (quote != null && !quote.trim().isEmpty()) {
+                                pendingSendQuote = quote.trim();
+                                pendingSendChatId = currentChatId;
+                            }
+                        } catch (Throwable t) {
+                            log("sendMessage异常: " + t.getMessage());
                         }
                     }
-            );
-        } catch (Throwable t) {
-            log("hookSendMessage失败: " + t.getMessage());
-        }
+                });
+    } catch (Throwable t) {
+        log("hookSendMessage失败: " + t.getMessage());
     }
-
+}
 
     private static String extractSelectedReplyText(Object replyInfo) {
         if (replyInfo == null) return null;
