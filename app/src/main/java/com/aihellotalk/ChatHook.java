@@ -2287,7 +2287,7 @@ try {
             } catch (Throwable t) {
                 log("引用替换失败: " + t.getMessage());
             }
-// 在父类中查找并修改 JSON 字符串
+// 用反射替换 replyInfo 内部 JSON 中的引用文本
 try {
     Class<?> clazz = replyInfo.getClass();
     java.lang.reflect.Field f = null;
@@ -2302,9 +2302,27 @@ try {
         f.setAccessible(true);
         String oldJson = (String) f.get(replyInfo);
         if (oldJson != null && oldJson.contains(quote)) {
-            String newJson = oldJson.replace(quote, originalForeign);
-            f.set(replyInfo, newJson);
-            log("JSON替换成功: " + newJson);
+            f.set(replyInfo, oldJson.replace(quote, originalForeign));
+            log("msgContentJson替换成功");
+        } else {
+            log("msgContentJson中未找到引用文本");
+        }
+    }
+    clazz = replyInfo.getClass();
+    java.lang.reflect.Field f2 = null;
+    while (clazz != null && f2 == null) {
+        try {
+            f2 = clazz.getDeclaredField("replyInfoJson");
+        } catch (NoSuchFieldException e) {
+            clazz = clazz.getSuperclass();
+        }
+    }
+    if (f2 != null) {
+        f2.setAccessible(true);
+        String oldJson2 = (String) f2.get(replyInfo);
+        if (oldJson2 != null && oldJson2.contains(quote)) {
+            f2.set(replyInfo, oldJson2.replace(quote, originalForeign));
+            log("replyInfoJson替换成功");
         }
     }
 } catch (Throwable t2) {
