@@ -2287,28 +2287,28 @@ try {
             } catch (Throwable t) {
                 log("引用替换失败: " + t.getMessage());
             }
-            // 直接修改 JSON 字符串
-            try {
-                java.lang.reflect.Field f = replyInfo.getClass().getDeclaredField("msgContentJson");
-                f.setAccessible(true);
-                String oldJson = (String) f.get(replyInfo);
-                if (oldJson != null && oldJson.contains(quote)) {
-                    String newJson = oldJson.replace(quote, originalForeign);
-                    f.set(replyInfo, newJson);
-                    log("JSON替换成功: " + newJson);
-                }
-            } catch (Throwable t2) {
-                log("JSON替换失败: " + t2.getMessage());
-            }
-            quote = originalForeign;
+// 在父类中查找并修改 JSON 字符串
+try {
+    Class<?> clazz = replyInfo.getClass();
+    java.lang.reflect.Field f = null;
+    while (clazz != null && f == null) {
+        try {
+            f = clazz.getDeclaredField("msgContentJson");
+        } catch (NoSuchFieldException e) {
+            clazz = clazz.getSuperclass();
         }
-
-        pendingSendQuote = quote.trim();
-        pendingSendChatId = currentChatId;
-        log("捕获发送引用: " + pendingSendQuote);
-    } catch (Throwable t) {
-        log("sendMessage引用捕获失败: " + t.getMessage());
     }
+    if (f != null) {
+        f.setAccessible(true);
+        String oldJson = (String) f.get(replyInfo);
+        if (oldJson != null && oldJson.contains(quote)) {
+            String newJson = oldJson.replace(quote, originalForeign);
+            f.set(replyInfo, newJson);
+            log("JSON替换成功: " + newJson);
+        }
+    }
+} catch (Throwable t2) {
+    log("JSON替换失败: " + t2.getMessage());
 }
     private static String extractSelectedReplyText(Object replyInfo) {
         if (replyInfo == null) return null;
