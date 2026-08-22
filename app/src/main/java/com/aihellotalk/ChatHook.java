@@ -540,7 +540,7 @@ public class ChatHook {
         }
     }
 
-        private static void hookUltimateStealth(ClassLoader cl) {
+    private static void hookUltimateStealth(ClassLoader cl) {
         try {
             Class<?> tc = XposedHelpers.findClassIfExists(
                     "com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
@@ -548,7 +548,7 @@ public class ChatHook {
                 XposedBridge.hookAllMethods(tc, "s0", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam p) {
-                        if (AITranslator.hideTyping) p.setResult(null);
+                        p.setResult(null);
                     }
                 });
             }
@@ -557,7 +557,7 @@ public class ChatHook {
         XC_MethodHook kill = new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) {
-                if (AITranslator.hideRead) p.setResult(null);
+                p.setResult(null);
             }
         };
 
@@ -582,11 +582,9 @@ public class ChatHook {
                 XposedBridge.hookAllMethods(be, "z", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam p) {
-                        if (AITranslator.hideRead) {
-                            if (p.args != null && p.args.length > 0 && p.args[0] != null) {
-                                String n = p.args[0].getClass().getName();
-                                if ("tm.a".equals(n) || "e20.c".equals(n)) p.setResult(null);
-                            }
+                        if (p.args != null && p.args.length > 0 && p.args[0] != null) {
+                            String n = p.args[0].getClass().getName();
+                            if ("tm.a".equals(n) || "e20.c".equals(n)) p.setResult(null);
                         }
                     }
                 });
@@ -599,13 +597,12 @@ public class ChatHook {
                 XposedBridge.hookAllMethods(ec, "f", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam p) {
-                        if (AITranslator.hideRead) p.setResult(new byte[0]);
+                        p.setResult(new byte[0]);
                     }
                 });
             }
         } catch (Throwable ignored) {}
     }
-
 
     private static void hookTextViewRender(ClassLoader cl) {
         if (htTextViewClass == null) return;
@@ -1996,42 +1993,90 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-private static void hookSendMessage(ClassLoader cl) {
+    private static void hookSendMessage(ClassLoader cl) {
+        try {
+            Class<?> vm = XposedHelpers.findClass(
+                    "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
+                    cl
+            );
+
+            Class<?> messageClass = XposedHelpers.findClass(
+                    "com.hellotalk.lib.im.entity.HTIMMessage",
+                    cl
+            );
+
+            XposedHelpers.findAndHookMethod(
+                    vm,
+                    "sendMessage",
+                    String.class,
+                    Object.class,
+                    org.json.JSONArray.class,
+                    messageClass,
+                    new XC_MethodHook() {
+@Override
+protected void beforeHookedMethod(MethodHookParam p) {
     try {
-        Class<?> vm = XposedHelpers.findClass(
-                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
-                cl
-        );
-        Class<?> messageClass = XposedHelpers.findClass(
-                "com.hellotalk.lib.im.entity.HTIMMessage",
-                cl
-        );
+        if (p.args == null || p.args.length < 4) return;
 
-        XposedHelpers.findAndHookMethod(
-                vm, "sendMessage",
-                String.class, Object.class, org.json.JSONArray.class, messageClass,
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam p) {
-                        try {
-                            if (p.args == null || p.args.length < 4) return;
-                            Object replyInfo = p.args[3];
-                            if (replyInfo == null) return;
+        Object replyInfo = p.args[3];
+        if (replyInfo == null) return;
 
-                            String quote = extractSelectedReplyText(replyInfo);
-                            if (quote == null || quote.trim().isEmpty()) return;
-
-                            pendingSendQuote = quote.trim();
-                            pendingSendChatId = currentChatId;
-                            log("捕获发送引用: " + pendingSendQuote);
-                        } catch (Throwable t) {
-                            log("sendMessage引用捕获失败: " + t.getMessage());
-                        }
+        // ★ 先获取 replyInfo 里面被污染的引用文本
+        String msgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
+        String quote = null;
+        
+        if ("text".equals(msgType) || "translate".equals(msgType)) {
+            try {
+                Class<?> textBeanClass = XposedHelpers.findClassIfExists(
+                        "com.hellotalk.talk.detail.delegate.text.IMTextBean", hostClassLoader);
+                if (textBeanClass != null) {
+                    Object textBean = XposedHelpers.callMethod(replyInfo,
+                            "getMessageContent", textBeanClass, false);
+                    if (textBean != null) {
+                        quote = (String) XposedHelpers.callMethod(textBean, "getText");
                     }
                 }
-        );
+            } catch (Throwable ignored) {}
+        }
+        
+        if (quote == null) {
+            quote = extractSelectedReplyText(replyInfo);
+        }
+        
+        if (quote == null || quote.trim().isEmpty()) return;
+
+        // ★★★ 核心修复：如果引用文本是中文，反查原始外语并替换 ★★★
+        String originalForeign = AITranslator.getForeignByChinese(quote);
+        if (originalForeign == null) {
+            originalForeign = AITranslator.getForeignFuzzy(quote);
+        }
+        
+        if (originalForeign != null && !originalForeign.equals(quote)) {
+            // 把 replyInfo 的 msgContent 替换回原始外语
+            try {
+                Class<?> textBeanClass2 = XposedHelpers.findClassIfExists(
+                        "com.hellotalk.talk.detail.delegate.text.IMTextBean", hostClassLoader);
+                if (textBeanClass2 != null) {
+                    Object textBean2 = XposedHelpers.callMethod(replyInfo,
+                            "getMessageContent", textBeanClass2, false);
+                    if (textBean2 != null) {
+                        XposedHelpers.callMethod(textBean2, "setText", originalForeign);
+                        XposedHelpers.callMethod(replyInfo, "setMsgContent", textBean2);
+                        log("引用替换成功: 中文 → " + originalForeign);
+                    }
+                }
+            } catch (Throwable t) {
+                log("引用替换失败: " + t.getMessage());
+            }
+            quote = originalForeign;
+        }
+
+        pendingSendQuote = quote.trim();
+        pendingSendChatId = currentChatId;
+
+        log("捕获发送引用: " + pendingSendQuote);
     } catch (Throwable t) {
-        log("hookSendMessage失败: " + t.getMessage());
+        log("sendMessage引用捕获失败: " + t.getMessage());
     }
 }
 
