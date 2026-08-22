@@ -18,6 +18,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
+import java.io.FileReader;
+import java.io.BufferedReader;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URLDecoder;
@@ -541,6 +543,10 @@ public class ChatHook {
     }
 
     private static void hookUltimateStealth(ClassLoader cl) {
+    boolean hideTyping = readStealthConfig("stealth_hide_typing", true);
+    boolean hideRead = readStealthConfig("stealth_hide_read", true);
+
+    if (hideTyping) {
         try {
             Class<?> tc = XposedHelpers.findClassIfExists(
                     "com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
@@ -553,14 +559,18 @@ public class ChatHook {
                 });
             }
         } catch (Throwable ignored) {}
+    }
 
-        XC_MethodHook kill = new XC_MethodHook() {
-            @Override
-            protected void beforeHookedMethod(MethodHookParam p) {
-                p.setResult(null);
-            }
-        };
+    if (!hideRead && !hideTyping) return;
 
+    XC_MethodHook kill = new XC_MethodHook() {
+        @Override
+        protected void beforeHookedMethod(MethodHookParam p) {
+            p.setResult(null);
+        }
+    };
+
+    if (hideRead) {
         try {
             Class<?> za = XposedHelpers.findClassIfExists("z10.a", cl);
             if (za != null) {
@@ -603,6 +613,26 @@ public class ChatHook {
             }
         } catch (Throwable ignored) {}
     }
+}
+
+private static boolean readStealthConfig(String key, boolean def) {
+    try {
+        File f = new File("/data/local/tmp/htai_config.txt");
+        if (f.exists()) {
+            BufferedReader r = new BufferedReader(new FileReader(f));
+            String line;
+            while ((line = r.readLine()) != null) {
+                if (line.trim().startsWith(key + "=")) {
+                    String v = line.substring(key.length() + 1).trim();
+                    r.close();
+                    return "true".equalsIgnoreCase(v);
+                }
+            }
+            r.close();
+        }
+    } catch (Exception ignored) {}
+    return def;
+}
 
     private static void hookTextViewRender(ClassLoader cl) {
         if (htTextViewClass == null) return;
@@ -1041,7 +1071,7 @@ public class ChatHook {
                             }
 
                             String[] cached = AITranslator.getCached(mid);
-                            if (cached != null) {
+                            if (cached != null && cached[0] != null && cached[0].equals(text)) {
                                 try {
                                     XposedHelpers.callMethod(bean, "setText",
                                             cached[1].replaceAll("[\\s🌐🔄]+$", "") + " 🔄");
