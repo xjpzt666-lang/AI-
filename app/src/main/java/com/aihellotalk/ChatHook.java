@@ -2108,78 +2108,103 @@ private static void hookOutgoingSetMsg(ClassLoader cl) {
 }
 
 private static void hookSendMessage(ClassLoader cl) {
+    // 旧版 sendMessage
     try {
         Class<?> vm = XposedHelpers.findClass(
                 "com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
-        Class<?> messageClass = XposedHelpers.findClass(
-                "com.hellotalk.lib.im.entity.HTIMMessage", cl);
-
-        XposedHelpers.findAndHookMethod(vm, "sendMessage",
-                String.class, Object.class, org.json.JSONArray.class, messageClass,
-                new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam p) {
-                        try {
-                            if (p.args == null || p.args.length < 4) return;
-                            Object replyInfo = p.args[3];
-                            if (replyInfo == null) return;
-
-                            String msgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
-                            String quote = null;
-
-                            if ("text".equals(msgType) || "translate".equals(msgType)) {
-                                try {
-                                    Class<?> textBeanClass = XposedHelpers.findClassIfExists(
-                                            "com.hellotalk.talk.detail.delegate.text.IMTextBean", hostClassLoader);
-                                    if (textBeanClass != null) {
-                                        Object textBean = XposedHelpers.callMethod(replyInfo,
-                                                "getMessageContent", textBeanClass, false);
-                                        if (textBean != null) {
-                                            quote = (String) XposedHelpers.callMethod(textBean, "getText");
-                                        }
-                                    }
-                                } catch (Throwable ignored) {}
-                            }
-
-                            if (quote == null) {
-                                quote = extractSelectedReplyText(replyInfo);
-                            }
-                            if (quote == null || quote.trim().isEmpty()) return;
-
-                            String originalForeign = AITranslator.getForeignByChinese(quote);
-                            if (originalForeign == null) {
-                                originalForeign = AITranslator.getForeignFuzzy(quote);
-                            }
-
-                            if (originalForeign != null && !originalForeign.equals(quote)) {
-                                try {
-                                    Class<?> textBeanClass2 = XposedHelpers.findClassIfExists(
-                                            "com.hellotalk.talk.detail.delegate.text.IMTextBean", hostClassLoader);
-                                    if (textBeanClass2 != null) {
-                                        Object textBean2 = XposedHelpers.callMethod(replyInfo,
-                                                "getMessageContent", textBeanClass2, false);
-                                        if (textBean2 != null) {
-                                            XposedHelpers.callMethod(textBean2, "setText", originalForeign);
-                                            XposedHelpers.callMethod(replyInfo, "setMsgContent", textBean2);
-                                            log("引用替换成功: 中文 → " + originalForeign);
-                                        }
-                                    }
-                                } catch (Throwable t) {
-                                    log("引用替换失败: " + t.getMessage());
-                                }
-                                quote = originalForeign;
-                            }
-
-                            pendingSendQuote = quote.trim();
-                            pendingSendChatId = currentChatId;
-                            log("捕获发送引用: " + pendingSendQuote);
-                        } catch (Throwable t) {
-                            log("sendMessage引用捕获失败: " + t.getMessage());
+        if (vm != null) {
+            Class<?> messageClass = XposedHelpers.findClass(
+                    "com.hellotalk.lib.im.entity.HTIMMessage", cl);
+            XposedHelpers.findAndHookMethod(vm, "sendMessage",
+                    String.class, Object.class, org.json.JSONArray.class, messageClass,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam p) {
+                            fixReplyQuote(p.args);
                         }
-                    }
-                });
+                    });
+        }
     } catch (Throwable t) {
-        log("hookSendMessage失败: " + t.getMessage());
+        log("hookSendMessage旧版失败: " + t.getMessage());
+    }
+
+    // 新版 tx3.O
+    try {
+        Class<?> tx3 = XposedHelpers.findClassIfExists("tx3", cl);
+        if (tx3 != null) {
+            Class<?> messageClass = XposedHelpers.findClass(
+                    "com.hellotalk.lib.im.entity.HTIMMessage", cl);
+            XposedHelpers.findAndHookMethod(tx3, "O",
+                    tx3, String.class, Object.class, org.json.JSONArray.class, messageClass, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam p) {
+                            fixReplyQuote(p.args);
+                        }
+                    });
+        }
+    } catch (Throwable t) {
+        log("hookSendMessage新版失败: " + t.getMessage());
+    }
+}
+
+private static void fixReplyQuote(Object[] args) {
+    try {
+        if (args == null || args.length < 4) return;
+        Object replyInfo = args[3];
+        if (replyInfo == null) return;
+
+        String msgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
+        String quote = null;
+
+        if ("text".equals(msgType) || "translate".equals(msgType)) {
+            try {
+                Class<?> textBeanClass = XposedHelpers.findClassIfExists(
+                        "com.hellotalk.talk.detail.delegate.text.IMTextBean", hostClassLoader);
+                if (textBeanClass != null) {
+                    Object textBean = XposedHelpers.callMethod(replyInfo,
+                            "getMessageContent", textBeanClass, false);
+                    if (textBean != null) {
+                        quote = (String) XposedHelpers.callMethod(textBean, "getText");
+                    }
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        if (quote == null) {
+            quote = extractSelectedReplyText(replyInfo);
+        }
+        if (quote == null || quote.trim().isEmpty()) return;
+
+        String originalForeign = AITranslator.getForeignByChinese(quote);
+        if (originalForeign == null) {
+            originalForeign = AITranslator.getForeignFuzzy(quote);
+        }
+
+        if (originalForeign != null && !originalForeign.equals(quote)) {
+            try {
+                Class<?> textBeanClass2 = XposedHelpers.findClassIfExists(
+                        "com.hellotalk.talk.detail.delegate.text.IMTextBean", hostClassLoader);
+                if (textBeanClass2 != null) {
+                    Object textBean2 = XposedHelpers.callMethod(replyInfo,
+                            "getMessageContent", textBeanClass2, false);
+                    if (textBean2 != null) {
+                        XposedHelpers.callMethod(textBean2, "setText", originalForeign);
+                        XposedHelpers.callMethod(replyInfo, "setMsgContent", textBean2);
+                        log("引用替换成功: 中文 → " + originalForeign);
+                    }
+                }
+            } catch (Throwable t) {
+                log("引用替换失败: " + t.getMessage());
+            }
+            quote = originalForeign;
+        }
+
+        pendingSendQuote = quote.trim();
+        pendingSendChatId = currentChatId;
+        log("捕获发送引用: " + pendingSendQuote);
+    } catch (Throwable t) {
+        log("sendMessage引用捕获失败: " + t.getMessage());
     }
 }
     private static String extractSelectedReplyText(Object replyInfo) {
