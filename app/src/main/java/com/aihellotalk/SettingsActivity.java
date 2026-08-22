@@ -204,6 +204,36 @@ public class SettingsActivity extends Activity {
         etBannedWords = bigEdit(prefs.getString("banned_words", ""));
         etBannedWords.setHint("输入千万不能出现的词或标点，如：lol,破折号,;");
         advContentLayout.addView(etBannedWords);
+        advContentLayout.addView(lab("🕶 隐身开关（保存后重启生效）:"));
+        android.widget.LinearLayout switchRow1 = new android.widget.LinearLayout(this);
+        switchRow1.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        switchRow1.setPadding(0, 8, 0, 8);
+        android.widget.TextView lbl1 = new android.widget.TextView(this);
+        lbl1.setText("隐藏「已读」状态");
+        lbl1.setTextSize(14f);
+        lbl1.setTextColor(Color.BLACK);
+        lbl1.setLayoutParams(new android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        switchRow1.addView(lbl1);
+        final android.widget.Switch swHideRead = new android.widget.Switch(this);
+        swHideRead.setChecked(prefs.getBoolean("hide_read", true));
+        swHideRead.setOnCheckedChangeListener((v, isChecked) -> prefs.edit().putBoolean("hide_read", isChecked).apply());
+        switchRow1.addView(swHideRead);
+        advContentLayout.addView(switchRow1);
+
+        android.widget.LinearLayout switchRow2 = new android.widget.LinearLayout(this);
+        switchRow2.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        switchRow2.setPadding(0, 8, 0, 8);
+        android.widget.TextView lbl2 = new android.widget.TextView(this);
+        lbl2.setText("隐藏「正在输入」状态");
+        lbl2.setTextSize(14f);
+        lbl2.setTextColor(Color.BLACK);
+        lbl2.setLayoutParams(new android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        switchRow2.addView(lbl2);
+        final android.widget.Switch swHideTyping = new android.widget.Switch(this);
+        swHideTyping.setChecked(prefs.getBoolean("hide_typing", true));
+        swHideTyping.setOnCheckedChangeListener((v, isChecked) -> prefs.edit().putBoolean("hide_typing", isChecked).apply());
+        switchRow2.addView(swHideTyping);
+        advContentLayout.addView(switchRow2);
 
         ll.addView(advContentLayout);
         setupToggle(advHeaderLayout, advHeaderTitle, advContentLayout, "⚙️ 高级与安全设置", "adv_expanded");
@@ -290,7 +320,7 @@ public class SettingsActivity extends Activity {
         // --- API 5 ---
         LinearLayout row5 = new LinearLayout(this); row5.setOrientation(LinearLayout.HORIZONTAL); row5.setBackground(titleBg); row5.setPadding(20, 20, 20, 20); row5.setGravity(android.view.Gravity.CENTER_VERTICAL);
         LinearLayout.LayoutParams lpRow5 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT); lpRow5.setMargins(0, 40, 0, 10); row5.setLayoutParams(lpRow5);
-        TextView t5 = new TextView(this); t5.setText("🟤 备用 API 5 | "); t5.setTextColor(Color.parseColor("#92400E")); t5.setTextSize(15f); t5.setTypeface(null, android.graphics.Typeface.BOLD); row5.addView(t5);
+        TextView t5 = new TextView(this); t5.setText("🟤 备 API 5 | "); t5.setTextColor(Color.parseColor("#92400E")); t5.setTextSize(15f); t5.setTypeface(null, android.graphics.Typeface.BOLD); row5.addView(t5);
         etAlias5 = new EditText(this); etAlias5.setText(prefs.getString("api_alias_5", "")); etAlias5.setHint("点右侧解锁"); etAlias5.setHintTextColor(Color.parseColor("#8092400E")); etAlias5.setTextColor(Color.parseColor("#92400E")); etAlias5.setTextSize(14f); etAlias5.setTypeface(null, android.graphics.Typeface.BOLD); etAlias5.setBackgroundColor(Color.TRANSPARENT); etAlias5.setEnabled(false); etAlias5.setPadding(0,0,0,0);
         etAlias5.setLayoutParams(lpAlias2); row5.addView(etAlias5);
         Button btnEdit5 = new Button(this); btnEdit5.setText("🔓解锁"); btnEdit5.setTextSize(12f); btnEdit5.setBackgroundColor(Color.TRANSPARENT); btnEdit5.setPadding(0,0,0,0);
@@ -989,6 +1019,12 @@ public class SettingsActivity extends Activity {
         editor.putString("reasoning_effort_7", effortValues[spinnerReasoning7.getSelectedItemPosition()]);
         editor.putString("reasoning_effort_8", effortValues[spinnerReasoning8.getSelectedItemPosition()]);
         editor.putString("quick_5", q5);
+        
+        boolean hideRead = prefs.getBoolean("hide_read", true);
+        boolean hideTyping = prefs.getBoolean("hide_typing", true);
+        editor.putBoolean("hide_read", hideRead);
+        editor.putBoolean("hide_typing", hideTyping);
+        
         editor.apply();
 
         final String finalTempStr = tempStr;
@@ -1060,6 +1096,8 @@ public class SettingsActivity extends Activity {
                         + "reasoning_effort_6=" + prefs.getString("reasoning_effort_6", "default") + "\n"
                         + "reasoning_effort_7=" + prefs.getString("reasoning_effort_7", "default") + "\n"
                         + "reasoning_effort_8=" + prefs.getString("reasoning_effort_8", "default") + "\n"
+                        + "hide_read=" + hideRead + "\n"
+                        + "hide_typing=" + hideTyping + "\n"
                         + "EOF\n";
                 runRoot(cfg);
 
@@ -1265,15 +1303,12 @@ private void testTranslate() {
     }).start();
 }
 
-    // 独立测试通道方法，绕开调度限制
-        // 独立测试通道方法，绕开调度限制并修复 /v1/v1/ 重叠BUG
     private void testSingleApi(String key, String url, String model) {
         if (key.isEmpty() || model.isEmpty()) {
             toast("请先填写 Key 和 模型");
             return;
         }
         
-        // 采用与主程序完全一致的严谨URL解析逻辑
         String baseUrl = url.isEmpty() ? "https://api.openai.com/v1/chat/completions" : url.trim();
         if (!baseUrl.endsWith("/chat/completions")) {
             if (!baseUrl.endsWith("/")) baseUrl += "/";
@@ -1313,7 +1348,7 @@ private void testTranslate() {
                         .url(finalUrl)
                         .header("Authorization", "Bearer " + key)
                         .header("Content-Type", "application/json")
-                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)") // 伪装成浏览器硬解所有防火墙
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                         .post(reqBody)
                         .build();
                         
@@ -1342,5 +1377,4 @@ private void testTranslate() {
             }
         }).start();
     }
-
 }
