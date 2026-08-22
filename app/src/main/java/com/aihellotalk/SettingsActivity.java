@@ -60,6 +60,7 @@ public class SettingsActivity extends Activity {
     private EditText etKey8, etUrl8, etModel8, etWeight8, etAlias8;
     private android.widget.Spinner spinnerDir8, spinnerReasoning8;
     
+    private android.widget.Switch swHideRead, swHideTyping;
     private EditText etSearchPrompt;
     private Button btnFetch, btnSave, btnTest;
     private Button btnSearchPrompt;
@@ -368,6 +369,51 @@ public class SettingsActivity extends Activity {
         apiContentLayout.addView(lab("思考模式 8:")); spinnerReasoning8 = new android.widget.Spinner(this); android.widget.ArrayAdapter<String> effAdapter8 = new android.widget.ArrayAdapter<>(this, android.R.layout.simple_spinner_item, efforts2); effAdapter8.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); spinnerReasoning8.setAdapter(effAdapter8); String savedEff8 = prefs.getString("reasoning_effort_8", "default"); spinnerReasoning8.setSelection("low".equals(savedEff8) ? 1 : ("medium".equals(savedEff8) ? 2 : ("high".equals(savedEff8) ? 3 : 0))); spinnerReasoning8.setEnabled(false); apiContentLayout.addView(spinnerReasoning8);
 
         ll.addView(apiContentLayout);
+        // ================= 隐身开关 =================
+LinearLayout stealthHeaderLayout = createHeaderLayout();
+TextView stealthHeaderTitle = new TextView(this);
+boolean isStealthExpanded = prefs.getBoolean("stealth_expanded", false);
+styleHeaderTitle(stealthHeaderTitle, isStealthExpanded ? "▼ 🕵️ 隐身与反检测 (点击折叠)" : "▶ 🕵️ 隐身与反检测 (点击展开)");
+stealthHeaderLayout.addView(stealthHeaderTitle);
+ll.addView(stealthHeaderLayout);
+
+LinearLayout stealthContentLayout = new LinearLayout(this);
+stealthContentLayout.setOrientation(LinearLayout.VERTICAL);
+stealthContentLayout.setVisibility(isStealthExpanded ? View.VISIBLE : View.GONE);
+stealthContentLayout.setPadding(20, 10, 0, 10);
+
+// 隐藏已读
+LinearLayout rowHideRead = new LinearLayout(this);
+rowHideRead.setOrientation(LinearLayout.HORIZONTAL);
+rowHideRead.setGravity(android.view.Gravity.CENTER_VERTICAL);
+rowHideRead.setPadding(0, 10, 0, 10);
+TextView lblHideRead = new TextView(this);
+lblHideRead.setText("隐藏已读状态（对方看不到你已读）");
+lblHideRead.setTextSize(14f);
+lblHideRead.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+rowHideRead.addView(lblHideRead);
+swHideRead = new android.widget.Switch(this);
+swHideRead.setChecked(prefs.getBoolean("stealth_hide_read", true));
+rowHideRead.addView(swHideRead);
+stealthContentLayout.addView(rowHideRead);
+
+// 隐藏正在输入
+LinearLayout rowHideTyping = new LinearLayout(this);
+rowHideTyping.setOrientation(LinearLayout.HORIZONTAL);
+rowHideTyping.setGravity(android.view.Gravity.CENTER_VERTICAL);
+rowHideTyping.setPadding(0, 10, 0, 10);
+TextView lblHideTyping = new TextView(this);
+lblHideTyping.setText("隐藏正在输入（对方看不到你打字）");
+lblHideTyping.setTextSize(14f);
+lblHideTyping.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+rowHideTyping.addView(lblHideTyping);
+swHideTyping = new android.widget.Switch(this);
+swHideTyping.setChecked(prefs.getBoolean("stealth_hide_typing", true));
+rowHideTyping.addView(swHideTyping);
+stealthContentLayout.addView(rowHideTyping);
+
+ll.addView(stealthContentLayout);
+setupToggle(stealthHeaderLayout, stealthHeaderTitle, stealthContentLayout, "🕵️ 隐身与反检测", "stealth_expanded");
         setupToggle(apiHeaderLayout, apiHeaderTitle, apiContentLayout, "🔄 多API智能密钥配置", "api_expanded");
 
         // ================= 折叠区 2：语言专属指令 =================
@@ -989,6 +1035,8 @@ public class SettingsActivity extends Activity {
         editor.putString("reasoning_effort_7", effortValues[spinnerReasoning7.getSelectedItemPosition()]);
         editor.putString("reasoning_effort_8", effortValues[spinnerReasoning8.getSelectedItemPosition()]);
         editor.putString("quick_5", q5);
+        editor.putBoolean("stealth_hide_read", swHideRead.isChecked());
+editor.putBoolean("stealth_hide_typing", swHideTyping.isChecked());
         editor.apply();
 
         final String finalTempStr = tempStr;
@@ -1059,8 +1107,10 @@ public class SettingsActivity extends Activity {
                         + "reasoning_effort_5=" + prefs.getString("reasoning_effort_5", "default") + "\n"
                         + "reasoning_effort_6=" + prefs.getString("reasoning_effort_6", "default") + "\n"
                         + "reasoning_effort_7=" + prefs.getString("reasoning_effort_7", "default") + "\n"
-                        + "reasoning_effort_8=" + prefs.getString("reasoning_effort_8", "default") + "\n"
-                        + "EOF\n";
++ "reasoning_effort_8=" + prefs.getString("reasoning_effort_8", "default") + "\n"
++ "stealth_hide_read=" + prefs.getBoolean("stealth_hide_read", true) + "\n"
++ "stealth_hide_typing=" + prefs.getBoolean("stealth_hide_typing", true) + "\n"
++ "EOF\n";
                 runRoot(cfg);
 
                 String prompts = "cat > /data/local/tmp/htai_prompts.txt << 'EOF'\n"
