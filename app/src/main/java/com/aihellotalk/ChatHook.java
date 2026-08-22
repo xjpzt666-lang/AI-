@@ -2310,7 +2310,18 @@ try {
 } catch (Throwable t2) {
     log("JSON替换失败: " + t2.getMessage());
 }
-    private static String extractSelectedReplyText(Object replyInfo) {
+              
+            quote = originalForeign;
+        }
+
+        pendingSendQuote = quote.trim();
+        pendingSendChatId = currentChatId;
+        log("捕获发送引用: " + pendingSendQuote);
+    } catch (Throwable t) {
+        log("sendMessage引用捕获失败: " + t.getMessage());
+    }
+}
+      private static String extractSelectedReplyText(Object replyInfo) {
         if (replyInfo == null) return null;
 
         try {
