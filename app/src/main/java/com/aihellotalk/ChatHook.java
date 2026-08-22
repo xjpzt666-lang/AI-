@@ -2079,6 +2079,7 @@ protected void beforeHookedMethod(MethodHookParam p) {
         log("sendMessage引用捕获失败: " + t.getMessage());
     }
 }
+}
     private static String extractSelectedReplyText(Object replyInfo) {
         if (replyInfo == null) return null;
 
