@@ -894,7 +894,7 @@ try {
                 });
     }
 } catch (Throwable ignored) {}
-
+}
 
     private static void updateFromChatUser(Object chatUser) {
         try {
