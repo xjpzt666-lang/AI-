@@ -540,7 +540,7 @@ public class ChatHook {
         }
     }
 
-    private static void hookUltimateStealth(ClassLoader cl) {
+        private static void hookUltimateStealth(ClassLoader cl) {
         try {
             Class<?> tc = XposedHelpers.findClassIfExists(
                     "com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
@@ -548,7 +548,7 @@ public class ChatHook {
                 XposedBridge.hookAllMethods(tc, "s0", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam p) {
-                        p.setResult(null);
+                        if (AITranslator.hideTyping) p.setResult(null);
                     }
                 });
             }
@@ -557,7 +557,7 @@ public class ChatHook {
         XC_MethodHook kill = new XC_MethodHook() {
             @Override
             protected void beforeHookedMethod(MethodHookParam p) {
-                p.setResult(null);
+                if (AITranslator.hideRead) p.setResult(null);
             }
         };
 
@@ -582,9 +582,11 @@ public class ChatHook {
                 XposedBridge.hookAllMethods(be, "z", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam p) {
-                        if (p.args != null && p.args.length > 0 && p.args[0] != null) {
-                            String n = p.args[0].getClass().getName();
-                            if ("tm.a".equals(n) || "e20.c".equals(n)) p.setResult(null);
+                        if (AITranslator.hideRead) {
+                            if (p.args != null && p.args.length > 0 && p.args[0] != null) {
+                                String n = p.args[0].getClass().getName();
+                                if ("tm.a".equals(n) || "e20.c".equals(n)) p.setResult(null);
+                            }
                         }
                     }
                 });
@@ -597,12 +599,13 @@ public class ChatHook {
                 XposedBridge.hookAllMethods(ec, "f", new XC_MethodHook() {
                     @Override
                     protected void beforeHookedMethod(MethodHookParam p) {
-                        p.setResult(new byte[0]);
+                        if (AITranslator.hideRead) p.setResult(new byte[0]);
                     }
                 });
             }
         } catch (Throwable ignored) {}
     }
+
 
     private static void hookTextViewRender(ClassLoader cl) {
         if (htTextViewClass == null) return;
@@ -1993,7 +1996,7 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-    private static void hookSendMessage(ClassLoader cl) {
+        private static void hookSendMessage(ClassLoader cl) {
         try {
             Class<?> vm = XposedHelpers.findClass(
                     "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
@@ -2002,6 +2005,12 @@ public class ChatHook {
 
             Class<?> messageClass = XposedHelpers.findClass(
                     "com.hellotalk.lib.im.entity.HTIMMessage",
+                    cl
+            );
+            
+            // 提前准备好用来修改文字的类
+            Class<?> textBeanClass = XposedHelpers.findClassIfExists(
+                    "com.hellotalk.talk.detail.delegate.text.IMTextBean", 
                     cl
             );
 
@@ -2021,15 +2030,54 @@ public class ChatHook {
                                 Object replyInfo = p.args[3];
                                 if (replyInfo == null) return;
 
+                                // ====== 🚀 核心修复：狸猫换太子，拦截并彻底还原回复引用 ======
+                                String msgId = (String) invokeQuiet(mGetMsgId, replyInfo);
+                                String msgType = (String) invokeQuiet(mGetMsgType, replyInfo);
+                                String originalForeign = null;
+                                
+                                // 1. 尝试通过精准的 msgId 找回原始外语
+                                if (msgId != null && !msgId.isEmpty()) {
+                                    String[] cached = AITranslator.getCached(msgId);
+                                    if (cached != null && cached[0] != null) {
+                                        originalForeign = cached[0];
+                                    }
+                                }
+
+                                // 2. 执行深层修复逻辑：替换回原外语，并刷新 JSON 缓存
+                                if ("text".equals(msgType) && textBeanClass != null) {
+                                    Object textBean = invokeQuiet(mGetMsgContentTyped, replyInfo, textBeanClass, false);
+                                    if (textBean != null) {
+                                        Method gtm = ensureBeanGetText(textBean);
+                                        Object textObj = invokeQuiet(gtm, textBean);
+                                        String currentText = textObj != null ? String.valueOf(textObj) : null;
+                                        
+                                        // 如果没靠 ID 查到，走兜底纯文本倒查外语
+                                        if (originalForeign == null && currentText != null) {
+                                            String cleanText = currentText.replaceAll("[\\s🌐🔄]+$", "").trim();
+                                            originalForeign = AITranslator.getForeignByChinese(cleanText);
+                                            if (originalForeign == null) originalForeign = AITranslator.getForeignFuzzy(cleanText);
+                                        }
+
+                                        // 绝对暴力的无脑替换：只要查到的外语原文跟屏幕上的字不一样，统统换掉！
+                                        if (originalForeign != null && currentText != null && !originalForeign.equals(currentText)) {
+                                            XposedHelpers.callMethod(textBean, "setText", originalForeign);
+                                            XposedHelpers.callMethod(replyInfo, "setMsgContent", textBean);
+                                            log("✅ 拦截发包成功！泄露的文本已被替换为原文: " + originalForeign);
+                                        }
+                                    }
+                                }
+                                // =======================================================
+
+                                // 3. 拦截完成后，继续原有的历史记录捕获逻辑
                                 String quote = extractSelectedReplyText(replyInfo);
-                                if (quote == null || quote.trim().isEmpty()) return;
+                                if (quote != null && !quote.trim().isEmpty()) {
+                                    pendingSendQuote = quote.trim();
+                                    pendingSendChatId = currentChatId;
+                                    log("捕获发送引用(已修复为外语): " + pendingSendQuote);
+                                }
 
-                                pendingSendQuote = quote.trim();
-                                pendingSendChatId = currentChatId;
-
-                                log("捕获发送引用: " + pendingSendQuote);
                             } catch (Throwable t) {
-                                log("sendMessage引用捕获失败: " + t.getMessage());
+                                log("sendMessage引用修复与捕获失败: " + t.getMessage());
                             }
                         }
                     }
@@ -2038,6 +2086,7 @@ public class ChatHook {
             log("hookSendMessage失败: " + t.getMessage());
         }
     }
+
 
     private static String extractSelectedReplyText(Object replyInfo) {
         if (replyInfo == null) return null;
