@@ -1999,11 +1999,16 @@ public class ChatHook {
 private static void hookSendMessage(ClassLoader cl) {
     try {
         Class<?> vm = XposedHelpers.findClass(
-                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel",
+                cl
+        );
         Class<?> messageClass = XposedHelpers.findClass(
-                "com.hellotalk.lib.im.entity.HTIMMessage", cl);
+                "com.hellotalk.lib.im.entity.HTIMMessage",
+                cl
+        );
 
-        XposedHelpers.findAndHookMethod(vm, "sendMessage",
+        XposedHelpers.findAndHookMethod(
+                vm, "sendMessage",
                 String.class, Object.class, org.json.JSONArray.class, messageClass,
                 new XC_MethodHook() {
                     @Override
@@ -2011,41 +2016,20 @@ private static void hookSendMessage(ClassLoader cl) {
                         try {
                             if (p.args == null || p.args.length < 4) return;
                             Object replyInfo = p.args[3];
-// 先捕获引用文本（在修复之前，避免hookRecv干扰）
-String quote = extractSelectedReplyText(replyInfo);
+                            if (replyInfo == null) return;
 
-// ===== v5.15 修复引用中文泄露（不触发任何钩子）=====
-String msgId = (String) invokeQuiet(mGetMsgId, replyInfo);
-String msgType = (String) invokeQuiet(mGetMsgType, replyInfo);
+                            String quote = extractSelectedReplyText(replyInfo);
+                            if (quote == null || quote.trim().isEmpty()) return;
 
-if ("text".equals(msgType) && msgId != null && !msgId.isEmpty()) {
-    String[] cached = AITranslator.getCached(msgId);
-    String original = (cached != null && cached[0] != null) ? cached[0] : null;
-
-    if (original != null) {
-        Object textBean = XposedHelpers.getObjectField(replyInfo, "msgContent");
-        if (textBean != null) {
-            String current = (String) XposedHelpers.callMethod(textBean, "getText");
-            if (current != null && !original.equals(current)) {
-                XposedHelpers.callMethod(textBean, "setText", original);
-                XposedHelpers.setObjectField(replyInfo, "msgContent", textBean);
-                log("修复引用: " + current + " -> " + original);
-            }
-        }
-    }
-}
-
-// 记录引用
-if (quote != null && !quote.trim().isEmpty()) {
-    pendingSendQuote = quote.trim();
-    pendingSendChatId = currentChatId;
-    log("捕获发送引用: " + pendingSendQuote);
-}
+                            pendingSendQuote = quote.trim();
+                            pendingSendChatId = currentChatId;
+                            log("捕获发送引用: " + pendingSendQuote);
                         } catch (Throwable t) {
-                            log("sendMessage异常: " + t.getMessage());
+                            log("sendMessage引用捕获失败: " + t.getMessage());
                         }
                     }
-                });
+                }
+        );
     } catch (Throwable t) {
         log("hookSendMessage失败: " + t.getMessage());
     }
