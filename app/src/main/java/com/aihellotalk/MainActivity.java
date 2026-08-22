@@ -357,6 +357,7 @@ public class MainActivity extends Activity {
             runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
             runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
             runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+            rebuildSessionTable();
             runRoot("am force-stop com.hellotalk");
             runOnUiThread(() -> {
                 updateMemStatus("main");
@@ -365,7 +366,49 @@ public class MainActivity extends Activity {
             });
         }).start();
     }
+private void rebuildSessionTable() {
+    try {
+        String friendsJson = runRoot("cat /data/data/com.hellotalk/files/htai_friends.json");
+        if (friendsJson == null || friendsJson.trim().isEmpty()) return;
+        JSONObject friends = new JSONObject(friendsJson);
+        JSONArray ids = friends.names();
+        if (ids == null) return;
 
+        String dbPath = runRoot("ls /data/data/com.hellotalk/databases/ | grep -E '^[a-f0-9]{32}$' | head -1");
+        if (dbPath == null || dbPath.trim().isEmpty()) return;
+        dbPath = "/data/data/com.hellotalk/databases/" + dbPath.trim();
+
+        for (int i = 0; i < ids.length(); i++) {
+            String chatId = ids.getString(i);
+            JSONObject info = friends.getJSONObject(chatId);
+            String name = info.optString("name", chatId);
+            long lastTime = info.optLong("lastTime", System.currentTimeMillis());
+
+            // 获取最后一条消息内容
+            String lastMsg = "";
+            String histPath = "/data/data/com.hellotalk/files/htai_hist_" + chatId + ".json";
+            String histJson = runRoot("cat " + histPath + " 2>/dev/null");
+            if (histJson != null && !histJson.trim().isEmpty()) {
+                JSONArray hist = new JSONArray(histJson);
+                if (hist.length() > 0) {
+                    JSONObject last = hist.getJSONObject(hist.length() - 1);
+                    String content = last.optString("content", "");
+                    lastMsg = content.length() > 50 ? content.substring(0, 50) : content;
+                }
+            }
+
+            // 检查是否已存在
+            String check = runRoot("sqlite3 " + dbPath + " \"SELECT rowid FROM session WHERE chat_id=" + chatId + " AND type=1 LIMIT 1\" 2>/dev/null");
+            if (check != null && !check.trim().isEmpty()) continue;
+
+            // 插入 session 记录
+            String sql = "INSERT INTO session (chat_id, type, chat_name, status, top, silent, unread_count, last_msg_content, last_msg_timestamp, update_time) VALUES (" +
+                    chatId + ", 1, '" + name.replace("'", "''") + "', 0, 0, 0, 0, '" +
+                    lastMsg.replace("'", "''") + "', " + lastTime + ", " + lastTime + ")";
+            runRoot("sqlite3 " + dbPath + " \"" + sql + "\" 2>/dev/null");
+        }
+    } catch (Exception ignored) {}
+}
     private void claimTemp() {
         new Thread(() -> {
             runRoot("echo temp > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
