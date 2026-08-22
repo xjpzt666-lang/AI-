@@ -1996,14 +1996,12 @@ public class ChatHook {
         } catch (Throwable ignored) {}
     }
 
-        private static void hookSendMessage(ClassLoader cl) {
+private static void hookSendMessage(ClassLoader cl) {
     try {
         Class<?> vm = XposedHelpers.findClass(
                 "com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
         Class<?> messageClass = XposedHelpers.findClass(
                 "com.hellotalk.lib.im.entity.HTIMMessage", cl);
-        Class<?> textBeanClass = XposedHelpers.findClassIfExists(
-                "com.hellotalk.talk.detail.delegate.text.IMTextBean", cl);
 
         XposedHelpers.findAndHookMethod(vm, "sendMessage",
                 String.class, Object.class, org.json.JSONArray.class, messageClass,
@@ -2015,34 +2013,34 @@ public class ChatHook {
                             Object replyInfo = p.args[3];
                             if (replyInfo == null) return;
 
+                            // ===== v5.15 修复引用中文泄露（不触发任何钩子）=====
                             String msgId = (String) invokeQuiet(mGetMsgId, replyInfo);
                             String msgType = (String) invokeQuiet(mGetMsgType, replyInfo);
 
                             if ("text".equals(msgType) && msgId != null && !msgId.isEmpty()) {
-                                Object textBean = XposedHelpers.getObjectField(replyInfo, "msgContent");
-                                if (textBean != null && textBeanClass.isInstance(textBean)) {
-                                    String currentText = (String) XposedHelpers.callMethod(textBean, "getText");
-                                    if (currentText != null) {
-                                        String clean = currentText.replaceAll("[\\s🌐🔄]+$", "").trim();
-                                        String[] cached = AITranslator.getCached(msgId);
-                                        String original = (cached != null && cached[0] != null) ? cached[0] : null;
-                                        if (original == null && AITranslator.isChineseOnly(clean)) {
-                                            original = AITranslator.getForeignByChinese(clean);
-                                            if (original == null) original = AITranslator.getForeignFuzzy(clean);
-                                        }
-                                        if (original != null && !original.equals(clean)) {
+                                String[] cached = AITranslator.getCached(msgId);
+                                String original = (cached != null && cached[0] != null) ? cached[0] : null;
+
+                                if (original != null) {
+                                    // ★ 直接读字段，绝对不调 getMessageContent
+                                    Object textBean = XposedHelpers.getObjectField(replyInfo, "msgContent");
+                                    if (textBean != null) {
+                                        String current = (String) XposedHelpers.callMethod(textBean, "getText");
+                                        if (current != null && !original.equals(current)) {
                                             XposedHelpers.callMethod(textBean, "setText", original);
                                             XposedHelpers.setObjectField(replyInfo, "msgContent", textBean);
-                                            log("修复引用: " + clean + " -> " + original);
+                                            log("修复引用: " + current + " -> " + original);
                                         }
                                     }
                                 }
                             }
 
+                            // 捕获引用文本用于历史记录
                             String quote = extractSelectedReplyText(replyInfo);
                             if (quote != null && !quote.trim().isEmpty()) {
                                 pendingSendQuote = quote.trim();
                                 pendingSendChatId = currentChatId;
+                                log("捕获发送引用: " + pendingSendQuote);
                             }
                         } catch (Throwable t) {
                             log("sendMessage异常: " + t.getMessage());
