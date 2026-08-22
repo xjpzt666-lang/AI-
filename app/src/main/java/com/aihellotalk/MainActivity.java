@@ -357,7 +357,9 @@ public class MainActivity extends Activity {
             runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
             runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
             runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
-            rebuildSessionTable();
+            // 恢复 HelloTalk 数据库文件
+runRoot("cp /data/local/tmp/htai_store/db_backup/* /data/data/com.hellotalk/databases/ 2>/dev/null");
+runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/databases/* 2>/dev/null");
             runRoot("am force-stop com.hellotalk");
             runOnUiThread(() -> {
                 updateMemStatus("main");
@@ -366,59 +368,17 @@ public class MainActivity extends Activity {
             });
         }).start();
     }
-private void rebuildSessionTable() {
-    try {
-        String friendsJson = runRoot("cat /data/data/com.hellotalk/files/htai_friends.json");
-        if (friendsJson == null || friendsJson.trim().isEmpty()) return;
-        JSONObject friends = new JSONObject(friendsJson);
-        JSONArray ids = friends.names();
-        if (ids == null) return;
 
-        String dbPath = runRoot("ls /data/data/com.hellotalk/databases/ | grep -E '^[a-f0-9]{32}$' | head -1");
-        if (dbPath == null || dbPath.trim().isEmpty()) return;
-        dbPath = "/data/data/com.hellotalk/databases/" + dbPath.trim();
-
-        for (int i = 0; i < ids.length(); i++) {
-            String chatId = ids.getString(i);
-            JSONObject info = friends.getJSONObject(chatId);
-            String name = info.optString("name", chatId);
-            long lastTime = info.optLong("lastTime", System.currentTimeMillis());
-
-            // 获取最后一条消息内容
-            String lastMsg = "";
-            String histPath = "/data/data/com.hellotalk/files/htai_hist_" + chatId + ".json";
-            String histJson = runRoot("cat " + histPath + " 2>/dev/null");
-            if (histJson != null && !histJson.trim().isEmpty()) {
-                JSONArray hist = new JSONArray(histJson);
-                if (hist.length() > 0) {
-                    JSONObject last = hist.getJSONObject(hist.length() - 1);
-                    String content = last.optString("content", "");
-                    lastMsg = content.length() > 50 ? content.substring(0, 50) : content;
-                }
-            }
-
-            // 检查是否已存在
-            String check = runRoot("sqlite3 " + dbPath + " \"SELECT rowid FROM session WHERE chat_id=" + chatId + " AND type=1 LIMIT 1\" 2>/dev/null");
-            if (check != null && !check.trim().isEmpty()) continue;
-
-            // 插入 session 记录
-            String sql = "INSERT INTO session (chat_id, type, chat_name, status, top, silent, unread_count, last_msg_content, last_msg_timestamp, update_time) VALUES (" +
-                    chatId + ", 1, '" + name.replace("'", "''") + "', 0, 0, 0, 0, '" +
-                    lastMsg.replace("'", "''") + "', " + lastTime + ", " + lastTime + ")";
-            runRoot("sqlite3 " + dbPath + " \"" + sql + "\" 2>/dev/null");
-        }
-    } catch (Exception ignored) {}
+         
+private void claimTemp() {
+    new Thread(() -> {
+        runRoot("echo temp > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+        runOnUiThread(() -> {
+            updateMemStatus("temp");
+            Toast.makeText(MainActivity.this, "已进入一次性模式", Toast.LENGTH_LONG).show();
+        });
+    }).start();
 }
-    private void claimTemp() {
-        new Thread(() -> {
-            runRoot("echo temp > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
-            runOnUiThread(() -> {
-                updateMemStatus("temp");
-                Toast.makeText(MainActivity.this, "已进入一次性模式", Toast.LENGTH_LONG).show();
-            });
-        }).start();
-    }
-
     private void showMemoryMenu() {
         new AlertDialog.Builder(this)
                 .setTitle("记忆管理")
@@ -464,19 +424,22 @@ private void rebuildSessionTable() {
         }).start();
     }
 
-    private void backupNow() {
-        Toast.makeText(this, "备份中...", Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
-            runRoot("mkdir -p /data/local/tmp/htai_store"
-                    + " && cp /data/data/com.hellotalk/files/htai_* /data/local/tmp/htai_store/ 2>/dev/null; "
-                    + "chmod 600 /data/local/tmp/htai_store/htai_* 2>/dev/null");
-            String storeLs = runRoot("ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
-            boolean ok = storeLs != null && !storeLs.trim().isEmpty();
-            runOnUiThread(() -> Toast.makeText(MainActivity.this,
-                    ok ? "✅ 保险箱已有备份" : "❌ 备份失败",
-                    Toast.LENGTH_LONG).show());
-        }).start();
-    }
+private void backupNow() {
+    Toast.makeText(this, "备份中...", Toast.LENGTH_SHORT).show();
+    new Thread(() -> {
+        runRoot("mkdir -p /data/local/tmp/htai_store"
+                + " && cp /data/data/com.hellotalk/files/htai_* /data/local/tmp/htai_store/ 2>/dev/null; "
+                + "chmod 600 /data/local/tmp/htai_store/htai_* 2>/dev/null");
+        // 同时备份 HelloTalk 数据库文件
+        runRoot("mkdir -p /data/local/tmp/htai_store/db_backup"
+                + " && cp /data/data/com.hellotalk/databases/* /data/local/tmp/htai_store/db_backup/ 2>/dev/null");
+        String storeLs = runRoot("ls /data/local/tmp/htai_store/htai_* 2>/dev/null");
+        boolean ok = storeLs != null && !storeLs.trim().isEmpty();
+        runOnUiThread(() -> Toast.makeText(MainActivity.this,
+                ok ? "✅ 保险箱已有备份（含数据库）" : "❌ 备份失败",
+                Toast.LENGTH_LONG).show());
+    }).start();
+}
 
     private void confirmSwitchToTemp() {
         new AlertDialog.Builder(this)
@@ -518,32 +481,32 @@ private void rebuildSessionTable() {
         }).start();
     }
 
-    private void switchToMain() {
-        Toast.makeText(this, "正在切换主账号模式...", Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
-            String sandboxLs = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
-            boolean sandboxHas = sandboxLs != null && !sandboxLs.trim().isEmpty();
+private void switchToMain() {
+    Toast.makeText(this, "正在切换主账号模式...", Toast.LENGTH_SHORT).show();
+    new Thread(() -> {
+        String sandboxLs = runRoot("ls /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+        boolean sandboxHas = sandboxLs != null && !sandboxLs.trim().isEmpty();
 
-            if (!sandboxHas) {
-                runRoot("mkdir -p /data/data/com.hellotalk/files");
-                runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files 2>/dev/null");
-                runRoot("chmod 777 /data/data/com.hellotalk/files 2>/dev/null");
-                runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
-                runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
-                runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
-            }
+        if (!sandboxHas) {
+            runRoot("mkdir -p /data/data/com.hellotalk/files");
+            runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files 2>/dev/null");
+            runRoot("chmod 777 /data/data/com.hellotalk/files 2>/dev/null");
+            runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
+            runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            runRoot("cp /data/local/tmp/htai_store/db_backup/* /data/data/com.hellotalk/databases/ 2>/dev/null");
+            runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/databases/* 2>/dev/null");
+        }
 
-            runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
-            runRoot("am force-stop com.hellotalk");
-
-            final boolean restored = !sandboxHas;
-            runOnUiThread(() -> {
-                updateMemStatus("main");
-                refreshDrawerList();
-                Toast.makeText(MainActivity.this, "👑 已切回主账号模式", Toast.LENGTH_LONG).show();
-            });
-        }).start();
-    }
+        runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+        runRoot("am force-stop com.hellotalk");
+        runOnUiThread(() -> {
+            updateMemStatus("main");
+            refreshDrawerList();
+            Toast.makeText(MainActivity.this, "👑 已切回主账号模式", Toast.LENGTH_LONG).show();
+        });
+    }).start();
+}
 
     private void showMemoryFiles() {
         new Thread(() -> {
