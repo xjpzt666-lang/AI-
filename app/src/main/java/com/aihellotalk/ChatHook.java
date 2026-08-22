@@ -2013,72 +2013,31 @@ public class ChatHook {
                     org.json.JSONArray.class,
                     messageClass,
                     new XC_MethodHook() {
-@Override
-protected void beforeHookedMethod(MethodHookParam p) {
-    try {
-        if (p.args == null || p.args.length < 4) return;
+                        @Override
+                        protected void beforeHookedMethod(MethodHookParam p) {
+                            try {
+                                if (p.args == null || p.args.length < 4) return;
 
-        Object replyInfo = p.args[3];
-        if (replyInfo == null) return;
+                                Object replyInfo = p.args[3];
+                                if (replyInfo == null) return;
 
-        // ★ 先获取 replyInfo 里面被污染的引用文本
-        String msgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
-        String quote = null;
-        
-        if ("text".equals(msgType) || "translate".equals(msgType)) {
-            try {
-                Class<?> textBeanClass = XposedHelpers.findClassIfExists(
-                        "com.hellotalk.talk.detail.delegate.text.IMTextBean", hostClassLoader);
-                if (textBeanClass != null) {
-                    Object textBean = XposedHelpers.callMethod(replyInfo,
-                            "getMessageContent", textBeanClass, false);
-                    if (textBean != null) {
-                        quote = (String) XposedHelpers.callMethod(textBean, "getText");
+                                String quote = extractSelectedReplyText(replyInfo);
+                                if (quote == null || quote.trim().isEmpty()) return;
+
+                                pendingSendQuote = quote.trim();
+                                pendingSendChatId = currentChatId;
+
+                                log("捕获发送引用: " + pendingSendQuote);
+                            } catch (Throwable t) {
+                                log("sendMessage引用捕获失败: " + t.getMessage());
+                            }
+                        }
                     }
-                }
-            } catch (Throwable ignored) {}
+            );
+        } catch (Throwable t) {
+            log("hookSendMessage失败: " + t.getMessage());
         }
-        
-        if (quote == null) {
-            quote = extractSelectedReplyText(replyInfo);
-        }
-        
-        if (quote == null || quote.trim().isEmpty()) return;
-
-        // ★★★ 核心修复：如果引用文本是中文，反查原始外语并替换 ★★★
-        String originalForeign = AITranslator.getForeignByChinese(quote);
-        if (originalForeign == null) {
-            originalForeign = AITranslator.getForeignFuzzy(quote);
-        }
-        
-        if (originalForeign != null && !originalForeign.equals(quote)) {
-            // 把 replyInfo 的 msgContent 替换回原始外语
-            try {
-                Class<?> textBeanClass2 = XposedHelpers.findClassIfExists(
-                        "com.hellotalk.talk.detail.delegate.text.IMTextBean", hostClassLoader);
-                if (textBeanClass2 != null) {
-                    Object textBean2 = XposedHelpers.callMethod(replyInfo,
-                            "getMessageContent", textBeanClass2, false);
-                    if (textBean2 != null) {
-                        XposedHelpers.callMethod(textBean2, "setText", originalForeign);
-                        XposedHelpers.callMethod(replyInfo, "setMsgContent", textBean2);
-                        log("引用替换成功: 中文 → " + originalForeign);
-                    }
-                }
-            } catch (Throwable t) {
-                log("引用替换失败: " + t.getMessage());
-            }
-            quote = originalForeign;
-        }
-
-        pendingSendQuote = quote.trim();
-        pendingSendChatId = currentChatId;
-
-        log("捕获发送引用: " + pendingSendQuote);
-    } catch (Throwable t) {
-        log("sendMessage引用捕获失败: " + t.getMessage());
     }
-}
 
     private static String extractSelectedReplyText(Object replyInfo) {
         if (replyInfo == null) return null;
