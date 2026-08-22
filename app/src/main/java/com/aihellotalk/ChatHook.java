@@ -28,6 +28,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import org.json.JSONObject;
+import java.io.BufferedWriter;
+import java.io.FileWriter;
+import java.io.BufferedReader;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -85,6 +89,7 @@ public class ChatHook {
     private static volatile String pendingSendQuote = null;
     private static volatile String pendingSendChatId = null;
     private static final long SELECTED_REPLY_FALLBACK_WINDOW_MS = 120000L;
+private static final File langOverrideFile = new File("/data/data/com.hellotalk/files/htai_lang_override.json");
 
     private static final String HT_TEXT_VIEW_CLASS = "com.hellotalk.lib.ui.text.view.HTCompatTextView";
     private static Class<?> htTextViewClass = null;
@@ -169,6 +174,7 @@ public class ChatHook {
             });
 
     public static void install(ClassLoader cl) {
+    loadLangOverride();
         hostClassLoader = cl;
         log("=== Hook v5.5 精准回复修复版 ===");
 
@@ -1163,6 +1169,35 @@ private static boolean readStealthConfig(String key, boolean def) {
         return null;
     }
 
+    private static void loadLangOverride() {
+    try {
+        if (langOverrideFile.exists()) {
+            BufferedReader r = new BufferedReader(new FileReader(langOverrideFile));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = r.readLine()) != null) sb.append(line);
+            r.close();
+            JSONObject json = new JSONObject(sb.toString());
+            java.util.Iterator<String> it = json.keys();
+            while (it.hasNext()) {
+                String k = it.next();
+                chatLangOverride.put(k, json.getString(k));
+            }
+        }
+    } catch (Exception ignored) {}
+}
+
+private static void saveLangOverride() {
+    try {
+        JSONObject json = new JSONObject();
+        for (java.util.Map.Entry<String, String> e : chatLangOverride.entrySet()) {
+            json.put(e.getKey(), e.getValue());
+        }
+        BufferedWriter w = new BufferedWriter(new FileWriter(langOverrideFile));
+        w.write(json.toString());
+        w.close();
+    } catch (Exception ignored) {}
+}
     private static void updateTranslateBtnText(Button btn) {
         if (btn == null) return;
         String cid = currentChatId;
@@ -1284,6 +1319,7 @@ private static boolean readStealthConfig(String key, boolean def) {
             String code = codes[position];
             if ("auto".equals(code)) chatLangOverride.remove(cid);
             else chatLangOverride.put(cid, code);
+            saveLangOverride();
             updateTranslateBtnText(btn);
             Toast.makeText(ctx, "当前聊天语言已设为：" + names[position], Toast.LENGTH_SHORT).show();
             dialog.dismiss();
