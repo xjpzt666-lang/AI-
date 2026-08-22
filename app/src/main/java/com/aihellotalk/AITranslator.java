@@ -82,8 +82,6 @@ public class AITranslator {
     public static String promptPL = "";
     public static String promptKK = "";
     public static String promptCS = "";
-    public static boolean hideRead = true;
-    public static boolean hideTyping = true;
 
     private static final File friendsFile = new File("/data/data/com.hellotalk/files/htai_friends.json");
     private static JSONObject friendsData = new JSONObject();
@@ -522,11 +520,6 @@ private static int readConfigInt(String key, int defaultVal) {
 }
 
 private static void loadEndpoints() {
-        String hr = readConfigValue("hide_read");
-    hideRead = hr == null || "true".equalsIgnoreCase(hr);
-    String ht = readConfigValue("hide_typing");
-    hideTyping = ht == null || "true".equalsIgnoreCase(ht);
-
     endpoints.clear();
     for (int i = 1; i <= 8; i++) {
         String suffix = (i == 1) ? "" : ("_" + i);
@@ -1756,14 +1749,12 @@ private static OkHttpClient getReceiveClient() {
             String bannedRule = bannedWords.isEmpty() ? "" : "3. 【全局黑名单】：绝对禁止在输出中包含以下词汇或符号：" + bannedWords + "。\n";
 
             if (!hasContext) scriptBuilder.append("\uff08\u6682\u65e0\u6709\u6548\u4e0a\u4e0b\u6587\uff09\n");
-                        scriptBuilder.append("\n\u3010\u7cfb\u7edf\u6307\u4ee4\u3011\n"
-                    + "1. ⚠️【最高防分心警告】：你的唯一任务，是且仅仅是翻译下方 <<< 和 >>> 之间的最新外语消息！\n"
-                    + "2. 上面的对话剧本仅仅是给你看语境的，里面的历史消息都已经有中文了。绝对不许！严禁！去重新翻译或复述历史记录里的任何一句话！否则系统将崩溃！\n"
-                    + "3. 【视角隔离】：你是一个客观的翻译引擎。提到任何国家一律直译全称，绝对不许使用“我国”、“国产”、“你们国家”等代词，提到日本时也绝对不要翻译成“这里”或“我们这里”。\n"
+            scriptBuilder.append("\n\u3010\u7cfb\u7edf\u6307\u4ee4\u3011\n"
+                    + "1. 下方只有<<<和>>>标记内的原文才是要翻译的内容，上面对话剧本仅供理解语境参考，严禁翻译或复述剧本里已有的内容。\n"
+                    + "2. 【视角隔离】：你是一个客观的翻译引擎。提到任何国家一律直译全称，绝对不许使用“我国”、“国产”、“你们国家”等代词，提到日本时也绝对不要翻译成“这里”或“我们这里”。\n"
                     + bannedRule
-                    + "\n请立刻只翻译这句最新消息：\n"
                     + "<<<\n").append(text).append("\n>>>");
-
+            messages.put(createMessageObj("user", scriptBuilder.toString()));
 
             try { String r = callChatMessages(messages); return refuseGuard(r, text); }
             catch (IOException e) {
@@ -2044,8 +2035,8 @@ private static String executeRequestWithRotation(JSONObject body, OkHttpClient f
     // ===== 极其严谨的方向判定 =====
     boolean isReceive = false; // 默认全是主动发送
     String bodyStr = body.toString();
-// 只有绝对匹配到这些话，才算是“接收对方外语”
-    if (bodyStr.contains("下方只有<<<和>>>标记内") || bodyStr.contains("最高防分心警告") || bodyStr.contains("【表/标点深度分析协议】")) {
+    // 只有绝对匹配到这两句话，才算是“接收对方外语”
+    if (bodyStr.contains("下方只有<<<和>>>标记内") || bodyStr.contains("【表/标点深度分析协议】")) {
         isReceive = true;
     }
 
