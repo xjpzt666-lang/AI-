@@ -800,102 +800,68 @@ private static boolean readStealthConfig(String key, boolean def) {
                 });
     }
 
-    private static void hookStartChat(ClassLoader cl) throws Exception {
-    Class<?> vm = XposedHelpers.findClassIfExists(
-            "com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
-    if (vm == null) vm = XposedHelpers.findClassIfExists("tx3", cl);
-
-    if (vm != null) {
-        XposedHelpers.findAndHookMethod(vm, "startChat", int.class, int.class,
-                new XC_MethodHook() {
-                    @Override
-                    protected void afterHookedMethod(MethodHookParam p) {
-                        currentChatId = String.valueOf(p.args[0]);
-                        currentChatType = (int) p.args[1];
-                        latestNationality = "";
-                        latestNativeLang = 1;
-                        latestPartnerName = "";
-                        currentPartnerName = "";
-                        currentQuotedImagePath = null;
-                        currentQuotedImageMissing = false;
-                        resetSelectedReply();
-                        final Object vm2 = p.thisObject;
-                        new Thread(() -> {
-                            try {
-                                Field f = vm2.getClass().getDeclaredField("chatUser");
-                                f.setAccessible(true);
-                                for (int i = 0; i < 6; i++) {
-                                    Object cu = f.get(vm2);
-                                    if (cu != null) {
-                                        updateFromChatUser(cu);
-                                        return;
-                                    }
-                                    Thread.sleep(500);
-                                }
-                            } catch (Exception ignored) {
-                                try {
-                                    Field f = vm2.getClass().getDeclaredField("o");
-                                    f.setAccessible(true);
-                                    for (int i = 0; i < 6; i++) {
-                                        Object cu = f.get(vm2);
-                                        if (cu != null) {
-                                            updateFromChatUser(cu);
-                                            return;
-                                        }
-                                        Thread.sleep(500);
-                                    }
-                                } catch (Exception ignored2) {}
-                            }
-                        }).start();
-                    }
-                });
-        // 也尝试新版本的 J 方法
-        try {
-            XposedHelpers.findAndHookMethod(vm, "J", int.class, int.class,
+  private static void hookStartChat(ClassLoader cl) throws Exception {
+    try {
+        Class<?> vm = XposedHelpers.findClassIfExists(
+                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+        if (vm != null) {
+            XposedHelpers.findAndHookMethod(vm, "startChat", int.class, int.class,
                     new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam p) {
                             currentChatId = String.valueOf(p.args[0]);
                             currentChatType = (int) p.args[1];
-                            latestNationality = "";
-                            latestNativeLang = 1;
-                            latestPartnerName = "";
-                            currentPartnerName = "";
-                            currentQuotedImagePath = null;
-                            currentQuotedImageMissing = false;
-                            resetSelectedReply();
-                            final Object vm2 = p.thisObject;
-                            new Thread(() -> {
-                                try {
-                                    Field f = vm2.getClass().getDeclaredField("chatUser");
-                                    f.setAccessible(true);
-                                    for (int i = 0; i < 6; i++) {
-                                        Object cu = f.get(vm2);
-                                        if (cu != null) {
-                                            updateFromChatUser(cu);
-                                            return;
-                                        }
-                                        Thread.sleep(500);
-                                    }
-                                } catch (Exception ignored) {
-                                    try {
-                                        Field f = vm2.getClass().getDeclaredField("o");
-                                        f.setAccessible(true);
-                                        for (int i = 0; i < 6; i++) {
-                                            Object cu = f.get(vm2);
-                                            if (cu != null) {
-                                                updateFromChatUser(cu);
-                                                return;
-                                            }
-                                            Thread.sleep(500);
-                                        }
-                                    } catch (Exception ignored2) {}
-                                }
-                            }).start();
+                            initChatSession(p.thisObject);
                         }
                     });
-        } catch (Throwable ignored) {}
-    }
+        }
+    } catch (Throwable ignored) {}
+
+    try {
+        Class<?> tx3 = XposedHelpers.findClassIfExists("tx3", cl);
+        if (tx3 != null) {
+            XposedHelpers.findAndHookMethod(tx3, "J", int.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam p) {
+                            currentChatId = String.valueOf(p.args[0]);
+                            currentChatType = (int) p.args[1];
+                            initChatSession(p.thisObject);
+                        }
+                    });
+        }
+    } catch (Throwable ignored) {}
+}
+
+private static void initChatSession(Object vm) {
+    latestNationality = "";
+    latestNativeLang = 1;
+    latestPartnerName = "";
+    currentPartnerName = "";
+    currentQuotedImagePath = null;
+    currentQuotedImageMissing = false;
+    resetSelectedReply();
+    new Thread(() -> {
+        try {
+            Field f = vm.getClass().getDeclaredField("chatUser");
+            f.setAccessible(true);
+            for (int i = 0; i < 6; i++) {
+                Object cu = f.get(vm);
+                if (cu != null) { updateFromChatUser(cu); return; }
+                Thread.sleep(500);
+            }
+        } catch (Exception ignored) {
+            try {
+                Field f = vm.getClass().getDeclaredField("o");
+                f.setAccessible(true);
+                for (int i = 0; i < 6; i++) {
+                    Object cu = f.get(vm);
+                    if (cu != null) { updateFromChatUser(cu); return; }
+                    Thread.sleep(500);
+                }
+            } catch (Exception ignored2) {}
+        }
+    }).start();
 }
 
     private static void updateFromChatUser(Object chatUser) {
