@@ -896,6 +896,36 @@ try {
 } catch (Throwable ignored) {}
 }
 
+private static void initChatSession(Object vm) {
+    latestNationality = "";
+    latestNativeLang = 1;
+    latestPartnerName = "";
+    currentPartnerName = "";
+    currentQuotedImagePath = null;
+    currentQuotedImageMissing = false;
+    resetSelectedReply();
+    new Thread(() -> {
+        try {
+            Field f = vm.getClass().getDeclaredField("chatUser");
+            f.setAccessible(true);
+            for (int i = 0; i < 6; i++) {
+                Object cu = f.get(vm);
+                if (cu != null) { updateFromChatUser(cu); return; }
+                Thread.sleep(500);
+            }
+        } catch (Exception ignored) {
+            try {
+                Field f = vm.getClass().getDeclaredField("o");
+                f.setAccessible(true);
+                for (int i = 0; i < 6; i++) {
+                    Object cu = f.get(vm);
+                    if (cu != null) { updateFromChatUser(cu); return; }
+                    Thread.sleep(500);
+                }
+            } catch (Exception ignored2) {}
+        }
+    }).start();
+}
     private static void updateFromChatUser(Object chatUser) {
         try {
             int nl = (Integer) XposedHelpers.callMethod(chatUser, "getNativeLang");
