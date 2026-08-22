@@ -347,7 +347,8 @@ private static final File langOverrideFile = new File("/data/data/com.hellotalk/
 
     private static void hookInputReplyBar(ClassLoader cl) {
         try {
-            Class<?> replyBar = XposedHelpers.findClassIfExists("kr0.d", cl);
+            Class<?> replyBar = XposedHelpers.findClassIfExists("kr0", cl);
+if (replyBar == null) replyBar = XposedHelpers.findClassIfExists("kr00", cl);
             if (replyBar != null) {
                 XposedBridge.hookAllMethods(replyBar, "b", new XC_MethodHook() {
                     @Override
@@ -380,7 +381,7 @@ private static final File langOverrideFile = new File("/data/data/com.hellotalk/
                 });
             }
         } catch (Throwable t) {
-            log("hookInputReplyBar kr0.d fail: " + t.getMessage());
+            log("hookInputReplyBar kr0 fail: " + t.getMessage());
         }
 
         try {
@@ -547,11 +548,12 @@ private static final File langOverrideFile = new File("/data/data/com.hellotalk/
         }
     }
 
-    private static void hookUltimateStealth(ClassLoader cl) {
+private static void hookUltimateStealth(ClassLoader cl) {
     boolean hideTyping = readStealthConfig("stealth_hide_typing", true);
     boolean hideRead = readStealthConfig("stealth_hide_read", true);
 
     if (hideTyping) {
+        // 旧版 TalkSingleTitleController.s0
         try {
             Class<?> tc = XposedHelpers.findClassIfExists(
                     "com.hellotalk.talk.detail.controller.title.TalkSingleTitleController", cl);
@@ -564,9 +566,27 @@ private static final File langOverrideFile = new File("/data/data/com.hellotalk/
                 });
             }
         } catch (Throwable ignored) {}
+        // 新版 dgr.M（打字状态）
+        try {
+            Class<?> dgr = XposedHelpers.findClassIfExists("dgr", cl);
+            if (dgr != null) {
+                XposedBridge.hookAllMethods(dgr, "M", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) {
+                        p.setResult(null);
+                    }
+                });
+                XposedBridge.hookAllMethods(dgr, "I", new XC_MethodHook() {
+                    @Override
+                    protected void beforeHookedMethod(MethodHookParam p) {
+                        p.setResult(null);
+                    }
+                });
+            }
+        } catch (Throwable ignored) {}
     }
 
-    if (!hideRead && !hideTyping) return;
+    if (!hideRead) return;
 
     XC_MethodHook kill = new XC_MethodHook() {
         @Override
@@ -575,49 +595,46 @@ private static final File langOverrideFile = new File("/data/data/com.hellotalk/
         }
     };
 
-    if (hideRead) {
-        try {
-            Class<?> za = XposedHelpers.findClassIfExists("z10.a", cl);
-            if (za != null) {
-                XposedBridge.hookAllMethods(za, "m", kill);
-                XposedBridge.hookAllMethods(za, "c0", kill);
-                XposedBridge.hookAllMethods(za, "f0", kill);
-            }
-            Class<?> yb = XposedHelpers.findClassIfExists("y10.b", cl);
-            if (yb != null) {
-                XposedBridge.hookAllMethods(yb, "m", kill);
-                XposedBridge.hookAllMethods(yb, "c0", kill);
-                XposedBridge.hookAllMethods(yb, "f0", kill);
-            }
-        } catch (Throwable ignored) {}
+    // 旧版 z10.a / y10.b
+    try {
+        Class<?> za = XposedHelpers.findClassIfExists("z10.a", cl);
+        if (za != null) {
+            XposedBridge.hookAllMethods(za, "m", kill);
+            XposedBridge.hookAllMethods(za, "c0", kill);
+            XposedBridge.hookAllMethods(za, "f0", kill);
+        }
+        Class<?> yb = XposedHelpers.findClassIfExists("y10.b", cl);
+        if (yb != null) {
+            XposedBridge.hookAllMethods(yb, "m", kill);
+            XposedBridge.hookAllMethods(yb, "c0", kill);
+            XposedBridge.hookAllMethods(yb, "f0", kill);
+        }
+    } catch (Throwable ignored) {}
 
-        try {
-            Class<?> be = XposedHelpers.findClassIfExists("b20.e", cl);
-            if (be != null) {
-                XposedBridge.hookAllMethods(be, "z", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam p) {
-                        if (p.args != null && p.args.length > 0 && p.args[0] != null) {
-                            String n = p.args[0].getClass().getName();
-                            if ("tm.a".equals(n) || "e20.c".equals(n)) p.setResult(null);
-                        }
+    // 旧版 b20.e / e20.c
+    try {
+        Class<?> be = XposedHelpers.findClassIfExists("b20.e", cl);
+        if (be != null) {
+            XposedBridge.hookAllMethods(be, "z", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) {
+                    if (p.args != null && p.args.length > 0 && p.args[0] != null) {
+                        String n = p.args[0].getClass().getName();
+                        if ("tm.a".equals(n) || "e20.c".equals(n)) p.setResult(null);
                     }
-                });
-            }
-        } catch (Throwable ignored) {}
-
-        try {
-            Class<?> ec = XposedHelpers.findClassIfExists("e20.c", cl);
-            if (ec != null) {
-                XposedBridge.hookAllMethods(ec, "f", new XC_MethodHook() {
-                    @Override
-                    protected void beforeHookedMethod(MethodHookParam p) {
-                        p.setResult(new byte[0]);
-                    }
-                });
-            }
-        } catch (Throwable ignored) {}
-    }
+                }
+            });
+        }
+        Class<?> ec = XposedHelpers.findClassIfExists("e20.c", cl);
+        if (ec != null) {
+            XposedBridge.hookAllMethods(ec, "f", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam p) {
+                    p.setResult(new byte[0]);
+                }
+            });
+        }
+    } catch (Throwable ignored) {}
 }
 
 private static boolean readStealthConfig(String key, boolean def) {
@@ -784,9 +801,13 @@ private static boolean readStealthConfig(String key, boolean def) {
     }
 
     private static void hookStartChat(ClassLoader cl) throws Exception {
-        XposedHelpers.findAndHookMethod(
-                "com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl,
-                "startChat", int.class, int.class, new XC_MethodHook() {
+    Class<?> vm = XposedHelpers.findClassIfExists(
+            "com.hellotalk.talk.detail.data.source.ChatDetailViewModel", cl);
+    if (vm == null) vm = XposedHelpers.findClassIfExists("tx3", cl);
+
+    if (vm != null) {
+        XposedHelpers.findAndHookMethod(vm, "startChat", int.class, int.class,
+                new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam p) {
                         currentChatId = String.valueOf(p.args[0]);
@@ -798,25 +819,84 @@ private static boolean readStealthConfig(String key, boolean def) {
                         currentQuotedImagePath = null;
                         currentQuotedImageMissing = false;
                         resetSelectedReply();
-
-                        final Object vm = p.thisObject;
+                        final Object vm2 = p.thisObject;
                         new Thread(() -> {
                             try {
-                                Field f = vm.getClass().getDeclaredField("chatUser");
+                                Field f = vm2.getClass().getDeclaredField("chatUser");
                                 f.setAccessible(true);
                                 for (int i = 0; i < 6; i++) {
-                                    Object cu = f.get(vm);
+                                    Object cu = f.get(vm2);
                                     if (cu != null) {
                                         updateFromChatUser(cu);
                                         return;
                                     }
                                     Thread.sleep(500);
                                 }
-                            } catch (Exception ignored) {}
+                            } catch (Exception ignored) {
+                                try {
+                                    Field f = vm2.getClass().getDeclaredField("o");
+                                    f.setAccessible(true);
+                                    for (int i = 0; i < 6; i++) {
+                                        Object cu = f.get(vm2);
+                                        if (cu != null) {
+                                            updateFromChatUser(cu);
+                                            return;
+                                        }
+                                        Thread.sleep(500);
+                                    }
+                                } catch (Exception ignored2) {}
+                            }
                         }).start();
                     }
                 });
+        // 也尝试新版本的 J 方法
+        try {
+            XposedHelpers.findAndHookMethod(vm, "J", int.class, int.class,
+                    new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam p) {
+                            currentChatId = String.valueOf(p.args[0]);
+                            currentChatType = (int) p.args[1];
+                            latestNationality = "";
+                            latestNativeLang = 1;
+                            latestPartnerName = "";
+                            currentPartnerName = "";
+                            currentQuotedImagePath = null;
+                            currentQuotedImageMissing = false;
+                            resetSelectedReply();
+                            final Object vm2 = p.thisObject;
+                            new Thread(() -> {
+                                try {
+                                    Field f = vm2.getClass().getDeclaredField("chatUser");
+                                    f.setAccessible(true);
+                                    for (int i = 0; i < 6; i++) {
+                                        Object cu = f.get(vm2);
+                                        if (cu != null) {
+                                            updateFromChatUser(cu);
+                                            return;
+                                        }
+                                        Thread.sleep(500);
+                                    }
+                                } catch (Exception ignored) {
+                                    try {
+                                        Field f = vm2.getClass().getDeclaredField("o");
+                                        f.setAccessible(true);
+                                        for (int i = 0; i < 6; i++) {
+                                            Object cu = f.get(vm2);
+                                            if (cu != null) {
+                                                updateFromChatUser(cu);
+                                                return;
+                                            }
+                                            Thread.sleep(500);
+                                        }
+                                    } catch (Exception ignored2) {}
+                                }
+                            }).start();
+                        }
+                    });
+        } catch (Throwable ignored) {}
     }
+}
 
     private static void updateFromChatUser(Object chatUser) {
         try {
@@ -1121,8 +1201,10 @@ private static boolean readStealthConfig(String key, boolean def) {
                 });
     }
 
-    private static void hookBtnOld(ClassLoader cl) throws Exception {
-        Class<?> bc = XposedHelpers.findClass("com.hellotalk.chat.ui.ChatInputBoxView", cl);
+private static void hookBtnOld(ClassLoader cl) throws Exception {
+    Class<?> bc = XposedHelpers.findClassIfExists("com.hellotalk.chat.ui.ChatInputBoxView", cl);
+    if (bc == null) bc = XposedHelpers.findClassIfExists("com.hellotalk.talk.exchange.view.ChatInputBoxView", cl);
+    if (bc != null) {
         XposedBridge.hookAllConstructors(bc, new XC_MethodHook() {
             @Override
             protected void afterHookedMethod(MethodHookParam p) {
@@ -1130,6 +1212,7 @@ private static boolean readStealthConfig(String key, boolean def) {
             }
         });
     }
+}
 
     private static void hookBtnNew(ClassLoader cl) throws Exception {
         Class<?> oc = XposedHelpers.findClass(
