@@ -347,27 +347,27 @@ public class MainActivity extends Activity {
                 .show();
     }
 
-    private void claimMain() {
-        Toast.makeText(this, "正在恢复主账号记忆...", Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
-            runRoot("mkdir -p /data/data/com.hellotalk/files");
-            runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files 2>/dev/null");
-            runRoot("chmod 777 /data/data/com.hellotalk/files 2>/dev/null");
-            runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
-            runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
-            runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
-            runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
-            // 恢复 HelloTalk 数据库文件
-runRoot("cp /data/local/tmp/htai_store/db_backup/* /data/data/com.hellotalk/databases/ 2>/dev/null");
-runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/databases/* 2>/dev/null");
-            runRoot("am force-stop com.hellotalk");
-            runOnUiThread(() -> {
-                updateMemStatus("main");
-                refreshDrawerList();
-                Toast.makeText(MainActivity.this, "✅ 主账号记忆已恢复，HelloTalk 已重启", Toast.LENGTH_LONG).show();
-            });
-        }).start();
-    }
+private void claimMain() {
+    Toast.makeText(this, "正在恢复主账号记忆...", Toast.LENGTH_SHORT).show();
+    new Thread(() -> {
+        runRoot("mkdir -p /data/data/com.hellotalk/files");
+        runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files 2>/dev/null");
+        runRoot("chmod 777 /data/data/com.hellotalk/files 2>/dev/null");
+        runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
+        runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+        runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+        runRoot("mkdir -p /data/data/com.hellotalk/databases");
+        runRoot("cp /data/local/tmp/htai_store/db_backup/* /data/data/com.hellotalk/databases/ 2>/dev/null");
+        runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/databases/* 2>/dev/null");
+        runRoot("echo main > /data/local/tmp/htai_mem_mode.txt && chmod 644 /data/local/tmp/htai_mem_mode.txt");
+        runRoot("am force-stop com.hellotalk");
+        runOnUiThread(() -> {
+            updateMemStatus("main");
+            refreshDrawerList();
+            Toast.makeText(MainActivity.this, "✅ 主账号记忆已恢复，HelloTalk 已重启", Toast.LENGTH_LONG).show();
+        });
+    }).start();
+}
 
          
 private void claimTemp() {
@@ -494,6 +494,7 @@ private void switchToMain() {
             runRoot("cp /data/local/tmp/htai_store/htai_* /data/data/com.hellotalk/files/ 2>/dev/null");
             runRoot("chmod 666 /data/data/com.hellotalk/files/htai_* 2>/dev/null");
             runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/files/htai_* 2>/dev/null");
+            runRoot("mkdir -p /data/data/com.hellotalk/databases");
             runRoot("cp /data/local/tmp/htai_store/db_backup/* /data/data/com.hellotalk/databases/ 2>/dev/null");
             runRoot("chown $(stat -c %u:%g /data/data/com.hellotalk) /data/data/com.hellotalk/databases/* 2>/dev/null");
         }
