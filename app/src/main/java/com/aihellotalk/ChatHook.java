@@ -615,20 +615,16 @@ private static void hookUltimateStealth(ClassLoader cl) {
         }
     };
 
-    // 新版：dgr.D 是设置已读状态的方法
-    try {
-        Class<?> dgr = XposedHelpers.findClassIfExists("dgr", cl);
-        if (dgr != null) {
-            XposedBridge.hookAllMethods(dgr, "D", kill);
-            XposedBridge.hookAllMethods(dgr, "onTextChanged", new XC_MethodHook() {
-                @Override
-                protected void beforeHookedMethod(MethodHookParam p) {
-                    p.setResult(null);
-                }
-            });
-        }
-    } catch (Throwable ignored) {}
-
+// 新版：阻断已读回执
+try {
+    Class<?> hasReadReq = XposedHelpers.findClassIfExists(
+            "com.hellotalk.lib.im.socket.sender.req.impl.HasReadRequest", cl);
+    if (hasReadReq != null) {
+        XposedBridge.hookAllConstructors(hasReadReq, kill);
+        XposedBridge.hookAllMethods(hasReadReq, "getBody", kill);
+    }
+} catch (Throwable ignored) {}    
+    
     // 旧版兼容
     try {
         Class<?> za = XposedHelpers.findClassIfExists("z10.a", cl);
@@ -2237,7 +2233,8 @@ private static void replaceReplyText(Object replyInfo) {
             quote = extractSelectedReplyText(replyInfo);
         }
         if (quote == null || quote.trim().isEmpty()) return;
-
+quote = quote.replaceAll("[\\s🌐🔄]+$", "").trim();   // ← 加这行
+if (quote.isEmpty()) return;                            // ← 加这行
         String originalForeign = AITranslator.getForeignByChinese(quote);
         if (originalForeign == null) {
             originalForeign = AITranslator.getForeignFuzzy(quote);
