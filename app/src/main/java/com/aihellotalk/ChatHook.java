@@ -31,7 +31,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.json.JSONObject;
 import java.io.BufferedWriter;
 import java.io.FileWriter;
-import java.io.BufferedReader;
 
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
