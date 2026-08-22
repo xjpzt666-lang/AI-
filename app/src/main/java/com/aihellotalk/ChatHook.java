@@ -1755,10 +1755,10 @@ private static String mapNationalityToLang(String nat) {
         case "korea": case "kr": case "south korea": return "ko";
         case "france": case "fr": case "belgium": case "switzerland": case "canada": case "ca": return "fr";
         case "germany": case "de": case "austria": return "de";
-        case "spain": case "es": case "mexico": case "mx": case "argentina": case "ar": case "colombia": case "co": case "peru":
-        case "chile": case "cl": case "venezuela": case "ve": case "ecuador": case "ec": case "bolivia": case "bo": case "paraguay":
-        case "uruguay": case "uy": case "costa rica": case "panama": case "pa": case "nicaragua": case "ni": case "honduras":
-        case "el salvador": case "guatemala": case "gt": case "cuba": case "cu": case "dominican republic": case "puerto rico": return "es";
+        case "spain": case "es": case "mexico": case "mx": case "argentina": case "ar": case "colombia": case "co": case "peru": case "pe":
+        case "chile": case "cl": case "venezuela": case "ve": case "ecuador": case "ec": case "bolivia": case "bo": case "paraguay": case "py":
+        case "uruguay": case "uy": case "costa rica": case "cr": case "panama": case "pa": case "nicaragua": case "ni": case "honduras": case "hn":
+        case "el salvador": case "sv": case "guatemala": case "gt": case "cuba": case "cu": case "dominican republic": case "do": case "puerto rico": case "pr": return "es";
         case "italy": case "it": return "it";
         case "portugal": case "pt": case "brazil": case "br": return "pt";
         case "arabia": case "sa": case "egypt": case "eg": case "saudi arabia": case "united arab emirates": case "ae":
@@ -2263,8 +2263,9 @@ try {
             quote = extractSelectedReplyText(replyInfo);
         }
         if (quote == null || quote.trim().isEmpty()) return;
-quote = quote.replaceAll("[\\s🌐🔄]+$", "").trim();   // ← 加这行
-if (quote.isEmpty()) return;                            // ← 加这行
+        quote = quote.replaceAll("[\\s🌐🔄]+$", "").trim();
+        if (quote.isEmpty()) return;
+
         String originalForeign = AITranslator.getForeignByChinese(quote);
         if (originalForeign == null) {
             originalForeign = AITranslator.getForeignFuzzy(quote);
@@ -2281,13 +2282,23 @@ if (quote.isEmpty()) return;                            // ← 加这行
                         XposedHelpers.callMethod(textBean2, "setText", originalForeign);
                         XposedHelpers.callMethod(replyInfo, "setMsgContent", textBean2);
                         log("引用替换成功: 中文 → " + originalForeign);
-                        try {
-    XposedHelpers.callMethod(replyInfo, "setMsgContentJson", originalForeign);
-} catch (Throwable ignored) {}
                     }
                 }
             } catch (Throwable t) {
                 log("引用替换失败: " + t.getMessage());
+            }
+            // 直接修改 JSON 字符串
+            try {
+                java.lang.reflect.Field f = replyInfo.getClass().getDeclaredField("msgContentJson");
+                f.setAccessible(true);
+                String oldJson = (String) f.get(replyInfo);
+                if (oldJson != null && oldJson.contains(quote)) {
+                    String newJson = oldJson.replace(quote, originalForeign);
+                    f.set(replyInfo, newJson);
+                    log("JSON替换成功: " + newJson);
+                }
+            } catch (Throwable t2) {
+                log("JSON替换失败: " + t2.getMessage());
             }
             quote = originalForeign;
         }
@@ -2299,7 +2310,6 @@ if (quote.isEmpty()) return;                            // ← 加这行
         log("sendMessage引用捕获失败: " + t.getMessage());
     }
 }
-
     private static String extractSelectedReplyText(Object replyInfo) {
         if (replyInfo == null) return null;
 
