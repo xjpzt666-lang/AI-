@@ -1746,35 +1746,36 @@ private static void saveLangOverride() {
         return null;
     }
 
-    private static String mapNationalityToLang(String nat) {
-        if (nat == null || nat.isEmpty()) return null;
-        switch (nat) {
-            case "china": case "taiwan": case "hong kong": case "macau": case "singapore": return "zh";
-            case "russia": case "belarus": case "kazakhstan": case "kyrgyzstan": return "ru";
-            case "japan": return "ja";
-            case "korea": case "south korea": return "ko";
-            case "france": case "belgium": case "switzerland": case "canada": return "fr";
-            case "germany": case "austria": return "de";
-            case "spain": case "mexico": case "argentina": case "colombia": case "peru":
-            case "chile": case "venezuela": case "ecuador": case "bolivia": case "paraguay":
-            case "uruguay": case "costa rica": case "panama": case "nicaragua": case "honduras":
-            case "el salvador": case "guatemala": case "cuba": case "dominican republic": case "puerto rico": return "es";
-            case "italy": return "it";
-            case "portugal": case "brazil": return "pt";
-            case "arabia": case "egypt": case "saudi arabia": case "united arab emirates":
-            case "morocco": case "algeria": case "tunisia": case "jordan": case "lebanon":
-            case "iraq": case "kuwait": case "qatar": case "oman": case "bahrain": return "ar";
-            case "turkey": return "tr";
-            case "netherlands": return "nl";
-            case "poland": return "pl";
-            case "vietnam": return "vi";
-            case "thailand": return "th";
-            case "indonesia": return "id";
-            case "india": return "hi";
-            case "ukraine": return "uk";
-            default: return null;
-        }
+private static String mapNationalityToLang(String nat) {
+    if (nat == null || nat.isEmpty()) return null;
+    switch (nat) {
+        case "china": case "cn": case "taiwan": case "tw": case "hong kong": case "hk": case "macau": case "singapore": return "zh";
+        case "russia": case "ru": case "belarus": case "by": case "kazakhstan": case "kz": case "kyrgyzstan": return "ru";
+        case "japan": case "jp": return "ja";
+        case "korea": case "kr": case "south korea": return "ko";
+        case "france": case "fr": case "belgium": case "switzerland": case "canada": case "ca": return "fr";
+        case "germany": case "de": case "austria": return "de";
+        case "spain": case "es": case "mexico": case "mx": case "argentina": case "ar": case "colombia": case "co": case "peru":
+        case "chile": case "cl": case "venezuela": case "ve": case "ecuador": case "ec": case "bolivia": case "bo": case "paraguay":
+        case "uruguay": case "uy": case "costa rica": case "panama": case "pa": case "nicaragua": case "ni": case "honduras":
+        case "el salvador": case "guatemala": case "gt": case "cuba": case "cu": case "dominican republic": case "puerto rico": return "es";
+        case "italy": case "it": return "it";
+        case "portugal": case "pt": case "brazil": case "br": return "pt";
+        case "arabia": case "sa": case "egypt": case "eg": case "saudi arabia": case "united arab emirates": case "ae":
+        case "morocco": case "ma": case "algeria": case "dz": case "tunisia": case "tn": case "jordan": case "jo": case "lebanon":
+        case "iraq": case "iq": case "kuwait": case "kw": case "qatar": case "qa": case "oman": case "om": case "bahrain": return "ar";
+        case "turkey": case "tr": return "tr";
+        case "netherlands": case "nl": return "nl";
+        case "poland": case "pl": return "pl";
+        case "vietnam": case "vn": return "vi";
+        case "thailand": case "th": return "th";
+        case "indonesia": case "id": return "id";
+        case "india": case "in": return "hi";
+        case "ukraine": case "ua": return "uk";
+        case "united states": case "us": case "usa": case "united kingdom": case "uk": case "gb": case "australia": case "au": return "en";
+        default: return null;
     }
+}
     private static void showAnswerDialog(EditText edit, String answer) {
         android.content.Context ctx = edit.getContext();
         final String showText = (answer == null) ? "" : answer.trim().replaceAll("\\*+", "");
@@ -2280,6 +2281,9 @@ if (quote.isEmpty()) return;                            // ← 加这行
                         XposedHelpers.callMethod(textBean2, "setText", originalForeign);
                         XposedHelpers.callMethod(replyInfo, "setMsgContent", textBean2);
                         log("引用替换成功: 中文 → " + originalForeign);
+                        try {
+    XposedHelpers.callMethod(replyInfo, "setMsgContentJson", originalForeign);
+} catch (Throwable ignored) {}
                     }
                 }
             } catch (Throwable t) {
