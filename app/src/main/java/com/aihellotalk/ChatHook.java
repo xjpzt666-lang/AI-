@@ -850,53 +850,51 @@ private static boolean readStealthConfig(String key, boolean def) {
                 });
     } catch (Throwable ignored) {}
 
-    // ===== 新版 tx3.J =====
-    try {
-        Class<?> tx3 = XposedHelpers.findClassIfExists("tx3", cl);
-        if (tx3 != null) {
-            XposedHelpers.findAndHookMethod(tx3, "J", int.class, int.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void afterHookedMethod(MethodHookParam p) {
-                            currentChatId = String.valueOf(p.args[0]);
-                            currentChatType = (int) p.args[1];
-                            initChatSession(p.thisObject);
-                        }
-                    });
-        }
-    } catch (Throwable ignored) {}
-}
+// ===== 新版 tx3.J =====
+try {
+    Class<?> tx3 = XposedHelpers.findClassIfExists("tx3", cl);
+    if (tx3 != null) {
+        XposedHelpers.findAndHookMethod(tx3, "J", int.class, int.class,
+                new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam p) {
+                        currentChatId = String.valueOf(p.args[0]);
+                        currentChatType = (int) p.args[1];
+                        final Object vm = p.thisObject;
+                        new Thread(() -> {
+                            try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+                            latestNationality = "";
+                            latestNativeLang = 1;
+                            latestPartnerName = "";
+                            currentPartnerName = "";
+                            currentQuotedImagePath = null;
+                            currentQuotedImageMissing = false;
+                            resetSelectedReply();
+                            try {
+                                Field f = vm.getClass().getDeclaredField("chatUser");
+                                f.setAccessible(true);
+                                for (int i = 0; i < 6; i++) {
+                                    Object cu = f.get(vm);
+                                    if (cu != null) { updateFromChatUser(cu); return; }
+                                    Thread.sleep(500);
+                                }
+                            } catch (Exception ignored) {
+                                try {
+                                    Field f = vm.getClass().getDeclaredField("o");
+                                    f.setAccessible(true);
+                                    for (int i = 0; i < 6; i++) {
+                                        Object cu = f.get(vm);
+                                        if (cu != null) { updateFromChatUser(cu); return; }
+                                        Thread.sleep(500);
+                                    }
+                                } catch (Exception ignored2) {}
+                            }
+                        }).start();
+                    }
+                });
+    }
+} catch (Throwable ignored) {}
 
-private static void initChatSession(Object vm) {
-    latestNationality = "";
-    latestNativeLang = 1;
-    latestPartnerName = "";
-    currentPartnerName = "";
-    currentQuotedImagePath = null;
-    currentQuotedImageMissing = false;
-    resetSelectedReply();
-    new Thread(() -> {
-        try {
-            Field f = vm.getClass().getDeclaredField("chatUser");
-            f.setAccessible(true);
-            for (int i = 0; i < 6; i++) {
-                Object cu = f.get(vm);
-                if (cu != null) { updateFromChatUser(cu); return; }
-                Thread.sleep(500);
-            }
-        } catch (Exception ignored) {
-            try {
-                Field f = vm.getClass().getDeclaredField("o");
-                f.setAccessible(true);
-                for (int i = 0; i < 6; i++) {
-                    Object cu = f.get(vm);
-                    if (cu != null) { updateFromChatUser(cu); return; }
-                    Thread.sleep(500);
-                }
-            } catch (Exception ignored2) {}
-        }
-    }).start();
-}
 
     private static void updateFromChatUser(Object chatUser) {
         try {
@@ -2209,8 +2207,9 @@ private static void hookSendMessage(ClassLoader cl) {
 
 // 提取出来的公共替换逻辑
 private static void replaceReplyText(Object replyInfo) {
-    try {
-        if (replyInfo == null) return;
+try {
+    log("★★★ replaceReplyText 被调用了！");
+    if (replyInfo == null) return;
 
         String msgType = (String) XposedHelpers.callMethod(replyInfo, "getMsgType");
         String quote = null;
